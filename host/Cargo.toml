@@ -1,0 +1,56 @@
+[workspace]
+resolver = "3"
+members = ["crates/proto", "crates/core", "crates/backends", "crates/tui", "cli"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.90"
+publish = false
+
+[workspace.dependencies]
+traffic-police-proto = { path = "crates/proto" }
+traffic-police-core = { path = "crates/core" }
+traffic-police-backends = { path = "crates/backends" }
+traffic-police-tui = { path = "crates/tui" }
+
+anyhow = "1.0.104"
+thiserror = "2.0.21"
+bytes = "1.12.1"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = { version = "1.0.151", features = ["preserve_order"] }
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "sync", "time", "signal", "net", "io-util", "process"] }
+tokio-stream = "0.1.19"
+clap = { version = "4.6.7", features = ["derive", "env", "wrap_help"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+tracing-appender = "0.2.5"
+
+ratatui = "0.30.2"
+crossterm = { version = "0.29.0", features = ["event-stream", "osc52"] }
+ratatui-image = { version = "11.1.0", default-features = false, features = ["crossterm"] }
+image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp", "ico"] }
+tui-input = "0.15.5"
+unicode-width = "0.2.2"
+jiff = "0.2.37"
+
+jaq-core = "3.1.1"
+jaq-std = "3.0.3"
+jaq-json = "2.0.3"
+flate2 = { version = "1.1.10", default-features = false, features = ["zlib-rs"] }
+brotli-decompressor = "5.0.0"
+ruzstd = "0.9.0"
+quick-xml = "0.42.0"
+base64 = "0.22.1"
+percent-encoding = "2.3.2"
+
+insta = { version = "1.48.0", features = ["filters"] }
+proptest = "1.11.0"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
+
+[profile.dev.package."*"]
+opt-level = 2

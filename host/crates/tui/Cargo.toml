@@ -1,0 +1,26 @@
+[package]
+name = "traffic-police-tui"
+description = "Terminal UI for traffic-police"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+traffic-police-proto.workspace = true
+traffic-police-core.workspace = true
+ratatui.workspace = true
+crossterm.workspace = true
+ratatui-image.workspace = true
+image.workspace = true
+tui-input.workspace = true
+unicode-width.workspace = true
+jiff.workspace = true
+tokio.workspace = true
+tokio-stream.workspace = true
+tracing.workspace = true
+anyhow.workspace = true
+
+[dev-dependencies]
+traffic-police-backends.workspace = true
+insta.workspace = true
