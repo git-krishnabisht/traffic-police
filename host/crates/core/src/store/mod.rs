@@ -84,7 +84,6 @@ pub struct SessionStore {
     diagnostics: Vec<Diagnostic>,
     stats: Stats,
     generation: u64,
-    changed: Vec<TxnIdx>,
 }
 
 /// Approximate size of a header block on the wire (for the captured-traffic series).
@@ -95,6 +94,12 @@ fn header_bytes(headers: &[(String, String)]) -> u64 {
 impl SessionStore {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// An empty store that keeps handing out ids from `ids` (so a cleared session never reuses
+    /// the id of a source that is still connected).
+    pub fn with_source_ids(ids: SourceIds) -> Self {
+        SessionStore { ids, ..Self::default() }
     }
 
     /// The allocator backends use for source ids.
@@ -178,11 +183,6 @@ impl SessionStore {
         meta.id.map(|id| self.bodies.bytes(id)).unwrap_or_default()
     }
 
-    /// Transactions changed since the last call.
-    pub fn drain_changed(&mut self) -> Vec<TxnIdx> {
-        std::mem::take(&mut self.changed)
-    }
-
     /// Wall-clock milliseconds for a timestamp, using the closest source's clock pair.
     pub fn wall_ms(&self, ts: Ts) -> Option<i64> {
         self.sources.values().filter(|s| s.clock.is_some()).min_by_key(|s| s.started.abs_diff(ts))?.wall_ms(ts)
@@ -214,9 +214,6 @@ impl SessionStore {
     }
 
     fn touch(&mut self, idx: TxnIdx) -> &mut Transaction {
-        if self.changed.last() != Some(&idx) {
-            self.changed.push(idx);
-        }
         Arc::make_mut(&mut self.txns[idx as usize])
     }
 
