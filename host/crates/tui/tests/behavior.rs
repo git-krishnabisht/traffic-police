@@ -296,7 +296,7 @@ fn random_input_does_not_panic() {
             } else {
                 app.handle_key(keys[(r % keys.len() as u64) as usize]);
             }
-            app.run_jq_jobs_inline();
+            app.run_jobs_inline();
             if step % 7 == 0 {
                 t += 100_000_000;
                 app.ingest(session.advance(t));
@@ -342,4 +342,23 @@ fn incremental_sort_matches_a_full_sort() {
             assert_eq!(got, expected, "{column:?} at step {step}");
         }
     }
+}
+
+#[test]
+fn keys_between_frames_see_the_new_order() {
+    // sort, then jump to the top, with no frame drawn in between
+    let mut app = app_at(40.0);
+    render_text(&mut app, MEDIUM.0, MEDIUM.1);
+    for c in ['s', 's', 'S', 'g'] {
+        app.handle_key(key(c));
+    }
+    let top = app
+        .store
+        .txns()
+        .iter()
+        .enumerate()
+        .max_by_key(|(i, t)| (t.response_size(), t.start, std::cmp::Reverse(*i)))
+        .unwrap()
+        .0;
+    assert_eq!(app.selected, Some(top as u32), "the largest response is selected");
 }

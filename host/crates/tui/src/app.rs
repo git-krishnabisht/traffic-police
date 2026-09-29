@@ -1,6 +1,6 @@
 //! Application state and input handling. Rendering reads this; nothing here draws.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -18,6 +18,7 @@ use traffic_police_proto::msg::RuleSet;
 use tui_input::Input;
 use tui_input::backend::crossterm::EventHandler;
 
+use crate::bodycache::{BodyCache, BodyJob, Lookup};
 use crate::bodyview::BodyView;
 use crate::detail::{self, DocRow};
 use crate::images::Images;
@@ -248,7 +249,7 @@ pub struct App {
     pub area: Rect,
     frozen: Option<Box<Frozen>>,
     live_anchor: Option<(Ts, Instant)>,
-    body_cache: HashMap<(TxnIdx, BodyDir), (u64, BodyView)>,
+    bodies: BodyCache,
     last_click: Option<(Instant, u16, u16)>,
     drag: Option<Drag>,
     follow_list: bool,
@@ -297,7 +298,7 @@ impl App {
             area: Rect::default(),
             frozen: None,
             live_anchor: None,
-            body_cache: HashMap::new(),
+            bodies: BodyCache::new(),
             last_click: None,
             drag: None,
             follow_list: true,
@@ -417,7 +418,9 @@ impl App {
         }
     }
 
-    /// The body view for a transaction's body, cached until the body changes.
+    /// The body view for a transaction's body, cached until the body changes. Large bodies are
+    /// decoded on a worker: until that finishes this returns the previous view, or `None`
+    /// (see [`App::body_decoding`]).
     pub fn body_view(&mut self, txn: TxnIdx, dir: BodyDir) -> Option<&mut BodyView> {
         let store = self.frozen.as_ref().map_or(&self.store, |f| &f.store);
         let t = store.txn(txn);
@@ -428,21 +431,34 @@ impl App {
         };
         meta.id?;
         let key = meta.captured * 16 + meta.state as u64;
-        let fresh = !matches!(self.body_cache.get(&(txn, dir)), Some((k, _)) if *k == key);
-        if fresh {
-            let bytes = store.body_bytes(meta);
-            let view = BodyView::build(bytes, headers);
-            self.body_cache.insert((txn, dir), (key, view));
-            if self.body_cache.len() > 64 {
-                // keep memory bounded: drop everything but this entry
-                let keep = self.body_cache.remove(&(txn, dir));
-                self.body_cache.clear();
-                if let Some(k) = keep {
-                    self.body_cache.insert((txn, dir), k);
-                }
-            }
+        let epoch = self.bodies.epoch();
+        let lookup = self.bodies.lookup(txn, dir, key, meta.captured as usize, || BodyJob {
+            epoch,
+            txn,
+            dir,
+            key,
+            raw: store.body_bytes(meta),
+            headers: headers.cloned(),
+        });
+        if let Lookup::BuildHere = lookup {
+            let view = BodyView::build(store.body_bytes(meta), headers);
+            self.bodies.insert(txn, dir, key, view);
         }
-        self.body_cache.get_mut(&(txn, dir)).map(|(_, v)| v)
+        self.bodies.get_mut(txn, dir)
+    }
+
+    /// Whether a worker is decoding this body.
+    pub fn body_decoding(&self, txn: TxnIdx, dir: BodyDir) -> bool {
+        self.bodies.is_building(txn, dir)
+    }
+
+    /// Bodies queued for decoding, for the event loop to run.
+    pub fn take_body_jobs(&mut self) -> Vec<BodyJob> {
+        self.bodies.take_jobs()
+    }
+
+    pub fn finish_body(&mut self, job: BodyJob, view: BodyView) {
+        self.bodies.finish(&job, view);
     }
 
     /// Which response body the detail pane shows.
@@ -624,7 +640,7 @@ impl App {
         self.selected = None;
         self.detail_open = false;
         self.focus = Focus::List;
-        self.body_cache.clear();
+        self.bodies.clear();
         self.list_cursor = 0;
         self.list_offset = 0;
         self.follow_list = true;
@@ -648,6 +664,8 @@ impl App {
     }
 
     pub fn handle_key(&mut self, k: KeyEvent) {
+        // keys can arrive faster than frames; act on the rows as they are now
+        self.refresh();
         let ctrl = k.modifiers.contains(KeyModifiers::CONTROL);
         if ctrl && k.code == KeyCode::Char('c') {
             self.should_quit = true;
@@ -1074,7 +1092,14 @@ impl App {
         let filter = self.jq_input.value().trim().to_string();
         let open = self.view_store().txn(txn).state.is_open();
         let Some(view) = self.body_view(txn, dir) else {
-            self.flash(if open { "the body has not arrived yet" } else { "this request has no body to filter" });
+            let why = if self.body_decoding(txn, dir) {
+                "the body is still being decoded; try again in a moment"
+            } else if open {
+                "the body has not arrived yet"
+            } else {
+                "this request has no body to filter"
+            };
+            self.flash(why);
             return;
         };
         if filter.is_empty() || filter == "." {
@@ -1115,8 +1140,17 @@ impl App {
         }
     }
 
-    /// Run queued filters on this thread (tests and single-frame renders).
-    pub fn run_jq_jobs_inline(&mut self) {
+    /// Whether filters or body decodes are waiting to be run.
+    pub fn has_queued_jobs(&self) -> bool {
+        !self.jq_jobs.is_empty() || self.bodies.has_queued()
+    }
+
+    /// Run queued filters and body decodes on this thread (tests and single-frame renders).
+    pub fn run_jobs_inline(&mut self) {
+        for job in self.take_body_jobs() {
+            let view = job.run();
+            self.finish_body(job, view);
+        }
         for job in self.take_jq_jobs() {
             let result = (self.jq_runner)(&job.filter, &job.bytes);
             self.finish_jq(job, result);
@@ -1126,7 +1160,10 @@ impl App {
     /// Whether something on screen changes with time alone (live axis, open requests, a
     /// message that will expire, a running filter).
     pub fn is_time_dependent(&self) -> bool {
-        if self.message.as_ref().is_some_and(|(_, at)| at.elapsed() < Duration::from_secs(5)) || self.jq_running > 0 {
+        if self.message.as_ref().is_some_and(|(_, at)| at.elapsed() < Duration::from_secs(5))
+            || self.jq_running > 0
+            || self.bodies.building()
+        {
             return true;
         }
         if self.frozen.is_some() {
@@ -1159,6 +1196,7 @@ impl App {
     }
 
     pub fn handle_mouse(&mut self, m: MouseEvent) {
+        self.refresh();
         let (x, y) = (m.column, m.row);
         match m.kind {
             MouseEventKind::Down(MouseButton::Left) => {

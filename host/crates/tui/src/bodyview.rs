@@ -248,6 +248,32 @@ impl BodyView {
         }
     }
 
+    /// Approximate heap memory this view holds (for the cache budget).
+    pub fn mem_bytes(&self) -> usize {
+        fn lines(ls: &[StyledLine]) -> usize {
+            ls.iter().map(|l| l.text.len() + l.spans.len() * 12 + 48).sum()
+        }
+        fn content(c: &Content) -> usize {
+            match c {
+                Content::Json(d) => {
+                    d.lines.iter().map(|l| l.line.text.len() + l.line.spans.len() * 12 + 64).sum::<usize>()
+                        + std::mem::size_of_val(&d.nodes[..])
+                }
+                Content::Lines(ls) => lines(ls),
+                Content::Image(i) => i.image.as_ref().map_or(0, |img| img.as_bytes().len()),
+                Content::Hex | Content::Empty => 0,
+            }
+        }
+        // decoded bytes share the captured buffer unless Content-Encoding was undone
+        let decoded = if self.decoded.encodings.is_empty() { 0 } else { self.decoded.bytes.len() };
+        decoded
+            + content(&self.parsed)
+            + content(&self.source)
+            + self.visible.len() * 4
+            + self.jq.as_ref().map_or(0, |j| lines(&j.lines))
+            + 256
+    }
+
     pub fn is_image(&self) -> bool {
         matches!(self.parsed, Content::Image(_))
     }
@@ -318,18 +344,19 @@ impl BodyView {
         self.refold();
     }
 
-    /// Render visible line `i` of the chosen view.
-    pub fn line(&self, i: usize, parsed: bool, theme: &Theme) -> Line<'static> {
+    /// Render visible line `i` of the chosen view, only the columns in `win`.
+    pub fn line(&self, i: usize, parsed: bool, theme: &Theme, win: Window) -> Line<'static> {
         if parsed && let Some(jq) = &self.jq {
-            return jq.lines.get(i).map(|l| styled(l, theme)).unwrap_or_default();
+            return jq.lines.get(i).map(|l| styled_window(l, theme, win).0).unwrap_or_default();
         }
         match self.content(parsed) {
             Content::Json(doc) => {
                 let Some(&li) = self.visible.get(i) else { return Line::default() };
                 let jl = &doc.lines[li as usize];
-                let mut line = styled(&jl.line, theme);
+                let (mut line, whole) = styled_window(&jl.line, theme, win);
                 if let Some(n) = jl.opens
                     && self.folded.contains(&n)
+                    && whole
                 {
                     let node = doc.nodes[n as usize];
                     line.spans.push(Span::styled("…", theme.dim()));
@@ -343,8 +370,11 @@ impl BodyView {
                 }
                 line
             }
-            Content::Lines(lines) => lines.get(i).map(|l| styled(l, theme)).unwrap_or_default(),
-            Content::Hex => Line::styled(hex::line(&self.decoded.bytes, i), theme.text()),
+            Content::Lines(lines) => lines.get(i).map(|l| styled_window(l, theme, win).0).unwrap_or_default(),
+            Content::Hex => {
+                let text = hex::line(&self.decoded.bytes, i);
+                styled_window(&StyledLine::plain(text), theme, win).0
+            }
             Content::Image(info) => match &info.error {
                 Some(e) => Line::styled(format!("{} image: {e}", info.format), theme.warn()),
                 None => Line::styled(format!("{} image, {}×{}", info.format, info.width, info.height), theme.dim()),
@@ -409,4 +439,48 @@ impl BodyView {
 
 pub fn styled(l: &StyledLine, theme: &Theme) -> Line<'static> {
     Line::from(l.pieces().into_iter().map(|(t, tok)| Span::styled(t.to_string(), theme.tok(tok))).collect::<Vec<_>>())
+}
+
+/// The columns of a line to materialize.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Window {
+    /// Columns scrolled off to the left.
+    pub skip: usize,
+    /// Columns that fit.
+    pub take: usize,
+}
+
+impl Window {
+    pub const ALL: Window = Window { skip: 0, take: usize::MAX };
+}
+
+/// Like [`styled`], but copies only the columns in `win`, so a multi-megabyte line (minified
+/// JSON, a long text line) costs what fits on screen. Also returns whether the whole rest of the
+/// line fit.
+pub fn styled_window(l: &StyledLine, theme: &Theme, win: Window) -> (Line<'static>, bool) {
+    let end = win.skip.saturating_add(win.take);
+    let mut spans = Vec::new();
+    let mut col = 0usize;
+    for (text, tok) in l.pieces() {
+        if col >= end {
+            return (Line::from(spans), false);
+        }
+        let mut s = String::new();
+        for ch in text.chars() {
+            let w = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
+            if col + w > end {
+                col = end;
+                break;
+            }
+            if col >= win.skip {
+                s.push(ch);
+            }
+            col += w;
+        }
+        if !s.is_empty() {
+            spans.push(Span::styled(s, theme.tok(tok)));
+        }
+    }
+    let whole = col < end;
+    (Line::from(spans), whole)
 }

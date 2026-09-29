@@ -23,6 +23,8 @@ use tokio_stream::StreamExt;
 use traffic_police_core::SessionEvent;
 
 use crate::app::{App, JqJob, JqResult};
+use crate::bodycache::BodyJob;
+use crate::bodyview::BodyView;
 use crate::images::Images;
 use crate::ui;
 
@@ -88,6 +90,7 @@ async fn event_loop(
 ) -> anyhow::Result<()> {
     let mut input = EventStream::new();
     let (jq_tx, mut jq_rx) = mpsc::unbounded_channel::<(JqJob, JqResult)>();
+    let (body_tx, mut body_rx) = mpsc::unbounded_channel::<(BodyJob, BodyView)>();
     let mut ticker = tokio::time::interval(INPUT_FRAME);
     ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
     let mut backend_open = true;
@@ -120,10 +123,21 @@ async fn event_loop(
                 app.finish_jq(job, result);
                 input_dirty = true;
             }
+            Some((job, view)) = body_rx.recv() => {
+                app.finish_body(job, view);
+                input_dirty = true;
+            }
             _ = ticker.tick() => {}
         }
         if app.should_quit {
             return Ok(());
+        }
+        for job in app.take_body_jobs() {
+            let tx = body_tx.clone();
+            tokio::task::spawn_blocking(move || {
+                let view = job.run();
+                let _ = tx.send((job, view));
+            });
         }
         for job in app.take_jq_jobs() {
             let runner = app.jq_runner;

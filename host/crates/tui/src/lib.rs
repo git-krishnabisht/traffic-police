@@ -1,6 +1,7 @@
 //! The terminal UI: application state, input handling and drawing (ARCHITECTURE.md §5.8).
 
 pub mod app;
+pub mod bodycache;
 pub mod bodyview;
 pub mod detail;
 pub mod images;
@@ -20,6 +21,14 @@ pub use theme::Theme;
 pub fn render_text(app: &mut App, width: u16, height: u16) -> String {
     let mut term = Terminal::new(TestBackend::new(width, height)).expect("test backend");
     term.draw(|f| ui::draw(f, app)).expect("test backend draw");
+    // finish work the frame queued (large bodies), as the live loop would a moment later
+    for _ in 0..4 {
+        if !app.has_queued_jobs() {
+            break;
+        }
+        app.run_jobs_inline();
+        term.draw(|f| ui::draw(f, app)).expect("test backend draw");
+    }
     buffer_text(term.backend().buffer())
 }
 
@@ -95,7 +104,7 @@ pub fn render_keys(app: &mut App, width: u16, height: u16, keys: &[crossterm::ev
     let mut text = render_text(app, width, height);
     for &k in keys {
         app.handle_key(k);
-        app.run_jq_jobs_inline();
+        app.run_jobs_inline();
         text = render_text(app, width, height);
     }
     text

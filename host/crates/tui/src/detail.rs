@@ -11,7 +11,7 @@ use traffic_police_core::fmt;
 use traffic_police_core::model::{BodyDir, BodyMeta, BodyState, Transaction, TxnIdx, TxnState, header};
 
 use crate::app::{App, Focus, Tab, Target};
-use crate::bodyview::BodyView;
+use crate::bodyview::{BodyView, Window};
 use crate::theme::Theme;
 
 #[derive(Debug, Clone)]
@@ -181,7 +181,16 @@ fn body_rows(app: &mut App, txn: TxnIdx, dir: BodyDir, rows: &mut Vec<DocRow>) -
         rows.push(DocRow::Line(Line::styled(msg, theme.dim())));
         return 0;
     }
-    let Some(view) = app.body_view(txn, dir) else { return 0 };
+    let decoding = app.body_decoding(txn, dir);
+    let Some(view) = app.body_view(txn, dir) else {
+        if decoding {
+            rows.push(DocRow::Line(Line::styled(
+                format!("Body  decoding {}…", fmt::bytes(meta.captured)),
+                theme.dim(),
+            )));
+        }
+        return 0;
+    };
     let mode = if parsed { "parsed · p: source" } else { "source · p: parsed" };
     rows.push(DocRow::Line(Line::from(vec![
         Span::styled("Body", theme.title()),
@@ -688,8 +697,9 @@ pub fn draw(app: &mut App, area: Rect, buf: &mut Buffer) {
                 if let Some(dir) = dir
                     && let Some(v) = app.body_view(txn, dir)
                 {
-                    let l = v.line(bi, parsed, &theme);
-                    draw_line(buf, area.x, y, area.width, &l, hs, base);
+                    let win = Window { skip: usize::from(hs), take: usize::from(area.width) };
+                    let l = v.line(bi, parsed, &theme, win);
+                    draw_line(buf, area.x, y, area.width, &l, 0, base);
                 }
             }
             Some(DocRow::Frame { index }) => {
@@ -839,7 +849,19 @@ fn draw_preview(app: &mut App, txn: TxnIdx, area: Rect, buf: &mut Buffer) {
         );
         return;
     }
-    let Some(view) = app.body_view(txn, dir) else { return };
+    let Some(view) = app.body_view(txn, dir) else {
+        let msg = if app.body_decoding(txn, dir) { "decoding…" } else { "" };
+        draw_line(
+            buf,
+            area.x + 1,
+            area.y + 1,
+            area.width.saturating_sub(2),
+            &Line::styled(msg, theme.dim()),
+            0,
+            Style::default(),
+        );
+        return;
+    };
     if let Some(img) = view.image().and_then(|i| i.image.clone()) {
         let r = Rect { x: area.x + 1, y: area.y, width: area.width.saturating_sub(2), height: area.height };
         app.images.render(&img, r, buf);
@@ -851,8 +873,9 @@ fn draw_preview(app: &mut App, txn: TxnIdx, area: Rect, buf: &mut Buffer) {
         if row >= n {
             break;
         }
-        let l = view.line(row, true, &theme);
-        draw_line(buf, area.x + 1, area.y + row as u16, area.width.saturating_sub(2), &l, 0, Style::default());
+        let width = area.width.saturating_sub(2);
+        let l = view.line(row, true, &theme, Window { skip: 0, take: usize::from(width) });
+        draw_line(buf, area.x + 1, area.y + row as u16, width, &l, 0, Style::default());
     }
     if n > area.height as usize {
         let more = format!(" +{} lines · Response tab ", n - area.height as usize);
