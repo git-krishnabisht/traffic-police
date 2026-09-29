@@ -839,15 +839,15 @@ mod tests {
 
         for m in [
             HostMsg::Ping(Ping { id: 7 }),
-            HostMsg::SetConfig(SetConfig { id: 5, config: CaptureConfigPatch { recording: Some(false), ..Default::default() } }),
+            HostMsg::SetConfig(SetConfig {
+                id: 5,
+                config: CaptureConfigPatch { recording: Some(false), ..Default::default() },
+            }),
         ] {
             let json = serde_json::to_string(&m).unwrap();
             assert_eq!(parse_host(json.as_bytes()).unwrap(), m, "{json}");
         }
-        assert_eq!(
-            serde_json::to_string(&HostMsg::Ping(Ping { id: 7 })).unwrap(),
-            r#"{"t":"ping","id":7}"#
-        );
+        assert_eq!(serde_json::to_string(&HostMsg::Ping(Ping { id: 7 })).unwrap(), r#"{"t":"ping","id":7}"#);
     }
 
     #[test]

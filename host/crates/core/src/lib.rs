@@ -1,1 +1,19 @@
-//! placeholder
+//! Event model, session store, derived views and body decoders for traffic-police.
+//!
+//! Nothing here touches a terminal or a socket: backends turn their input into
+//! [`event::SessionEvent`]s, the [`store::SessionStore`] applies them, and the UI reads the
+//! store (ARCHITECTURE.md §5).
+
+pub mod decode;
+pub mod event;
+pub mod fmt;
+pub mod jq;
+pub mod model;
+pub mod normalize;
+pub mod phases;
+pub mod rows;
+pub mod store;
+
+pub use event::SessionEvent;
+pub use fmt::Ts;
+pub use store::SessionStore;
