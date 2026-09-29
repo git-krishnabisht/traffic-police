@@ -426,7 +426,7 @@ return-object vR
 
 ---
 
-## Design implications for netinspect
+## Design implications for traffic-police
 
 The recommendations below apply the verified facts above; points that rest on inference are flagged.
 

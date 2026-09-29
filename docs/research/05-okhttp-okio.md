@@ -1,4 +1,4 @@
-# 05 — OkHttp / Okio verification for the netinspect capture runtime
+# 05 — OkHttp / Okio verification for the traffic-police capture runtime
 
 Rule applied: **verify, do not recall**. Every claim below cites source read during this task as
 `repo@tag:path:line "verbatim quote"`. Anything not established that way is marked **UNVERIFIED**.
@@ -298,7 +298,7 @@ The JVM/ART linkage points here are reasoned, not verified: **UNVERIFIED** in th
 | `connection()` | `()Lokhttp3/Connection;` | ≤ 3.5 | Nullable. "This is only available in the chains of network interceptors; for application interceptors this is always null." (`okhttp@parent-3.9.0:…/Interceptor.java:35-39`; `okhttp@parent-5.5.0:…/Interceptor.kt:90-94`). 4.x/5.x implementation: "override fun connection(): Connection? = exchange?.connection" (`okhttp@parent-4.12.0:okhttp/src/main/kotlin/okhttp3/internal/http/RealInterceptorChain.kt:59`). |
 | `call()` | `()Lokhttp3/Call;` | **3.9.0** | `okhttp@parent-3.9.0:…/Interceptor.java:41` "Call call();". 3.8.1's `Chain` has only `request`/`proceed`/`connection`. Changelog 3.9.0: "The `Chain` interface now offers access to the call and can adjust all call timeouts." (`okhttp@parent-3.11.0:CHANGELOG.md:183-185`). Returns the same `RealCall` that `EventListener` receives: 3.9.0 builds the chain with `this` (`RealCall.java:196-198`) and creates the listener with `create(call)` (`:60`); in 5.5.0, `RealInterceptorChain(call = this, …)` (`RealCall.kt:224-230`) and `RealInterceptorChain.kt:307` "override fun call(): Call = call". |
 | Timeouts: `connectTimeoutMillis`, `withConnectTimeout(int, TimeUnit)`, … | — | 3.9.0 | `okhttp@parent-3.9.0:…/Interceptor.java:43-53` |
-| 30 new abstract members (`getDns/withDns`, `getCache/withCache`, …, `getEventListener`) | — | **5.4.0** | The dump has 10 abstract `Chain` methods in 5.0.0–5.3.0 and 40 in 5.4.0/5.5.0. Changelog 5.4.0: "Interceptors can now override anything settable on `OkHttpClient.Builder`" (`okhttp@parent-5.5.0:CHANGELOG.md:65-68`). **netinspect must never implement `Interceptor.Chain`.** |
+| 30 new abstract members (`getDns/withDns`, `getCache/withCache`, …, `getEventListener`) | — | **5.4.0** | The dump has 10 abstract `Chain` methods in 5.0.0–5.3.0 and 40 in 5.4.0/5.5.0. Changelog 5.4.0: "Interceptors can now override anything settable on `OkHttpClient.Builder`" (`okhttp@parent-5.5.0:CHANGELOG.md:65-68`). **traffic-police must never implement `Interceptor.Chain`.** |
 
 **"Exactly once" check.** It lives in `RealInterceptorChain.proceed` and applies only when the chain carries a codec/exchange, i.e. to network interceptors:
 - **3.9.0 / 3.12.13**, `okhttp@parent-3.12.13:okhttp/src/main/java/okhttp3/internal/http/RealInterceptorChain.java` (3.9.0 has the same messages at `:139`, `:152`):
@@ -314,7 +314,7 @@ The JVM/ART linkage points here are reasoned, not verified: **UNVERIFIED** in th
 - **5.0.0**: `okhttp@parent-5.0.0:okhttp/src/commonJvmAndroid/kotlin/okhttp3/internal/http/RealInterceptorChain.kt:111-117`, `:130-133`. The body-null check is gone because the body is non-null.
 - **5.5.0**: `okhttp@parent-5.5.0:…/internal/http/RealInterceptorChain.kt:317-323`, `:336-339`.
 
-**Consequences for netinspect:**
+**Consequences for traffic-police:**
 1. A network interceptor cannot return a synthetic response without calling `proceed()`; the post-check throws `IllegalStateException`. Full mocking belongs in an application interceptor.
 2. Throwing an `IOException` **before** `proceed()` is allowed. It propagates out of `interceptor.intercept(next)` before the post-check runs.
 3. The request passed to `proceed` must keep its host and port.
@@ -327,7 +327,7 @@ The JVM/ART linkage points here are reasoned, not verified: **UNVERIFIED** in th
 5. **Non-`IOException`s crash async calls.**
    - Kdoc: "Other exception types cancel the current call … For asynchronous calls made with [Call.enqueue] … The interceptor's exception is delivered to the current thread's [uncaught exception handler] … By default this crashes the application on Android" (`okhttp@parent-5.5.0:…/Interceptor.kt:37-45`).
    - Code: `okhttp@parent-3.12.13:…/RealCall.java:213-219` "catch (Throwable t) { cancel(); … throw t;"; 4.12.0 `RealCall.kt:527-534`; 5.5.0 `RealCall.kt:592-603`.
-   - All netinspect logic inside `intercept()` must catch `Throwable` from our own code.
+   - All traffic-police logic inside `intercept()` must catch `Throwable` from our own code.
 
 ## 5. Connection details
 
@@ -438,7 +438,7 @@ Kotlin properties carry `@get:JvmName("x")`, so the bytecode getter stays `x()`;
 **Helper names:**
 - 3.x: `HttpHeaders.hasBody(Response)` (`okhttp@parent-3.12.13:…/internal/http/HttpHeaders.java:322`, per the fork).
 - 4.x/5.x: `Response.promisesBody()` in `@file:JvmName("HttpHeaders")` (`okhttp@parent-4.12.0:…/internal/http/HttpHeaders.kt:16` "@file:JvmName("HttpHeaders")", `:214` "fun Response.promisesBody(): Boolean {"). `hasBody` is kept only as ERROR-deprecated (`:239` "level = DeprecationLevel.ERROR,", `:241` "fun hasBody(response: Response): Boolean {").
-- These are internal; netinspect should re-implement the roughly 10-line logic rather than call them.
+- These are internal; traffic-police should re-implement the roughly 10-line logic rather than call them.
 
 **What happens to a response our network interceptor rewrote.** Bridge sees what the network segment returns, after `CacheInterceptor`:
 - Remove `Content-Encoding` and supply identity bytes: Bridge's condition is false and it passes the response through untouched. Bridge only strips `Content-Length` inside the gzip branch, so our rewrite must set a correct `Content-Length` or remove it.
@@ -518,7 +518,7 @@ So every redirect hop and every retried attempt reaches network interceptors sep
   - In attach mode the copy's `RealCall` still calls the hooked `eventListenerFactory()` getter, so the hook would wrap the NONE factory and WS handshake events would become visible. Runtime behaviour is **UNVERIFIED**.
 - **Body a 101 carries.** Covered in §6: 3.x/4.x use `EMPTY_RESPONSE` for WS; 5.0 uses `stripBody()`; 5.2+ uses `UnreadableResponseBody` plus `Response.socket` for **any** HTTP/1 upgrade.
   - 5.2.0 changelog: "New: Support [HTTP 101] responses with `Response.socket`. This mechanism is only supported on HTTP/1.1. We also reimplemented our websocket client to use this new mechanism." (`okhttp@parent-5.5.0:CHANGELOG.md:157-158`).
-  - **Non-WebSocket upgrade calls do pass through network interceptors in 5.2+ with an unreadable body.** netinspect must not tee or replace 101 bodies.
+  - **Non-WebSocket upgrade calls do pass through network interceptors in 5.2+ with an unreadable body.** traffic-police must not tee or replace 101 bodies.
 
 ## 9. Okio for Java callers across 1.x, 2.x, 3.x
 
@@ -672,7 +672,7 @@ So every redirect hop and every retried attempt reaches network interceptors sep
 
 ---
 
-## Design implications for netinspect
+## Design implications for traffic-police
 
 ### A. Compile target
 - **Core**: `compileOnly` **OkHttp 3.14.9** with **Okio forced to 1.13.0**.
@@ -709,7 +709,7 @@ Both getters are also called by `OkHttpClient$Builder.<init>(Lokhttp3/OkHttpClie
    - R8 renaming or inlining of `networkInterceptors()`/`eventListenerFactory()` in release builds is therefore possible and would silently defeat name-based hooks (R8 behaviour **UNVERIFIED**).
 3. **WebSocket handshakes are never seen by network interceptors** (`if (!forWebSocket)`). In SDK mode our listener is also dropped for them (`EventListener.NONE` copy, §8d).
 4. **A network interceptor cannot short-circuit** (exactly-once check, §4). Full mocks need an application interceptor. Pre-`proceed()` failure injection is allowed but may be **retried** by `RetryAndFollowUpInterceptor` depending on the exception type and `retryOnConnectionFailure` (§4). Choose `ProtocolException`, or a post-send `SocketTimeoutException`, for a failure that is not retried.
-5. **Rewritten responses are cached.** They are written into the app's `Cache` and replayed later as cache hits that bypass netinspect. Add `Cache-Control: no-store` to rewritten responses (§8c).
+5. **Rewritten responses are cached.** They are written into the app's `Cache` and replayed later as cache hits that bypass traffic-police. Add `Cache-Control: no-store` to rewritten responses (§8c).
 6. **Content-Encoding contract** (§7): either emit real gzip with `Content-Encoding: gzip`, or remove `Content-Encoding` and fix or remove `Content-Length`. br/zstd are decoded later by app-level interceptors, so we see wire-compressed bytes. Find/replace on br/zstd bodies requires a decoder, or the rule must be skipped and reported.
 7. **The replacement body must close the original network body.** Otherwise follow-ups fail with "cannot make a new request because the previous response is still open" (4.x/5.x) or "didn't close its backing stream. Bad interceptor?" (3.x) (§6), and connections leak.
 8. **5.x unreadable bodies** (101 upgrades from 5.2, stripped `networkResponse/cacheResponse/priorResponse`) throw `IllegalStateException` on read.

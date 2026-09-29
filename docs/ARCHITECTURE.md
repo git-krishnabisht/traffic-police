@@ -1,4 +1,4 @@
-# netinspect architecture
+# traffic-police architecture
 
 Status: **draft for review** (Phase 0). PROTOCOL.md defines the wire format; this document defines everything else. Statements about Android, ART, OkHttp, adb and Android Studio were checked against their sources during Phase 0; §11 lists where, and every open question is in §9.
 
@@ -29,21 +29,23 @@ Contents
 ## 2. System overview
 
 ```
- ┌──────────────────────── Android device ─────────────────────────┐        ┌──────────────────────────── host ─────────────────────────────┐
- │  app process (debuggable)                                       │        │                                                               │
- │  ┌───────────────────────────────────────────────────────────┐  │        │  ni-adb ─────────── adb server (127.0.0.1:5037) ◄─── USB/TCP ─┤
- │  │ OkHttp ──► CaptureInterceptor ─┐                           │  │        │   │ track-devices, track-app/jdwp, shell, forward, push        │
- │  │   └─► CaptureEventListener ────┤                           │  │        │   ▼                                                           │
- │  │ HttpURLConnection wrappers ────┼─► Recorder ─► EventQueue  │  │  adbd  │  ni-backends: device socket │ demo │ session file │ HAR     │
- │  │                                │    (bounded, drop oldest) │  │ ◄────► │   │ PROTOCOL.md frames → SessionEvent batches               │
- │  │ RulesEngine ◄── set_rules ─────┘         │                 │  │forward │   ▼                                                           │
- │  │                          writer thread ──┴─► ReplayRing    │  │        │  ni-core: SessionStore (txns, bodies+spill, traffic, threads) │
- │  │                                  │                         │  │        │   │                     ▲ commands (rules, pause, ping)       │
- │  │  LocalServerSocket @netinspect_<pkg>_<pid>  (UID 0/2000 only) │        │   ▼                     │                                     │
- │  └───────────────────────────────────────────────────────────┘  │        │  ni-tui (Ratatui) ── or ── headless (tail / record / export)  │
- │   library mode: linked in debug build                           │        │                                                               │
- │   attach mode: JVMTI agent + boot trampoline + runtime dex      │        │  .netinspect/rules.toml (watched)   config.toml               │
- └─────────────────────────────────────────────────────────────────┘        └───────────────────────────────────────────────────────────────┘
+ ┌───────────────────────── Android device ─────────────────────────┐         ┌─────────────────────────────── host ───────────────────────────────┐
+ │  app process (debuggable)                                        │         │                                                                    │
+ │  ┌────────────────────────────────────────────────────────────┐  │         │ traffic-police-adb ──► adb server (127.0.0.1:5037) ◄── USB / TCP   │
+ │  │ OkHttp ──► CaptureInterceptor ─┐                           │  │         │  │ track-devices, track-app/jdwp, shell, forward, push             │
+ │  │   └─► CaptureEventListener ────┤                           │  │  adbd   │  ▼                                                                 │
+ │  │ HttpURLConnection wrappers ────┼─► Recorder ─► EventQueue  │  │ ◄─────► │ traffic-police-backends: device │ demo │ session file │ HAR        │
+ │  │                                │    (bounded, drop oldest) │  │ forward │  │ PROTOCOL.md frames → SessionEvent batches                       │
+ │  │ RulesEngine ◄── set_rules ─────┘         │                 │  │         │  ▼                                                                 │
+ │  │                     writer thread ◄──────┘                 │  │         │ traffic-police-core: SessionStore (txns, bodies, traffic)          │
+ │  │                           │ encode, seq, ReplayRing        │  │         │  │                           ▲ commands (rules, pause, ping)       │
+ │  │                           ▼                                │  │         │  ▼                           │                                     │
+ │  │ LocalServerSocket @traffic-police_<pkg>_<pid>              │  │         │ traffic-police-tui (Ratatui)  or  headless (tail / record / export)│
+ │  │   (accepts peers with UID 0 or 2000 only)                  │  │         │                                                                    │
+ │  └────────────────────────────────────────────────────────────┘  │         │ .traffic-police/rules.toml (watched)    config.toml                │
+ │  library mode: linked into the app's debug build                 │         │                                                                    │
+ │  attach mode: JVMTI agent + boot trampoline + runtime dex        │         │                                                                    │
+ └──────────────────────────────────────────────────────────────────┘         └────────────────────────────────────────────────────────────────────┘
 ```
 
 Data flow for one request: hook → `Recorder` event (app thread, microseconds) → queue → writer thread (encode, `seq`, ring, socket) → adbd → adb server → host backend (decode, normalize) → store (apply, index) → UI (render visible rows at ≤ 30 fps).
@@ -51,14 +53,14 @@ Data flow for one request: hook → `Recorder` event (app thread, microseconds) 
 ## 3. Repository layout
 
 ```
-docs/                    ARCHITECTURE.md, PROTOCOL.md
-host/                    Cargo workspace (Rust 2024 edition)
-  crates/ni-proto/       wire codec and message types
-  crates/ni-core/        event model, Backend trait, store, filters, rules model, decoders, exporters, redaction
-  crates/ni-adb/         adb server client and discovery
-  crates/ni-backends/    demo, device socket, session file, HAR import, attach orchestration
-  crates/ni-tui/         Ratatui application
-  netinspect/            binary crate (CLI)
+docs/                    ARCHITECTURE.md, PROTOCOL.md, research notes
+host/                    Cargo workspace (Rust 2024 edition); crate names in parentheses
+  crates/proto/          (traffic-police-proto)     wire codec and message types
+  crates/core/           (traffic-police-core)      event model, Backend trait, store, filters, rules model, decoders, exporters, redaction
+  crates/adb/            (traffic-police-adb)       adb server client and discovery
+  crates/backends/       (traffic-police-backends)  demo, device socket, session file, HAR import, attach orchestration
+  crates/tui/            (traffic-police-tui)       Ratatui application
+  cli/                   (traffic-police)           the `traffic-police` binary
 android/                 Gradle build (Kotlin DSL)
   capture/               capture runtime (Java 8 library, AAR)
   capture-noop/          same public API, no capture code
@@ -74,14 +76,14 @@ testdata/protocol/v1/    golden frames shared by Java and Rust tests
 
 Java source level 8, no third-party runtime dependencies, public SDK APIs only. OkHttp and Okio are `compileOnly` and always resolve to the app's copies. The runtime is split so that nothing touches `okhttp3.*` unless OkHttp is present:
 
-| Layer | Package (working names) | May reference | Contents |
+| Layer | Package | May reference | Contents |
 |---|---|---|---|
-| Public API | `io.netinspect` | Android SDK; OkHttp types only in the signatures of the OkHttp methods | `NetInspect` facade, `NetInspectInitProvider` |
-| Core | `io.netinspect.capture.core` | `java.*`, `android.*` | `Recorder` (the capture API every hook calls), transaction ids, `EventQueue` (bounded, drop-oldest), `Writer` thread, `ReplayRing`, frame encoder and a hand-written JSON writer, `SocketServer` (LocalServerSocket, peer check, handshake), `CommandReader`, `RulesEngine` (matching and actions over a client-neutral response model), `CaptureConfig`, `Clock`, `StackCapture`, `Diagnostics`, `TrafficSampler` |
-| HttpURLConnection | `io.netinspect.capture.huc` | core, `java.net`, `javax.net.ssl` | `TrackedHttpURLConnection`, `TrackedHttpsURLConnection`, stream tees |
-| OkHttp adapter | `io.netinspect.capture.okhttp` | core, `okhttp3`, `okio` | `CaptureInterceptor`, `CaptureEventListener` and `ForwardingEventListener`, `CallRegistry`, `TeeRequestBody`, `TeeResponseBody`, `OkHttpRules`, `OkHttpCompat` (feature detection) |
-| Attach entry | `io.netinspect.capture.attach` | core | `AttachEntry` (called by the agent), `HookHandlers` |
-| Boot trampoline (attach only, separate dex) | `io.netinspect.boot` | `java.lang` only | `Trampoline`, `ExitHandler` (4.7.3) |
+| Public API | `io.trafficpolice` | Android SDK; OkHttp types only in the signatures of the OkHttp methods | `TrafficPolice` facade, `TrafficPoliceInitProvider` |
+| Core | `io.trafficpolice.capture.core` | `java.*`, `android.*` | `Recorder` (the capture API every hook calls), transaction ids, `EventQueue` (bounded, drop-oldest), `Writer` thread, `ReplayRing`, frame encoder and a hand-written JSON writer, `SocketServer` (LocalServerSocket, peer check, handshake), `CommandReader`, `RulesEngine` (matching and actions over a client-neutral response model), `CaptureConfig`, `Clock`, `StackCapture`, `Diagnostics`, `TrafficSampler` |
+| HttpURLConnection | `io.trafficpolice.capture.huc` | core, `java.net`, `javax.net.ssl` | `TrackedHttpURLConnection`, `TrackedHttpsURLConnection`, stream tees |
+| OkHttp adapter | `io.trafficpolice.capture.okhttp` | core, `okhttp3`, `okio` | `CaptureInterceptor`, `CaptureEventListener` and `ForwardingEventListener`, `CallRegistry`, `TeeRequestBody`, `TeeResponseBody`, `OkHttpRules`, `OkHttpCompat` (feature detection) |
+| Attach entry | `io.trafficpolice.capture.attach` | core | `AttachEntry` (called by the agent), `HookHandlers` |
+| Boot trampoline (attach only, separate dex) | `io.trafficpolice.boot` | `java.lang` only | `Trampoline`, `ExitHandler` (4.7.3) |
 
 The OkHttp adapter is compiled in two source sets merged into one artifact: everything against **OkHttp 3.14.9 + Okio 1.13.0** (the API baseline OkHttp 4 checks binary compatibility against, and the oldest Okio any supported OkHttp ships), except `ForwardingEventListener`, which is compiled against **OkHttp 5.5.0** so it can override and forward all 33 callbacks. A bytecode-reference check in CI fails the build if the core unit references a member missing from OkHttp 3.9.0 or Okio 1.13.0 outside a guarded list.
 
@@ -95,7 +97,7 @@ Every hook body catches `Throwable` from our own code and falls back to pass-thr
 
 **Two cooperating parts.**
 
-1. `CaptureEventListener`, created per call by `NetInspect.eventListenerFactory(existing)` (library mode) or by the wrapped `eventListenerFactory()` (attach mode). `callStart()` runs on the caller's thread for both `execute()` and `enqueue()` in every supported version, so it records the real initiating thread and stack. Its other callbacks record timing marks (DNS, connect, TLS, connection acquired, request headers and body, response headers and body, call end or failure). The listener is registered in `CallRegistry` (a synchronized `WeakHashMap<Call, CaptureEventListener>`; `RealCall` uses identity equality, and the listener never references the call strongly, so abandoned calls are collected). On OkHttp 5.x, connect events can fire on background threads (fast fallback), so the listener never correlates by thread.
+1. `CaptureEventListener`, created per call by `TrafficPolice.eventListenerFactory(existing)` (library mode) or by the wrapped `eventListenerFactory()` (attach mode). `callStart()` runs on the caller's thread for both `execute()` and `enqueue()` in every supported version, so it records the real initiating thread and stack. Its other callbacks record timing marks (DNS, connect, TLS, connection acquired, request headers and body, response headers and body, call end or failure). The listener is registered in `CallRegistry` (a synchronized `WeakHashMap<Call, CaptureEventListener>`; `RealCall` uses identity equality, and the listener never references the call strongly, so abandoned calls are collected). On OkHttp 5.x, connect events can fire on background threads (fast fallback), so the listener never correlates by thread.
 2. `CaptureInterceptor`, the network interceptor. It finds the call's listener through `chain.call()` (the same `RealCall` the listener received), creates the transaction, and pulls any marks recorded before it ran (DNS and connect happen in ConnectInterceptor, before network interceptors). Marks that happen during the exchange are attributed to the current transaction; a redirect's second hop gets its own transaction with the same `call` id and `hop = 1`.
 
 Without the listener (app did not install it in library mode), the interceptor records its own thread and stack (`thread.origin = "interceptor"`, which for `enqueue()` is an OkHttp dispatcher thread) and only interceptor-level marks.
@@ -132,7 +134,7 @@ intercept(chain):
 
 ### 4.3 Capturing HttpURLConnection
 
-`NetInspect.wrap(connection)` (library mode) and the `URL.openConnection()` exit hooks (attach mode) return a `TrackedHttpsURLConnection` or `TrackedHttpURLConnection` that subclasses the platform type and delegates every method. Other `URLConnection` types (`file:`, `jar:`) are returned unchanged. The state machine follows Studio's, which encodes years of HttpURLConnection quirks, with fixes for the gaps its sources show:
+`TrafficPolice.wrap(connection)` (library mode) and the `URL.openConnection()` exit hooks (attach mode) return a `TrackedHttpsURLConnection` or `TrackedHttpURLConnection` that subclasses the platform type and delegates every method. Other `URLConnection` types (`file:`, `jar:`) are returned unchanged. The state machine follows Studio's, which encodes years of HttpURLConnection quirks, with fixes for the gaps its sources show:
 
 - The transaction starts on the first call that connects: `connect()`, `getOutputStream()`, `getInputStream()`, or any response getter (`getResponseCode()`, `getHeaderField*()`, `getContent*()`, …). The method is recorded as `POST` when `doOutput` is set on a `GET` (HttpURLConnection only switches after connecting). Thread and stack are captured there, on the app's thread.
 - Request bodies are teed from `getOutputStream()`. The request body ends at stream close, or, if the app never closes it, when the response is first touched.
@@ -169,7 +171,7 @@ Rules (PROTOCOL.md §8) are evaluated in the process, because only there can a r
 - **App-thread cost.** Hooks build small event objects and copy body bytes into pooled `byte[]` chunks; that is all. Sequence numbers, JSON encoding, ring accounting and socket writes happen on the writer thread. The stack capture (`new Throwable().getStackTrace()` trimmed to the configured depth, default 64) is the largest app-thread cost and is measured in the overhead benchmark (§6).
 - **Queue.** Bounded by bytes (default 8 MiB). On overflow the oldest queued events are dropped and counted (per transaction where possible); the writer emits a `dropped` event when it next runs. App threads never wait on the writer or the socket.
 - **Ring buffer.** Every encoded frame is also appended to `ReplayRing`, which keeps whole transactions: the last 1,000 transactions or 32 MiB of body bytes (both configurable), evicting the oldest transaction's frames together. `diag` events are kept separately (last 200) so start-up hook failures are always replayed.
-- **Server.** A daemon thread owns `LocalServerSocket("netinspect_<package>_<pid>")` (the abstract namespace). For each connection it checks `getPeerCredentials().getUid()` ∈ {0, 2000} before sending anything, sends `hello`, waits up to 10 s for `hello_ack`, applies config and rules, and hands the socket to the writer, which replays and then streams. A new authorized client replaces the old one (PROTOCOL.md §2).
+- **Server.** A daemon thread owns `LocalServerSocket("traffic-police_<package>_<pid>")` (the abstract namespace). For each connection it checks `getPeerCredentials().getUid()` ∈ {0, 2000} before sending anything, sends `hello`, waits up to 10 s for `hello_ack`, applies config and rules, and hands the socket to the writer, which replays and then streams. A new authorized client replaces the old one (PROTOCOL.md §2).
 - **Clock.** `SystemClock.elapsedRealtimeNanos()` for every `ts`; `System.currentTimeMillis()` only in `clock` pairs.
 - **Traffic sampling.** A sampler reads `TrafficStats.getUidRxBytes/TxBytes(Process.myUid())` every 500 ms and emits a `traffic` event when the values changed (Studio's graph is built from exactly these uid totals). The host uses them for the optional "app total" graph series (5.8).
 - **Pause.** `recording = false` stops new transactions at the `Recorder`; in-flight ones finish; rules keep applying.
@@ -178,19 +180,19 @@ Rules (PROTOCOL.md §8) are evaluated in the process, because only there can a r
 
 ```kotlin
 dependencies {
-    debugImplementation("io.netinspect:capture:<version>")
-    releaseImplementation("io.netinspect:capture-noop:<version>")
+    debugImplementation("io.trafficpolice:capture:<version>")
+    releaseImplementation("io.trafficpolice:capture-noop:<version>")
 }
 
 val client = OkHttpClient.Builder()
-    .addNetworkInterceptor(NetInspect.networkInterceptor())
-    .eventListenerFactory(NetInspect.eventListenerFactory(existingFactoryOrNull))
+    .addNetworkInterceptor(TrafficPolice.networkInterceptor())
+    .eventListenerFactory(TrafficPolice.eventListenerFactory(existingFactoryOrNull))
     .build()
 
-val conn = NetInspect.wrap(URL(url).openConnection() as HttpURLConnection)
+val conn = TrafficPolice.wrap(URL(url).openConnection() as HttpURLConnection)
 ```
 
-- **Auto-start.** The library's manifest declares `NetInspectInitProvider` (a plain `ContentProvider`, no androidx) with a high `initOrder`. Its `onCreate()` starts the runtime only if `ApplicationInfo.FLAG_DEBUGGABLE` is set, and otherwise logs once and stays inert. Android installs a manifest provider only in the process named in its `android:process` (by default the main process; `ComponentResolverBase.queryProviders` filters on the process name), so **secondary processes** (`:remote`, `:sync`) need one call in `Application.onCreate()`: `NetInspect.start(this)` (a no-op in the release artifact). Without it, the interceptor in such a process is a pass-through, and the picker does not list the process.
+- **Auto-start.** The library's manifest declares `TrafficPoliceInitProvider` (a plain `ContentProvider`, no androidx) with a high `initOrder`. Its `onCreate()` starts the runtime only if `ApplicationInfo.FLAG_DEBUGGABLE` is set, and otherwise logs once and stays inert. Android installs a manifest provider only in the process named in its `android:process` (by default the main process; `ComponentResolverBase.queryProviders` filters on the process name), so **secondary processes** (`:remote`, `:sync`) need one call in `Application.onCreate()`: `TrafficPolice.start(this)` (a no-op in the release artifact). Without it, the interceptor in such a process is a pass-through, and the picker does not list the process.
 - **Public API** (identical in `capture-noop`): `networkInterceptor()`, `eventListenerFactory()`, `eventListenerFactory(EventListener.Factory)`, `wrap(HttpURLConnection)`, `wrap(URLConnection)`, `start(Context)`, `isActive()`. In the no-op artifact, `networkInterceptor()` returns a trivial pass-through interceptor, `eventListenerFactory(existing)` returns `existing` (or `EventListener.NONE`'s factory), and `wrap()` returns its argument; the no-op contains no capture code, no provider and no socket.
 - **Order matters** for the listener: if the app calls `eventListener(...)` or `eventListenerFactory(...)` after ours, it replaces ours; the Overview then shows `origin: interceptor` and the Call Stack tab explains why.
 - **R8/ProGuard.** The library ships consumer rules that keep its own classes; OkHttp's names do not matter in library mode because the app links against them directly.
@@ -204,9 +206,9 @@ Goal: capture from an unmodified debuggable app, including OkHttp clients create
 
 | File (per ABI where noted) | Built from | Where it lives on the device | Loaded how |
 |---|---|---|---|
-| `libnetinspect_agent.so` (arm64-v8a, armeabi-v7a, x86_64) | `android/attach-agent` (C++17, NDK, slicer vendored from AOSP `platform/tools/dexter`) | `/data/data/<pkg>/code_cache/netinspect/` | `cmd activity attach-agent`, `am start --attach-agent`, or a copy in `code_cache/startup_agents/` |
-| `netinspect-boot.dex` | `io.netinspect.boot.*` (Java, `java.lang` only) | same dir | JVMTI `AddToBootstrapClassLoaderSearch` in `Agent_OnAttach` |
-| `netinspect-runtime.dex` | `capture` library minus the library-mode entry points | same dir | read into a `ByteBuffer`, then `InMemoryDexClassLoader` |
+| `libtrafficpolice_agent.so` (arm64-v8a, armeabi-v7a, x86_64) | `android/attach-agent` (C++17, NDK, slicer vendored from AOSP `platform/tools/dexter`) | `/data/data/<pkg>/code_cache/traffic-police/` | `cmd activity attach-agent`, `am start --attach-agent`, or a copy in `code_cache/startup_agents/` |
+| `traffic-police-boot.dex` | `io.trafficpolice.boot.*` (Java, `java.lang` only) | same dir | JVMTI `AddToBootstrapClassLoaderSearch` in `Agent_OnAttach` |
+| `traffic-police-runtime.dex` | `capture` library minus the library-mode entry points | same dir | read into a `ByteBuffer`, then `InMemoryDexClassLoader` |
 
 - Slicer lives in AOSP `platform/tools/dexter` (not `external/dexter`); we vendor a pinned revision (Apache-2.0).
 - The agent ABI must match the **process** ABI (ART rejects native-bridge agents), so a 32-bit app on a 64-bit device gets the armeabi-v7a agent. The host reads the process architecture from `track-app` on Android 12+; on older devices it uses the package's primary ABI from `dumpsys package` (to be confirmed on devices in Phase 4).
@@ -218,22 +220,22 @@ Goal: capture from an unmodified debuggable app, including OkHttp clients create
 
 ```
 host                                               device (app main thread, then agent threads)
- push agent+dex to /data/local/tmp/netinspect/  ─►
- run-as <pkg> sh -c 'mkdir -p code_cache/netinspect && cp … && chmod …'
- cmd activity attach-agent <pid> <dataDir>/code_cache/netinspect/libnetinspect_agent.so=<opts>
+ push agent+dex to /data/local/tmp/traffic-police/  ─►
+ run-as <pkg> sh -c 'mkdir -p code_cache/traffic-police && cp … && chmod …'
+ cmd activity attach-agent <pid> <dataDir>/code_cache/traffic-police/libtrafficpolice_agent.so=<opts>
                                                    Agent_OnAttach (main thread; keep short; always return JNI_OK)
                                                      GetEnv(JVMTI_VERSION_1_2), AddCapabilities(can_retransform_classes, …)
-                                                     AddToBootstrapClassLoaderSearch(netinspect-boot.dex)   (skip if already present: version check)
+                                                     AddToBootstrapClassLoaderSearch(traffic-police-boot.dex)   (skip if already present: version check)
                                                      set ClassFileLoadHook (+ ClassPrepare on API 26–27)
                                                      GetLoadedClasses → RetransformClasses(java.net.URL, okhttp3.OkHttpClient if loaded)
-                                                     start "netinspect-init" thread ─► load runtime (InMemoryDexClassLoader), RegisterNatives,
+                                                     start "traffic-police-init" thread ─► load runtime (InMemoryDexClassLoader), RegisterNatives,
                                                                                         AttachEntry.start(opts) → socket, writer, hooks handlers
- discover @netinspect_<pkg>_<pid>, forward, connect ◄─ hello (hooks: installed / failed / pending)
+ discover @traffic-police_<pkg>_<pid>, forward, connect ◄─ hello (hooks: installed / failed / pending)
 ```
 
 - Gates, all satisfied only by debuggable apps on user builds: the caller needs `SET_ACTIVITY_WATCHER` (the shell has it), AMS requires a debuggable process (`enforceDebuggable`), and ART refuses the attach unless JDWP is allowed. Full JVMTI (and therefore retransformation) also requires a debuggable process. `profileable` apps do not qualify.
 - `IApplicationThread.attachAgent` is a **one-way** binder call, so `cmd activity attach-agent` exits 0 without knowing whether the agent loaded. The host treats the attach as successful only when the runtime's socket appears (5 s timeout); otherwise it reads the agent's logcat tag and ART's "Unable to dlopen" / "Agent attach failed" lines and reports them.
-- The agent string is split at the first `=`: everything after it reaches `Agent_OnAttach` as options (a short key/value list: runtime version, session token, directory, flags). Startup agents (4.7.4) get only the app's data dir as options, so the agent also reads `code_cache/netinspect/agent.conf`.
+- The agent string is split at the first `=`: everything after it reaches `Agent_OnAttach` as options (a short key/value list: runtime version, session token, directory, flags). Startup agents (4.7.4) get only the app's data dir as options, so the agent also reads `code_cache/traffic-police/agent.conf`.
 - `Agent_OnAttach` receives no class loader (ART passes `nullptr`; the loader given to `VMDebug.attachAgent` only selects the native library path), and JNI `FindClass` there sees only boot classes. The agent therefore never looks up app classes by name during attach; it uses loaders from `GetLoadedClasses`/`GetClassLoader` and from the ClassFileLoadHook.
 - A crash inside `Agent_OnAttach` kills the app, so it does the minimum (above) and defers everything else to its own thread. Returning `JNI_ERR` makes the framework retry the attach with a null class loader, so the agent always returns `JNI_OK` and reports problems through `diag` events and the `hello.hooks` list.
 - **Idempotent attach.** Re-attaching the same path runs `Agent_OnAttach` again in the same process. The boot dex contains a version marker class; if `FindClass` finds it with the same version, the agent does not re-append or re-register, and tells the running runtime to restart its socket if needed. A different version cannot replace the loaded one (classes cannot be unloaded), so the host asks the user to restart the app.
@@ -247,11 +249,11 @@ host                                               device (app main thread, then
 | `java.net.URL` → `openConnection()Ljava/net/URLConnection;` | Covers HttpURLConnection users (Volley, hand-written code) | a tracked wrapper for `HttpURLConnection`, the original otherwise |
 | `java.net.URL` → `openConnection(Ljava/net/Proxy;)Ljava/net/URLConnection;` | This overload does not delegate to the first one | same |
 
-- All four return references, so one slicer transformation serves them all: `ExitHook` with `ReturnAsObject | PassMethodSignature`. Before every `return-object`, the method calls `io.netinspect.boot.Trampoline.onExit(String label, Object value): Object`, moves the result into the return register, and `check-cast`s it back to the declared type. Exceptional exits are not hooked (correct: nothing to wrap).
+- All four return references, so one slicer transformation serves them all: `ExitHook` with `ReturnAsObject | PassMethodSignature`. Before every `return-object`, the method calls `io.trafficpolice.boot.Trampoline.onExit(String label, Object value): Object`, moves the result into the return register, and `check-cast`s it back to the declared type. Exceptional exits are not hooked (correct: nothing to wrap).
 - The trampoline is a few lines: it reads one `volatile ExitHandler handler`; if null, returns `value`; otherwise calls it inside `try { … } catch (Throwable t) { return value; }`, with a thread-local re-entrancy guard (our own code calls `URL.openConnection` indirectly). Its signatures use only `java.lang` types, so boot classes (`java.net.URL`) and app classes (`okhttp3.OkHttpClient`) can both link to it. `ExitHandler` is a boot-dex interface implemented by the runtime.
 - **Dedupe matters on OkHttp 4/5.** `OkHttpClient.Builder(OkHttpClient)` (i.e. `newBuilder()`) reads the hooked getters in 4.x/5.x bytecode, so a derived client bakes in our interceptor and factory, and its own getter would add them again. Handlers check for our classes by name first. Instances baked into derived clients outlive a detach, so they check the runtime's `active` flag and pass through when it is off.
 - **One OkHttp copy per process (v1).** The ClassFileLoadHook receives the defining class loader. The first loader that defines `okhttp3.OkHttpClient` is chosen; the same name defined by another loader (a plugin or shaded copy) is left unmodified and reported with a `diag`, because an interceptor built against one loader's `okhttp3.Interceptor` would fail with an `IncompatibleClassChangeError` in the other. (Studio's dispatch is loader-agnostic and would hand such a client foreign types.) Supporting several copies later means per-loader labels in a small `ExitHook` variant.
-- **Which loader parents the OkHttp adapter.** The runtime core is loaded at attach time with the boot class loader as parent (it needs only `java.*` and `android.*`, and at launch no app loader exists yet; ART's "system class loader" is the zygote's, not the app's, so it is not used). The OkHttp adapter needs the app's `okhttp3`/`okio`, so it is loaded lazily, on the first OkHttp hook call, into an `InMemoryDexClassLoader` whose parent is the loader recorded for `okhttp3.OkHttpClient`, with a small override that resolves `io.netinspect.capture.core.*` from the core loader. The agent passes the recorded loader to Java through a native method registered with `RegisterNatives`. This avoids both Studio's `findInstances(Application)` heap walk (no `Application` exists before bind) and the main thread's context class loader (which is a `WarningContextClassLoader` for `sharedUserId` apps and apps with a non-default process name).
+- **Which loader parents the OkHttp adapter.** The runtime core is loaded at attach time with the boot class loader as parent (it needs only `java.*` and `android.*`, and at launch no app loader exists yet; ART's "system class loader" is the zygote's, not the app's, so it is not used). The OkHttp adapter needs the app's `okhttp3`/`okio`, so it is loaded lazily, on the first OkHttp hook call, into an `InMemoryDexClassLoader` whose parent is the loader recorded for `okhttp3.OkHttpClient`, with a small override that resolves `io.trafficpolice.capture.core.*` from the core loader. The agent passes the recorded loader to Java through a native method registered with `RegisterNatives`. This avoids both Studio's `findInstances(Application)` heap walk (no `Application` exists before bind) and the main thread's context class loader (which is a `WarningContextClassLoader` for `sharedUserId` apps and apps with a non-default process name).
 - **Retransformation.** The agent keeps a table keyed by class descriptor. ART re-delivers the class's **original** dex on every retransform, so the ClassFileLoadHook re-applies the complete hook set for that class each time: `dex::Reader` → `FindClassIndex` → `CreateClassIr` → `MethodInstrumenter` → `dex::Writer::CreateImage` (JVMTI `Allocate`). The buffer ART passes often holds the **whole** containing dex (Android 8.x and 13+), while ART accepts back only a dex with exactly one class definition; building the IR for the one class and writing it out satisfies that. ART also allows only method-body changes (no added or removed members, no modifier or hierarchy changes), which is exactly what an exit hook is. Classes already loaded at attach are found with `GetLoadedClasses` and retransformed. `java.net.URL` is retransformable in a debuggable process (the boot image is deoptimized for debuggable apps); interfaces, arrays, proxies and `String` are not, and none are targets.
 - **Classes loaded after attach.** On API 28+ the ClassFileLoadHook stays enabled, so `okhttp3.OkHttpClient` loaded later (or at launch) is instrumented at definition; the callback is a lock-free descriptor lookup because it runs for every class. On API 26–27 an always-on hook is expensive (Studio's comment), so the agent enables `ClassPrepare` instead and retransforms `okhttp3.OkHttpClient` when it is prepared, enabling the load hook only on that thread for that call (the pattern Studio's profiler agent uses).
 - **Failure reporting.** For each hook the agent records: class found or not, method found or not (`InstrumentMethod` false is the typical R8-renamed case), retransform error name, loader, and a hit counter updated by the trampoline. The runtime sends this as `hello.hooks` and `diag` events, and `doctor` prints it. Slicer calls `abort()` on internal check failures, so targets are validated before instrumentation (reference return types only; method present; not abstract or native).
@@ -296,12 +298,12 @@ At launch no app class loader exists. That is why hooks are keyed by name, the C
 
 | Crate | Depends on | Contents |
 |---|---|---|
-| `ni-proto` | serde, serde_json, bytes | Wire codec for PROTOCOL.md: frame encoder/decoder, typed messages, version constants. Pure (no IO); a Tokio `Decoder`/`Encoder` behind a feature. Fuzzed. |
-| `ni-core` | ni-proto | Normalized event model, `Backend` trait, session store, body store with disk spill, filter language, redaction, rules model (TOML), body decoders, exporters (HAR, cURL, session file), diff. No terminal code. |
-| `ni-adb` | tokio | adb smart-socket client: device tracking, process tracking, forward, shell v2, sync push, socket discovery. Fallback to the `adb` binary. |
-| `ni-backends` | ni-core, ni-adb, ni-proto | `Backend` implementations: demo generator, device socket (library and attach share it), session file, HAR import. Attach orchestration (push, copy, attach). |
-| `ni-tui` | ni-core, ratatui, crossterm | Application state, views, widgets, keymap, themes, mouse hit-testing. Reads the store; sends commands. |
-| `netinspect` (bin) | all | clap CLI, subcommands (`demo`, `open`, `tail`, `record`, `export`, `doctor`), wiring, logging, panic hook. |
+| `traffic-police-proto` | serde, serde_json, bytes | Wire codec for PROTOCOL.md: frame encoder/decoder, typed messages, version constants. Pure (no IO); a Tokio `Decoder`/`Encoder` behind a feature. Fuzzed. |
+| `traffic-police-core` | traffic-police-proto | Normalized event model, `Backend` trait, session store, body store with disk spill, filter language, redaction, rules model (TOML), body decoders, exporters (HAR, cURL, session file), diff. No terminal code. |
+| `traffic-police-adb` | tokio | adb smart-socket client: device tracking, process tracking, forward, shell v2, sync push, socket discovery. Fallback to the `adb` binary. |
+| `traffic-police-backends` | traffic-police-core, traffic-police-adb, traffic-police-proto | `Backend` implementations: demo generator, device socket (library and attach share it), session file, HAR import. Attach orchestration (push, copy, attach). |
+| `traffic-police-tui` | traffic-police-core, ratatui, crossterm | Application state, views, widgets, keymap, themes, mouse hit-testing. Reads the store; sends commands. |
+| `traffic-police` (bin) | all | clap CLI, subcommands (`demo`, `open`, `tail`, `record`, `export`, `doctor`), wiring, logging, panic hook. |
 
 Release builds embed the Android artifacts (agent `.so` per ABI, capture dex, trampoline dex) with `include_bytes!` from a build step, so attach mode needs nothing but adb (Phase 4).
 
@@ -350,7 +352,7 @@ pub enum BackendCommand { SetRules(RuleSet), SetCaptureConfig(CaptureConfig), Pa
 - Backends that cannot accept commands (file, HAR) report that in `BackendInfo.capabilities`; the UI greys out pause and rules.
 - `TxnKey = (SourceId, device txn id)`. The store maps it to a dense `TxnIdx` (u32) in arrival order.
 
-**Demo backend.** `netinspect demo` runs a simulated device that *encodes real protocol frames* (PROTOCOL.md) into an in-memory stream decoded by the same code as a live connection, so the demo exercises the protocol path end to end. Scenario scripts (seeded RNG, real or virtual clock):
+**Demo backend.** `traffic-police demo` runs a simulated device that *encodes real protocol frames* (PROTOCOL.md) into an in-memory stream decoded by the same code as a live connection, so the demo exercises the protocol path end to end. Scenario scripts (seeded RNG, real or virtual clock):
 
 - an identity-SDK session on `DefaultDispatcher-worker-*` threads: `init` → `challenge` → `attest` → `enroll`, then `status?sessionId=…` every 1.5 s until a verdict;
 - background telemetry (`events`, `monitor`) on its own thread, with gzip-encoded JSON;
@@ -363,8 +365,8 @@ With a virtual clock the generator produces a fixed timeline instantly; the snap
 
 ### 5.4 adb client and discovery
 
-- `ni-adb` speaks the adb server protocol on `127.0.0.1:5037` (or `ADB_SERVER_SOCKET` / `ANDROID_ADB_SERVER_PORT`). The exact requests and replies are in PROTOCOL.md Appendix A. The rules that shape the client: one outstanding request per TCP connection (the server does not support pipelining), a timeout on every request (some malformed requests get no reply), devices addressed by transport id rather than serial (ids are exact; serial matching is fuzzy), and device capabilities decided from the device's feature list rather than its API level (adbd is an updatable module).
-- **Long-lived tasks.** One device tracker per server (`host:track-devices-proto-binary` when the server advertises `devicetracker_proto_format`, else `host:track-devices-l`). Per online device: a process tracker (`track-app` on Android 12+ devices with the `track_app` feature, which also reports debuggability and the process architecture; else `track-jdwp` plus `/proc/<pid>/cmdline` for names) and, while a picker or `--follow` needs it, a socket scan (`cat /proc/net/unix` every second, filtered to listening `@netinspect_` names).
+- `traffic-police-adb` speaks the adb server protocol on `127.0.0.1:5037` (or `ADB_SERVER_SOCKET` / `ANDROID_ADB_SERVER_PORT`). The exact requests and replies are in PROTOCOL.md Appendix A. The rules that shape the client: one outstanding request per TCP connection (the server does not support pipelining), a timeout on every request (some malformed requests get no reply), devices addressed by transport id rather than serial (ids are exact; serial matching is fuzzy), and device capabilities decided from the device's feature list rather than its API level (adbd is an updatable module).
+- **Long-lived tasks.** One device tracker per server (`host:track-devices-proto-binary` when the server advertises `devicetracker_proto_format`, else `host:track-devices-l`). Per online device: a process tracker (`track-app` on Android 12+ devices with the `track_app` feature, which also reports debuggability and the process architecture; else `track-jdwp` plus `/proc/<pid>/cmdline` for names) and, while a picker or `--follow` needs it, a socket scan (`cat /proc/net/unix` every second, filtered to listening `@traffic-police_` names).
 - **Shell commands** use `shell,v2,raw:` so every command has an exit code (minimum API 26, so the shell protocol is always there), with arguments single-quoted.
 - **Pushing** the attach-mode files uses the sync protocol directly (`SEND`/`DATA`/`DONE`, 64 KiB chunks).
 - **Forwards** are created per connection (`tcp:0`, so the server picks the port) and removed with `killforward:tcp:<port>` when the connection ends. They also vanish whenever the device goes offline or the server restarts, so the backend re-creates them on every transition back to `device`. A forward succeeding proves nothing about the runtime (a forward to a missing socket connects and then reads EOF); only `hello` does. The client never uses `killforward-all`, which would also remove Android Studio's forwards.
@@ -410,7 +412,7 @@ pub struct SessionStore {
 - Transactions are `Arc`s updated with `Arc::make_mut` (copy-on-write). A freeze snapshot clones the `Vec<Arc<_>>` (about 400 KB of pointers at 50,000 rows, well under a millisecond) plus small metadata; later updates copy only the transactions they touch. The body store is append-only, so a snapshot bounds its reads by the lengths it recorded.
 - A `Transaction` holds: key, source, call id and hop (redirect chains), client kind, method, URL (raw plus parsed scheme, host, port, path, query), ordered request headers, optional response (status, message, protocol, ordered headers, remote address, TLS), body references per direction (`Request`, `Response` as received, `ResponseDelivered` when a rule changed the body), rule effects with the original status line and headers, thread, stack (shared `Arc<[Frame]>`), timing marks, start and end timestamps, state (`Pending`, `Sending`, `Waiting`, `Receiving`, `Complete`, `Failed`, `Detached`), sizes, and flags (rule-modified, gap, truncated).
 - Headers are `Vec<(String, String)>`: order and duplicates are preserved everywhere, including HAR export.
-- **Body store.** Chunks are kept in memory as `Bytes` until a budget (default 256 MiB) is exceeded; then the oldest and largest bodies are spilled to an append-only file in a per-run temp directory (`<temp>/netinspect-<pid>-<random>/`), leaving `(offset, len)` references. The directory is deleted on exit, from the panic hook, and on SIGTERM/SIGHUP; on start-up, directories of dead pids are removed. Each body records its state: `Streaming`, `Complete`, `Truncated { captured, total }`, `NotCaptured(reason)`, `NotConsumed`, `ClosedEarly`, `Gap` (chunks lost to device overflow).
+- **Body store.** Chunks are kept in memory as `Bytes` until a budget (default 256 MiB) is exceeded; then the oldest and largest bodies are spilled to an append-only file in a per-run temp directory (`<temp>/traffic-police-<pid>-<random>/`), leaving `(offset, len)` references. The directory is deleted on exit, from the panic hook, and on SIGTERM/SIGHUP; on start-up, directories of dead pids are removed. Each body records its state: `Streaming`, `Complete`, `Truncated { captured, total }`, `NotCaptured(reason)`, `NotConsumed`, `ClosedEarly`, `Gap` (chunks lost to device overflow).
 - **Traffic series.** Bytes are added at the device timestamp of the chunk (or progress event) that carried them, plus header sizes at request and response start. Storage is fine bins (10 ms) per direction with running prefix sums, so any zoom level computes N bucket sums in O(N). A one-hour session costs about 9 MB; longer sessions re-bin to 100 ms. HAR imports spread bytes evenly across each entry's send and receive phases. The "app total" series is kept separately as the raw `traffic` samples (cumulative counters every 500 ms), converted to rates per bucket at draw time.
 - **Time.** All durations and bins use device monotonic nanoseconds. Wall-clock labels use the per-source offset from `hello` and refreshed by `pong`. The session origin is the first source's `hello` time (or the first event, for files).
 
@@ -478,8 +480,8 @@ Decoded bodies are cached in an LRU keyed by `(TxnIdx, dir, variant)` with a byt
   Parse errors are highlighted in place and the previous valid filter stays active.
 - **Search.** `/` in the detail pane searches the current body view (n and N step; matches highlighted). `body:` in the filter bar is the cross-session search ("which request returned this value").
 - **Copy** (`y` menu): as cURL (POSIX single-quote escaping; text bodies inline with `--data-binary`, binary bodies written to a file next to the command and referenced as `@file`; headers in order; `--compressed` when the request asked for gzip; a PowerShell variant is a Phase 2 stretch), URL, request or response headers, one header, body (decoded), the value at the cursor's JSON path. `clipboard = "auto"` uses OSC 52 over SSH or when no display server is present (it works inside tmux with `set-clipboard on|external`, which the status bar hints at on failure) and the native clipboard otherwise; `osc52`, `native` and `off` force a choice. OSC 52 is copy-only by design.
-- **Save and export** (`w`, `e` menu): save a body (binary-safe, extension from Content-Type or magic); HAR 1.2 of all, filtered, or selected rows (redacted by default), with `_netinspect` custom fields for thread, stack, rules and timings beyond HAR's; HAR import through `netinspect open file.har`.
-- **Sessions** (`e` menu, `netinspect record`, `netinspect open`): one file (`.nisession`), see PROTOCOL.md §10. It stores the event stream exactly as captured plus host annotations, so reopening reproduces timings, threads, stacks, rule effects, pins and markers.
+- **Save and export** (`w`, `e` menu): save a body (binary-safe, extension from Content-Type or magic); HAR 1.2 of all, filtered, or selected rows (redacted by default), with `_trafficPolice` custom fields for thread, stack, rules and timings beyond HAR's; HAR import through `traffic-police open file.har`.
+- **Sessions** (`e` menu, `traffic-police record`, `traffic-police open`): one file (`.trafficpolice`), see PROTOCOL.md §10. It stores the event stream exactly as captured plus host annotations, so reopening reproduces timings, threads, stacks, rule effects, pins and markers.
 - **Diff** (`d` marks; the second mark opens the diff): status lines, headers (as ordered lists and as sets), and bodies. JSON bodies are canonicalized (keys sorted recursively, pretty-printed) before a line diff, so key order does not matter; other text is diffed as is; binary bodies compare size and hash.
 - **Decoders.** JWTs are detected in `Authorization: Bearer` and in any string of the form `xxx.yyy.zzz` whose header decodes to JSON; the Overview and a decoder popup show header, claims, and `exp`/`iat`/`nbf` in local time with a relative age. Enter on any header or JSON value opens a value menu: copy, decode base64 (standard and URL-safe), URL-decode, decode JWT, filter by this value.
 - **Redaction** (on by default). Built-in header list: `Authorization`, `Proxy-Authorization`, `Cookie`, `Set-Cookie`, `X-Api-Key`, `Api-Key`, `X-Auth-Token`, plus configurable headers, query parameters, and JSON paths (`$.aadhaar`, `$..pan`, `$.data[*].mobile`). Values are masked as `‹redacted 32 chars›` in the UI (R toggles reveal for this session, and the header shows `REVEALED`) and in every export (cURL, HAR, session, NDJSON) unless `--no-redact` or the export dialog's explicit switch is used. Body masking works on decoded JSON; masked bodies are exported decoded, without Content-Encoding.
@@ -488,7 +490,7 @@ Decoded bodies are cached in an LRU keyed by `(TxnIdx, dir, variant)` with a byt
 
 ### 5.11 Rules (host side)
 
-- Stored in `.netinspect/rules.toml` in the project (the nearest ancestor of the working directory containing `.netinspect/`, or `--project DIR`). Schema in PROTOCOL.md §8 (the TOML form mirrors the wire form).
+- Stored in `.traffic-police/rules.toml` in the project (the nearest ancestor of the working directory containing `.traffic-police/`, or `--project DIR`). Schema in PROTOCOL.md §8 (the TOML form mirrors the wire form).
 - The file is watched (debounced 200 ms). A valid change is pushed to the device immediately (`set_rules`); an invalid one is shown in the Rules view and status bar while the last valid set stays active.
 - Edits from the TUI form are written back with comment-preserving TOML editing. `$EDITOR` can be opened on the file from the Rules view.
 - `r` creates a rule prefilled from the selected request (method, scheme, host, port, exact path, and the query parameters present).
@@ -498,14 +500,14 @@ Decoded bodies are cached in an LRU keyed by `(TxnIdx, dir, variant)` with a byt
 ### 5.12 CLI, headless modes, doctor
 
 ```
-netinspect                                   interactive: device picker → process picker → session
-netinspect --serial S --package P [--process NAME | --pid N] [--mode library|attach] [--launch] [--follow]
-netinspect demo [--seed N] [--speed X]
-netinspect open FILE                         .nisession or .har (REPLAY)
-netinspect tail --json [TARGET] [FILTER...]  NDJSON, one line per completed transaction (--events for raw events)
-netinspect record --out FILE [--duration 60s] [TARGET] [--filter F]
-netinspect export --har FILE [--input FILE | TARGET --duration D] [--filter F] [--no-redact]
-netinspect doctor [TARGET]
+traffic-police                                   interactive: device picker → process picker → session
+traffic-police --serial S --package P [--process NAME | --pid N] [--mode library|attach] [--launch] [--follow]
+traffic-police demo [--seed N] [--speed X]
+traffic-police open FILE                         .trafficpolice or .har (REPLAY)
+traffic-police tail --json [TARGET] [FILTER...]  NDJSON, one line per completed transaction (--events for raw events)
+traffic-police record --out FILE [--duration 60s] [TARGET] [--filter F]
+traffic-police export --har FILE [--input FILE | TARGET --duration D] [--filter F] [--no-redact]
+traffic-police doctor [TARGET]
 ```
 
 - `TARGET` is `--serial`, `--package`, `--process`/`--pid`, `--mode`, `--launch`, `--follow`. With one device attached `--serial` is optional.
@@ -514,14 +516,14 @@ netinspect doctor [TARGET]
 
 ### 5.13 Config, themes, keymap
 
-- **User config:** `config.toml` in `$XDG_CONFIG_HOME/netinspect` (default `~/.config/netinspect`) on Linux and macOS, and `%APPDATA%\netinspect` on Windows, overridable with `NETINSPECT_CONFIG`. macOS uses the XDG location, as most terminal tools do, rather than `~/Library/Application Support`. Sections: `[ui]` (theme, time format, visible columns, divider position), `[capture]` (body cap, stack depth), `[redaction]` (enabled, headers, query params, JSON paths), `[keymap]` (action = keys), `[adb]` (server address, adb path), `[storage]` (memory budget, spill dir).
-- **Project config** (`.netinspect/`): `rules.toml`, `project.toml` (default package, source roots for Call Stack → $EDITOR, extra redaction entries).
+- **User config:** `config.toml` in `$XDG_CONFIG_HOME/traffic-police` (default `~/.config/traffic-police`) on Linux and macOS, and `%APPDATA%\traffic-police` on Windows, overridable with `TRAFFIC_POLICE_CONFIG`. macOS uses the XDG location, as most terminal tools do, rather than `~/Library/Application Support`. Sections: `[ui]` (theme, time format, visible columns, divider position), `[capture]` (body cap, stack depth), `[redaction]` (enabled, headers, query params, JSON paths), `[keymap]` (action = keys), `[adb]` (server address, adb path), `[storage]` (memory budget, spill dir).
+- **Project config** (`.traffic-police/`): `rules.toml`, `project.toml` (default package, source roots for Call Stack → $EDITOR, extra redaction entries).
 - **Color:** `NO_COLOR` switches to a monochrome theme that carries meaning in text, bold and reverse video. (crossterm 0.29 answers color commands under `NO_COLOR` with a bare reset that also clears bold and reverse, so we detect `NO_COLOR` ourselves, force crossterm's color output on, and simply never emit colors.) `COLORTERM=truecolor|24bit` enables RGB; `TERM=*256color*` uses the 256-color palette (syntect's RGB themes are quantized); otherwise 16 colors. Dark and light themes ship built in; themes define semantic slots (status classes, sending, waiting, receiving, selection, focus border, markers) rather than raw widget colors.
 - **Keymap:** every action has a name, and `[keymap]` maps action names to one or more keys (`ctrl+r`, `shift+tab`, `F`, `?`); defaults follow the brief plus `T` and `R` (9.1). Multi-key sequences are not used. Invalid entries are reported with the line and the valid action names.
 
 ### 5.14 Logging, errors, crash safety
 
-- `tracing` logs to a file in the platform state/cache dir (`NETINSPECT_LOG=debug` to raise the level); nothing is written to the terminal while the TUI runs. `--log-file` overrides the path.
+- `tracing` logs to a file in the platform state/cache dir (`TRAFFIC_POLICE_LOG=debug` to raise the level); nothing is written to the terminal while the TUI runs. `--log-file` overrides the path.
 - User-facing errors appear in the status bar with an action hint; details go to the log. Protocol mismatches produce a dialog that names both versions and the fix.
 - Panic hook: restore the terminal, remove the spill directory, print the panic and the log path.
 
@@ -582,7 +584,7 @@ A CI step (`cargo tree -e features`) fails if a C library sneaks back in through
 - JVM tests (JUnit 4, MockWebServer from the same OkHttp major version) for gzip, chunked, streaming, redirects, errors, timeouts, cancellation, one-shot and duplex request bodies, WebSocket and other upgrades, composition with an app `EventListener`, and every rule action. The same suite runs against OkHttp 3.9.0, 3.12.13, 3.14.9, 4.0.0, 4.12.0, 5.0.0 and 5.5.0, each with the Okio it ships and with the newest Okio, via Gradle test configurations that swap the runtime dependency while the library stays compiled against its fixed targets (4.1).
 - Protocol conformance: JVM tests write golden frame files (`testdata/protocol/v1/*.frames` plus an expected-events JSON), and Rust tests decode them; the Rust side writes host-to-device golden frames that the Java tests decode. Regenerating golden files is an explicit Gradle/cargo task, never a side effect of a normal test run.
 - Instrumented tests on emulators (API 26 and the latest API level): the sample app's scenarios with the library, and the attach path in Phase 4.
-- End to end: a script installs the sample app, starts `netinspect tail --json --package …`, triggers the scenario list through an instrumentation, and asserts the NDJSON stream (methods, URLs, statuses, body hashes, thread names, stack frames containing the sample's call sites).
+- End to end: a script installs the sample app, starts `traffic-police tail --json --package …`, triggers the scenario list through an instrumentation, and asserts the NDJSON stream (methods, URLs, statuses, body hashes, thread names, stack frames containing the sample's call sites).
 
 **CI (GitHub Actions)**
 
@@ -597,7 +599,7 @@ A CI step (`cargo tree -e features`) fails if a C library sneaks back in through
 |---|---|---|---|
 | 1 | slicer from AOSP `external/dexter` | `platform/tools/dexter` | That is where slicer lives (verified on AOSP Gerrit); same code Studio uses |
 | 2 | OkHttp 3.x, 4.x, 5.x | 3.9.0 and later | 3.0–3.8 have no public `EventListener` and no `Chain.call()`; they are detected and left alone with a `diag` |
-| 3 | `debugImplementation` auto-starts from a ContentProvider | Auto-start in the main process; secondary processes call `NetInspect.start(context)` | Android installs a manifest provider only in the process it is declared for (verified in `ComponentResolverBase.queryProviders`) |
+| 3 | `debugImplementation` auto-starts from a ContentProvider | Auto-start in the main process; secondary processes call `TrafficPolice.start(context)` | Android installs a manifest provider only in the process it is declared for (verified in `ComponentResolverBase.queryProviders`) |
 | 4 | "show the 101 upgrade only" for WebSockets | Attach mode: handshake headers via the EventListener hook (to be confirmed in Phase 4). Library mode: not visible | OkHttp never runs network interceptors for WebSocket handshakes and builds the WebSocket client with `EventListener.NONE` |
 | 5 | Capture from launch via `am start --attach-agent` or `startup_agents` | API 30+ `startup_agents`; 27–29 `--attach-agent` (27–28 best effort); API 26 cannot capture from launch | `--attach-agent` appeared in API 27, `startup_agents` in API 30; `--attach-agent-bind` attaches twice (verified in AMS code) |
 | 6 | Traffic graph like Studio | Default: bytes the runtime captured; `T` toggles to Studio's whole-app `TrafficStats` series | Captured bytes line up with the rows, zoom finer than 500 ms, and exist in file and HAR sessions; Studio's series is kept for parity (see 9.2) |
@@ -605,18 +607,22 @@ A CI step (`cargo tree -e features`) fails if a C library sneaks back in through
 | 8 | (not specified) | Rewritten responses get `Cache-Control: no-store` unless the rule opts out | OkHttp caches what leaves the network interceptors; a fake response must not outlive its rule |
 | 9 | Suggested crates: tui-textarea, zstd | ratatui-textarea + tui-input; ruzstd (+ pure-Rust gzip/brotli) | tui-textarea is stuck on Ratatui 0.29; `zstd` needs a C toolchain per target, which works against one self-contained binary per OS. The stack itself (Rust, Ratatui, crossterm, Tokio) is unchanged |
 | 10 | Keys | Adds `T` (graph source) and `R` (reveal redacted values) | Not assigned in the brief |
-| 11 | (not specified) | One client per app process; a new client takes over | Makes reconnecting after a host crash always work; `tail` and the TUI cannot watch the same process at once (see 9.2) |
+| 11 | (not specified) | One client per app process; a new client takes over (decided in review) | Makes reconnecting after a host crash always work; `tail` and the TUI cannot watch the same process at once |
 | 12 | Device clock "monotonic" | `SystemClock.elapsedRealtimeNanos()` (CLOCK_BOOTTIME) | Monotonic and shared by all processes, and keeps counting in suspend, so the wall-clock offset stays stable |
 | 13 | OkHttp 2 | Not supported | Studio still supports it; the brief lists 3.x–5.x. Android's own HttpURLConnection (built on an internal OkHttp 2 fork) is covered by 4.3 |
 
-### 9.2 Questions for review
+### 9.2 Review decisions and open questions
 
-1. **Graph default.** Captured bytes (proposed) or Studio's whole-app `TrafficStats`?
-2. **Names.** Java package `io.netinspect`, Maven coordinates `io.netinspect:capture` / `capture-noop`, session extension `.nisession`, crate prefix `ni-` are placeholders until the name is final.
-3. **`Cache-Control: no-store` on rewrites.** Default on (proposed) or off?
-4. **One client per process.** Takeover (proposed), or several simultaneous viewers (more device code: a queue and a replay cursor per client)?
-5. **Git.** Phase 0 is committed on branch `phase-0` (the repository had no commits). Merge to `main` after review?
-6. **Environment for Phase 0b and later.** Rust is not installed on this machine (`rustup` would install the pinned toolchain). The Android SDK has system images for API 31 and API 37 (16 KB pages) only; Phase 1 needs an API 26 image. The connected phone currently shows as "unauthorized" in adb.
+Decided in the Phase 0 review:
+
+- **Name:** the project is **traffic-police**. Binary `traffic-police`; Rust crates `traffic-police-*`; Java packages `io.trafficpolice.*` with the public class `TrafficPolice`; Maven coordinates `io.trafficpolice:capture` and `io.trafficpolice:capture-noop`; device socket `traffic-police_<package>_<pid>`; project directory `.traffic-police/`; session files `*.trafficpolice`.
+- **One client per app process;** a new client takes over.
+- **Git:** Phase 0 merged into `master`.
+
+Still open:
+
+1. **Default graph source.** Should the graph at the top draw (a) only the traffic of the requests traffic-police captured, i.e. the rows in the list (proposed), or (b) all network traffic of the app as counted by Android, which is what Android Studio draws (it also includes traffic that never becomes a row, such as WebView or native code, and is only sampled every 0.5 s)? The other source is always one key away (`T`).
+2. **Rewritten responses and the app's HTTP cache.** When a rule changes a response, OkHttp may store the changed response in the app's HTTP cache, so the app could keep seeing it after the rule is turned off. Should traffic-police add `Cache-Control: no-store` to every response a rule changed (proposed; the app then sees one extra header on those responses), or leave caching alone unless a rule asks?
 
 ### 9.3 Risks
 
@@ -634,7 +640,7 @@ A CI step (`cargo tree -e features`) fails if a C library sneaks back in through
 | Phase | Deliverable | Done when |
 |---|---|---|
 | 0a | ARCHITECTURE.md, PROTOCOL.md | Reviewed |
-| 0b | Complete TUI on the demo backend | `netinspect demo` shows every view and tab; snapshot tests pass |
+| 0b | Complete TUI on the demo backend | `traffic-police demo` shows every view and tab; snapshot tests pass |
 | 1 | Library mode end to end | Sample app traffic live on a physical device and on API 26 and latest emulators, with correct headers, bodies, timings, thread and stack; kill and relaunch behave as specified |
 | 2 | Utilities | Everything in 5.10 and 5.12 |
 | 3 | Rules | MockWebServer tests for every action, gzip included |

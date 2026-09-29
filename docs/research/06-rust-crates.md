@@ -1,4 +1,4 @@
-# netinspect: Rust crate and API research (verified 2026-09-29)
+# traffic-police: Rust crate and API research (verified 2026-09-29)
 
 **How this was checked.** Every version, release date and MSRV below comes from the crates.io API (`/api/v1/crates/<name>` and `/<version>`), fetched on 2026-09-29. APIs were read from the published crate tarballs, downloaded from `https://crates.io/api/v1/crates/<name>/<version>/download` into `scratchpad/tmp-crates/src-dl/`. Some claims were also checked against docs.rs and GitHub (`gh api`).
 
@@ -532,7 +532,7 @@ Always put a `Read::take(limit)` on decoded output to guard against decompressio
 
 ```toml
 [package]
-name = "netinspect"
+name = "traffic-police"
 edition = "2024"
 rust-version = "1.90"        # ratatui needs 1.88; transitive quantette (ratatui-image → icy_sixel) needs 1.90
 
@@ -640,7 +640,7 @@ opt-level = 3
 
 ---
 
-## Design implications for netinspect
+## Design implications for traffic-police
 
 1. **Table virtualization is required.** Table allocates every `Row` passed in and runs an O(N) `column_count()` pass. It never measures content, so the fix is not to pass it everything.
    - Keep `Vec<u32>` filtered and sorted indices, updated incrementally on insert and never re-sorted per frame.
@@ -704,7 +704,7 @@ opt-level = 3
    - Watch the **parent directory** (NonRecursive) with notify-debouncer-full, because editors save by rename. Filter events by file name, keep the last good rules if parsing fails, and ignore your own writes by comparing content hashes.
 
 10. **Logging and headless mode.**
-    - Log through `tracing-appender::rolling::never(state_dir, "netinspect.log")` + `non_blocking`, keeping the `WorkerGuard` alive, with `.with_ansi(false)`.
+    - Log through `tracing-appender::rolling::never(state_dir, "traffic-police.log")` + `non_blocking`, keeping the `WorkerGuard` alive, with `.with_ansi(false)`.
     - Nothing may be written to stdout while the TUI is active.
     - The NDJSON mode owns stdout; logs go to the file or to stderr.
     - Consider crossterm's `use-dev-tty` (unix) if you support piped stdin together with the TUI.

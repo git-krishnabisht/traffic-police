@@ -1,6 +1,6 @@
-# netinspect device protocol
+# traffic-police device protocol
 
-Status: **draft v1 for review** (Phase 0). This document is the source of truth for the bytes exchanged between the capture runtime inside an Android app process ("device") and the `netinspect` host. Conformance is enforced by golden-file tests in both directions (§11).
+Status: **draft v1 for review** (Phase 0). This document is the source of truth for the bytes exchanged between the capture runtime inside an Android app process ("device") and the `traffic-police` host. Conformance is enforced by golden-file tests in both directions (§11).
 
 Contents
 
@@ -16,7 +16,7 @@ Contents
 10. Session files
 11. Conformance tests
 - Appendix A: adb services used by the host
-- Appendix B: NDJSON output of `netinspect tail`
+- Appendix B: NDJSON output of `traffic-police tail`
 
 ---
 
@@ -45,9 +45,9 @@ Contents
 ## 2. Transport, discovery and access control
 
 - The device listens on an **abstract-namespace** Unix socket via `android.net.LocalServerSocket(name)`, with
-  `name = "netinspect_" + package + "_" + pid`.
-  Abstract names are limited to 107 bytes. If the name would be longer, the package part is replaced by its first 79 characters + `"~"` + 8 lowercase hex digits of the CRC-32 of the full package name. The host computes the same function for the fallback path below.
-- **Discovery.** The host reads `/proc/net/unix` over `adb shell` (readable by the shell domain on API 26–37) and keeps rows whose flags field is `00010000` (listening), state `01`, and path starts with `@netinspect_` (the kernel prints abstract names with a leading `@`). This is the same parse Chrome's DevTools uses for `@webview_devtools_remote_<pid>`. If the file is unreadable, the host computes the name from the package and each pid in the process list and probes it.
+  `name = "traffic-police_" + package + "_" + pid`.
+  Abstract names are limited to 107 bytes. The prefix, separator and a 7-digit pid take 23, which leaves 84 for the package. If the package is longer, it is replaced by its first 75 characters + `"~"` + 8 lowercase hex digits of the CRC-32 of the full package name. The host computes the same function for the fallback path below.
+- **Discovery.** The host reads `/proc/net/unix` over `adb shell` (readable by the shell domain on API 26–37) and keeps rows whose flags field is `00010000` (listening), state `01`, and path starts with `@traffic-police_` (the kernel prints abstract names with a leading `@`). This is the same parse Chrome's DevTools uses for `@webview_devtools_remote_<pid>`. If the file is unreadable, the host computes the name from the package and each pid in the process list and probes it.
 - **Connection.** The host runs `adb forward tcp:0 localabstract:<name>`, reads back the allocated port, and connects to `127.0.0.1:<port>`. A forward to a name nobody listens on still accepts the TCP connection and then closes it; the host treats EOF before `hello` as "no capture runtime here".
 - **Access control.** Before sending or reading any byte, the device calls `LocalSocket.getPeerCredentials()` (kernel `SO_PEERCRED`, public SDK API) and accepts only UID 0 (root) or UID 2000 (shell). With `adb forward`, adbd itself connects to the app's socket (SELinux has allowed `adbd` to connect to app sockets since Android 8.0) and it runs as UID 2000, or 0 after `adb root`. Any other peer is closed immediately without a reply.
 - **One client at a time.** When an authorized client connects while another is active, the device sends `bye { reason: "replaced" }` to the old client, closes it, and serves the new one. (A crashed host may leave a half-open connection; takeover makes reconnecting always work.)
@@ -402,7 +402,7 @@ A rule with errors is not active; the other rules are. `config_ack` returns the 
 {
   "t": "hello_ack", "id": 1,
   "protocol": 1,
-  "host": { "name": "netinspect", "version": "0.1.0" },
+  "host": { "name": "traffic-police", "version": "0.1.0" },
   "resume_after_seq": 0,
   "config": { "recording": true, "body_cap": 10485760, "capture_request_bodies": true,
               "capture_response_bodies": true, "stack_depth": 64 },
@@ -423,18 +423,18 @@ The device answers with `rules_ack { id: 1 }` and then starts the replay.
 #### `bye` (either direction)
 
 ```jsonc
-{ "t": "bye", "reason": "protocol_mismatch", "message": "device speaks protocol 2; this netinspect supports 1",
+{ "t": "bye", "reason": "protocol_mismatch", "message": "device speaks protocol 2; this traffic-police supports 1",
   "supported": [1] }
 ```
 
 Reasons: `shutdown`, `replaced`, `protocol_mismatch`, `bad_frame`, `timeout`, `internal_error`.
 
-- Host receiving a `hello` with an unsupported `protocol`: send `bye { reason: "protocol_mismatch", supported: [...] }`, close, show "The capture runtime in <process> speaks protocol N; this netinspect supports M. Update the <library|host>."
+- Host receiving a `hello` with an unsupported `protocol`: send `bye { reason: "protocol_mismatch", supported: [...] }`, close, show "The capture runtime in <process> speaks protocol N; this traffic-police supports M. Update the <library|host>."
 - Device receiving a `hello_ack` with an unsupported `protocol`: send `bye { reason: "protocol_mismatch" }` and close.
 
 ## 8. Rules
 
-### 8.1 File format (`.netinspect/rules.toml`)
+### 8.1 File format (`.traffic-police/rules.toml`)
 
 ```toml
 version = 1
@@ -491,7 +491,7 @@ enabled = false
   [[rule.action]]
   type = "fail"
   exception = "timeout"            # see §8.4 for the list and OkHttp's retry behaviour
-  message = "simulated by netinspect"
+  message = "simulated by traffic-police"
 
 [[rule]]
 id = "stub-config"
@@ -501,7 +501,7 @@ id = "stub-config"
 
   [[rule.action]]
   type = "body"
-  file = "fixtures/config-error.json"    # relative to .netinspect/; or text = "…"
+  file = "fixtures/config-error.json"    # relative to .traffic-police/; or text = "…"
   content_type = "application/json"      # optional; replaces Content-Type when given
 ```
 
@@ -521,7 +521,7 @@ The host normalizes the TOML into explicit matcher objects and inlines files:
     { "type": "body", "text": "{\"ok\":false}", "content_type": "application/json" },
     { "type": "body", "base64": "iVBORw0KGgo…", "content_type": "image/png" },
     { "type": "delay", "ms": 3000 },
-    { "type": "fail", "exception": "timeout", "message": "simulated by netinspect" } ] }
+    { "type": "fail", "exception": "timeout", "message": "simulated by traffic-police" } ] }
 ```
 
 A matcher is exactly one of `{ "exact": s }`, `{ "glob": s }`, `{ "regex": s }`. Absent fields match anything. A rule may also carry `"cache_rewrites": true` (§8.4, default `false`).
@@ -590,10 +590,10 @@ The host derives phases (used by the Overview timing bar and HAR `timings`): que
 
 ## 10. Session files
 
-A session file (`.nisession`) is the captured stream plus host records, so opening it replays through the same decoder as a live connection.
+A session file (`.trafficpolice`) is the captured stream plus host records, so opening it replays through the same decoder as a live connection.
 
 ```
- bytes 0..8   magic "NISESS\0" + format version (0x01)
+ bytes 0..8   magic "TPSESS\0" + format version (0x01)
  bytes 8..    gzip stream of frames (§3 framing)
 ```
 
@@ -608,7 +608,7 @@ Frame types inside the gzip stream:
 | 19 | JSON `{"t":"annotations", "pins":[…], "markers":[…], "notes":{…}}` — may repeat; the last one wins |
 
 - Redaction (on by default) is applied before writing: masked header values in `req`/`resp`/`rule` events, masked JSON paths in bodies. A masked body is written decoded (no Content-Encoding), with its header list adjusted, and `session.redacted = true`.
-- Writers flush the gzip stream at least every 5 s during `netinspect record`, so a crash loses little.
+- Writers flush the gzip stream at least every 5 s during `traffic-police record`, so a crash loses little.
 - HAR files are imported by a separate backend that synthesizes the same events (without threads or stacks).
 
 ## 11. Conformance tests
@@ -616,7 +616,7 @@ Frame types inside the gzip stream:
 - `testdata/protocol/v1/` holds golden files: `<scenario>.frames` (raw frames as written by the Java runtime's encoder in JVM tests) and `<scenario>.expected.json` (the normalized events the Rust decoder must produce).
 - Scenarios: handshake and replay; GET with gzip JSON; POST with a request body; chunked streaming response; body over cap with `prog`; redirect (two hops, one call); failure (timeout); cancellation; rule application with `delivered`; `dropped`; `diag`; every control message; unknown fields and unknown message types (must be ignored); maximum-size frame.
 - Host-to-device goldens (`hello_ack`, `set_rules` with every matcher and action, `set_config`, `ping`, `bye`) are written by Rust tests and decoded by Java tests.
-- Regenerating goldens is an explicit task (`./gradlew :capture:updateProtocolGoldens`, `cargo test -p ni-proto -- --ignored update_goldens`), never a side effect.
+- Regenerating goldens is an explicit task (`./gradlew :capture:updateProtocolGoldens`, `cargo test -p traffic-police-proto -- --ignored update_goldens`), never a side effect.
 - Fuzzing: arbitrary bytes into the Rust frame decoder never panic, never allocate more than the 16 MiB limit, and always end in a frame, a clean "need more bytes", or an error.
 
 ---
@@ -650,7 +650,7 @@ Verified against `platform/packages/modules/adb` (Android 17), older `system/cor
 **Forwarding to the capture runtime.**
 
 ```
-→ <hex4>host-transport-id:<id>:forward:tcp:0;localabstract:netinspect_<pkg>_<pid>
+→ <hex4>host-transport-id:<id>:forward:tcp:0;localabstract:traffic-police_<pkg>_<pid>
 ← OKAY OKAY <hex4><decimal port>        (listener bound on 127.0.0.1)
 ← FAIL0000                              (empty message: device not found or not online)
 → <hex4>host-transport-id:<id>:killforward:tcp:<port>      when done
@@ -661,7 +661,7 @@ Verified against `platform/packages/modules/adb` (Android 17), older `system/cor
 - Forwards disappear whenever the device goes offline (unplug, adbd restart, `adb root`, re-authorization) and when the server restarts. The host re-creates them on every transition back to `device`.
 - The host removes only the ports it created. It never sends `killforward-all`, which removes every forward on the server, including Android Studio's.
 
-**Discovery.** `shell,v2,raw:cat /proc/net/unix`; split each line on whitespace; keep rows with field 3 = `00010000` (listening) and field 7 starting with `@netinspect_`; the pid is the digits after the last `_` (package names may contain `_`). Accepted connections inherit the listener's name, which is why the flags field matters.
+**Discovery.** `shell,v2,raw:cat /proc/net/unix`; split each line on whitespace; keep rows with field 3 = `00010000` (listening) and field 7 starting with `@traffic-police_`; the pid is the digits after the last `_` (package names may contain `_`). Accepted connections inherit the listener's name, which is why the flags field matters.
 
 **Server lifecycle.**
 
@@ -669,7 +669,7 @@ Verified against `platform/packages/modules/adb` (Android 17), older `system/cor
 - When the server restarts, every connection gets EOF or a reset. One supervisor reconnects the device tracker, rebuilds the device table from its first message, then re-creates per-device trackers and forwards.
 - The `adb` binary is used as a fallback only if its version matches the running server's (`adb version` vs `host:version`): the adb client kills and restarts any server whose version differs from its own, which would also break Android Studio's session.
 
-## Appendix B: NDJSON output of `netinspect tail`
+## Appendix B: NDJSON output of `traffic-police tail`
 
 One JSON object per line. `v` is the schema version (1). Lines are emitted when a transaction completes or fails (or, with `--events`, one line per normalized event).
 

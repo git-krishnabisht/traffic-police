@@ -1,4 +1,4 @@
-# 04 — adb host protocol (client ⇄ adb server ⇄ adbd), verified for netinspect
+# 04 — adb host protocol (client ⇄ adb server ⇄ adbd), verified for traffic-police
 
 Legend: **[SRC]** read in source/docs during this task · **[EMP]** observed against the local adb server · **[INF]** inference from verified facts (reasoning given) · **UNVERIFIED** (what was tried is stated).
 
@@ -315,7 +315,7 @@ Relevant strings, all verbatim from `adb@17:transport.cpp:81-106`. Meanings are 
 | `delayed_ack` | server⇄adbd flow control; the host adds it only with `ADB_BURST_MODE=1` (`transport.cpp:1281-1287`) | lineage-21.0 |
 | `app_info` | extra track-app fields | `los-adb@lineage-22.0:transport.cpp:102` |
 | `server_status` | `host:server-status` | `los-adb@lineage-22.1:transport.cpp:103`; adblib: "added in adb v35.0.2" |
-| `devraw`, `track_mdns`, `openscreen_mdns`, `remount_shell`, `apex`, `fixed_push_symlink_timestamp`, `libusb` | not needed by netinspect | — |
+| `devraw`, `track_mdns`, `openscreen_mdns`, `remount_shell`, `apex`, `fixed_push_symlink_timestamp`, `libusb` | not needed by traffic-police | — |
 
 Feature strings never contain `[:;=,]` ("Do not use any of [:;=,] in feature strings", `transport.h:67-68`).
 
@@ -444,7 +444,7 @@ Feature strings never contain `[:;=,]` ("Do not use any of [:;=,] in feature str
 
 ---
 
-## Design implications for netinspect
+## Design implications for traffic-police
 
 ### A. Exact byte sequences the Rust client must implement
 
@@ -472,7 +472,7 @@ Notation: `<hex4>` = lowercase `%04x` of the payload byte length (payload ≤ 0x
    - EOF without `03` = transport or device loss (adb reports 255).
    - To cancel, close the socket (adbd sends SIGHUP).
 8. **Forward to the app's agent socket.**
-   - `<hex4>host-transport-id:<id>:forward:tcp:0;localabstract:netinspect_<pkg>_<pid>` → S: `OKAY` `OKAY` `<hex4><decimal port>`, then EOF.
+   - `<hex4>host-transport-id:<id>:forward:tcp:0;localabstract:traffic-police_<pkg>_<pid>` → S: `OKAY` `OKAY` `<hex4><decimal port>`, then EOF.
    - The port string is optional in general; required here since we asked for tcp:0. `FAIL0000` = device not found or not online.
    - Connect to `127.0.0.1:<port>`.
    - Remove: `<hex4>host-transport-id:<id>:killforward:tcp:<port>` → `OKAY` `OKAY`, or FAIL "listener … not found" (fine if already gone).
@@ -491,7 +491,7 @@ Notation: `<hex4>` = lowercase `%04x` of the payload byte length (payload ≤ 0x
     ```
     - Optional existence check first: `"STAT" le32(n) path` → 16 bytes (all-zero = missing). Or `"STA2"` → 72 bytes with an `error` field, when `stat_v2` is present.
     - One file per SEND. A FAIL kills the session.
-11. **Discovery.** `shell,v2,raw:cat /proc/net/unix`. Keep rows where `f[3]=="00010000"` and `f[7]` starts with `@netinspect_`. Take the pid as the digits after the **last** `_`, because package names may contain `_`.
+11. **Discovery.** `shell,v2,raw:cat /proc/net/unix`. Keep rows where `f[3]=="00010000"` and `f[7]` starts with `@traffic-police_`. Take the pid as the digits after the **last** `_`, because package names may contain `_`.
 12. **Package path** (optional). `abb_exec:package\0path\0<pkg>` when `abb_exec` is present → raw `package:<path>` lines. Otherwise use shell v2 `pm path '<pkg>'`, which has an exit code.
 
 ### B. Fallback matrix
@@ -503,7 +503,7 @@ Notation: `<hex4>` = lowercase `%04x` of the payload byte length (payload ≤ 0x
 | Server < 41 (no `tport`) | Use `host:transport-id:<id>` (available since 2017) or `host:transport:<serial>`. |
 | `track_app` | `track-jdwp` (debuggable pids only), plus shell `cat /proc/<pid>/cmdline` or `ps -A -o PID,NAME` for names. **UNVERIFIED**: `ps` flags were not checked here. |
 | `app_info` (no process_name/package_names) | Resolve names via shell as in the previous row. |
-| `shell_v2` (Android < 7) | `exec:<cmd>; echo "<marker>$?"` to recover the exit code. Keep service strings ≤ 4095 bytes. Don't half-close. Out of scope if netinspect's minimum API is ≥ 24. |
+| `shell_v2` (Android < 7) | `exec:<cmd>; echo "<marker>$?"` to recover the exit code. Keep service strings ≤ 4095 bytes. Don't half-close. Out of scope if traffic-police's minimum API is ≥ 24. |
 | `sendrecv_v2` | Not needed; SEND v1 is always used. |
 | `abb_exec` | `shell,v2,raw:pm path ...` / `cmd package path ...`. |
 | Protocol trouble in general | Shell out to the adb CLI with `-t <transport_id>`: `forward tcp:0 localabstract:X` prints the port, `shell`, `push`, `track-devices [-l][--proto-binary]` (`docs/user/adb.1.md:63,91-122`). **Risk:** a CLI whose version differs from the running server's will *kill and restart the server* (`adb_client.cpp:311-337`), breaking Studio's session. Only use the binary whose version matches `host:version`. |
@@ -522,7 +522,7 @@ Notation: `<hex4>` = lowercase `%04x` of the payload byte length (payload ≤ 0x
 7. **Transport ids are per-server-process.** Invalidate all cached ids, forwards, and trackers whenever the tracker connection drops. Ids restart at 1 and may collide with ids from before the restart.
 8. **Trackers are write-sensitive.** Any byte written closes track-devices, track-jdwp, and track-app. They can send duplicates; dedupe.
 9. **Text parsing hazards.** The "no permissions (...); see [...]" state has spaces. `host-serial:` must guess where a colon-bearing serial ends. Prefer proto trackers and transport-id prefixes.
-10. **Length limits.** Requests ≤ 65535 bytes. Device service strings must fit the device's max payload, and the server CHECK-aborts otherwise **[INF]**: keep them ≤ 4095 unless `shell_v2` is present. Abstract names ≤ 107 bytes, so truncate or hash long package names in `netinspect_<pkg>_<pid>`.
+10. **Length limits.** Requests ≤ 65535 bytes. Device service strings must fit the device's max payload, and the server CHECK-aborts otherwise **[INF]**: keep them ≤ 4095 unless `shell_v2` is present. Abstract names ≤ 107 bytes, so truncate or hash long package names in `traffic-police_<pkg>_<pid>`.
 11. **Feature detection, not API level.** adbd is an updatable APEX (min_sdk 30). Always read `host-transport-id:<id>:features` after the device reaches `device`; it FAILs before that.
 12. **Legacy shell pitfalls** (Android ≤ 6). `shell:` is a default-termios PTY (**[INF]** CRLF translation), there is no exit code, and stdin must not be half-closed.
 13. **Server restart ≈ reconnect storm.**

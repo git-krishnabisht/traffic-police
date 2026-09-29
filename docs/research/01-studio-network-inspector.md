@@ -1,4 +1,4 @@
-# 01 — Android Studio Network Inspector: verified source study (for `netinspect`)
+# 01 — Android Studio Network Inspector: verified source study (for `traffic-police`)
 
 Rule followed: **verify, do not recall**. Every factual statement below cites code or docs read during this task.
 Statements tagged **(analysis)** are conclusions I drew by combining cited code paths; they were not executed on a device.
@@ -516,7 +516,7 @@ A manual test app exists at `TB:app-inspection/test-app` ("can be used to manual
 
 ---
 
-## Design implications for netinspect
+## Design implications for traffic-police
 
 ### Copy (proven by Studio's code)
 

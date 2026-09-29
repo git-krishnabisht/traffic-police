@@ -17,6 +17,6 @@ android/.kotlin/
 android/**/.cxx/
 android/captures/
 
-# Local netinspect state (rules.toml in .netinspect/ is meant to be committed by projects)
-.netinspect/local/
-*.nisession
+# Local traffic-police state (rules.toml in .traffic-police/ is meant to be committed by projects)
+.traffic-police/local/
+*.trafficpolice
