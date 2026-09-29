@@ -358,9 +358,13 @@ impl App {
     /// Visible graph window `[left, right)`.
     pub fn window(&self) -> (Ts, Ts) {
         let right = self.graph.pinned_right.unwrap_or_else(|| self.now());
-        let origin = self.view_store().origin();
-        let right = right.max(origin + self.graph.span.min(10 * NS_PER_SEC));
         (right.saturating_sub(self.graph.span), right)
+    }
+
+    /// Time span of the Timeline column and the Thread View: the selected range if there is
+    /// one, otherwise the graph window.
+    pub fn list_window(&self) -> (Ts, Ts) {
+        self.graph.selection.unwrap_or_else(|| self.window())
     }
 
     pub fn is_live(&self) -> bool {
@@ -1068,8 +1072,9 @@ impl App {
         let Some(txn) = self.selected else { return };
         let dir = if self.detail.tab == Tab::Request { BodyDir::Request } else { self.response_dir(txn) };
         let filter = self.jq_input.value().trim().to_string();
+        let open = self.view_store().txn(txn).state.is_open();
         let Some(view) = self.body_view(txn, dir) else {
-            self.flash("this request has no body to filter");
+            self.flash(if open { "the body has not arrived yet" } else { "this request has no body to filter" });
             return;
         };
         if filter.is_empty() || filter == "." {

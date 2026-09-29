@@ -367,6 +367,34 @@ pub fn build_doc(app: &mut App) -> Doc {
     doc
 }
 
+/// How this request relates to the other hops of the same call (redirects, auth retries).
+/// Hops are recorded close together, so only nearby transactions are searched.
+fn redirect_note(store: &traffic_police_core::SessionStore, txn: TxnIdx) -> Option<String> {
+    const NEAR: usize = 512;
+    let t = store.txn(txn);
+    t.call?;
+    let same_call = |i: usize, hop: u32| {
+        let o = store.txn(i as TxnIdx);
+        o.key.source == t.key.source && o.call == t.call && o.hop == hop && !o.placeholder
+    };
+    let i = txn as usize;
+    let prev = if t.hop > 0 { (i.saturating_sub(NEAR)..i).rev().find(|&j| same_call(j, t.hop - 1)) } else { None };
+    let next = (i + 1..(i + NEAR).min(store.len())).find(|&j| same_call(j, t.hop + 1));
+    let describe = |j: usize| {
+        let o = store.txn(j as TxnIdx);
+        let status = o.status().map(|s| format!(" ({s})")).unwrap_or_default();
+        format!("{}{status}", o.url.raw)
+    };
+    match (prev, next) {
+        (Some(p), Some(n)) => {
+            Some(format!("hop {} of this call · after {} · then {}", t.hop + 1, describe(p), describe(n)))
+        }
+        (Some(p), None) => Some(format!("hop {} of this call · after {}", t.hop + 1, describe(p))),
+        (None, Some(n)) => Some(format!("followed by {}", describe(n))),
+        (None, None) => None,
+    }
+}
+
 fn overview_rows(app: &mut App, txn: TxnIdx, rows: &mut Vec<DocRow>) {
     let theme = app.theme.clone();
     let now = app.now();
@@ -396,6 +424,9 @@ fn overview_rows(app: &mut App, txn: TxnIdx, rows: &mut Vec<DocRow>) {
     };
     rows.push(label_row(&theme, "Status", status));
     rows.push(label_row(&theme, "URL", vec![Span::styled(t.url.raw.clone(), theme.accent())]));
+    if let Some(r) = redirect_note(app.view_store(), txn) {
+        rows.push(label_row(&theme, "Redirect", plain(&theme, r)));
+    }
     rows.push(label_row(&theme, "Request type", plain(&theme, t.request_content_type().unwrap_or("—").to_string())));
     rows.push(label_row(&theme, "Response type", plain(&theme, t.response_content_type().unwrap_or("—").to_string())));
     let dir = app.response_dir(txn);

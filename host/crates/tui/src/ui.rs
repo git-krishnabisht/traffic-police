@@ -222,7 +222,7 @@ fn draw_graph(app: &mut App, r: Rect, buf: &mut Buffer) {
     let src = if b.source == app.graph_source {
         app.graph_source.label().to_string()
     } else {
-        format!("{} (no whole-app data)", b.source.label())
+        format!("{} (whole-app data not available)", b.source.label())
     };
     let mut spans =
         vec![Span::styled(" NETWORK ", title_style), Span::styled(format!(" {src} · T switches"), t.faint())];
@@ -537,10 +537,46 @@ fn right_aligned(c: Column) -> bool {
     matches!(c, Column::Size | Column::ReqSize | Column::Time)
 }
 
+/// Where each list column goes: `(column, x, width)`, clipped to the pane. The last cell is
+/// kept for the scroll indicator. The Timeline column is dropped when the pane is too narrow for
+/// it; Name keeps at least 12 cells and the rightmost columns are cut first.
+fn list_layout(columns: &[Column], r: Rect) -> Vec<(Column, u16, u16)> {
+    const MIN_NAME: u16 = 12;
+    const MIN_TIMELINE: u16 = 10;
+    let avail = r.width.saturating_sub(1);
+    let fixed = |cs: &[Column]| cs.iter().map(|&c| col_width(c)).sum::<u16>() + cs.len().saturating_sub(1) as u16;
+    let mut cols = columns.to_vec();
+    let mut flexible = avail.saturating_sub(fixed(&cols));
+    let mut timeline_w = if cols.contains(&Column::Timeline) { flexible * 45 / 100 } else { 0 };
+    if cols.contains(&Column::Timeline) && (timeline_w < MIN_TIMELINE || flexible - timeline_w < MIN_NAME) {
+        cols.retain(|&c| c != Column::Timeline);
+        flexible = avail.saturating_sub(fixed(&cols));
+        timeline_w = 0;
+    }
+    let name_w = (flexible - timeline_w).max(MIN_NAME);
+    let end = r.x + avail;
+    let mut out = Vec::with_capacity(cols.len());
+    let mut x = r.x;
+    for c in cols {
+        if x >= end {
+            break;
+        }
+        let w = match c {
+            Column::Name => name_w,
+            Column::Timeline => timeline_w,
+            other => col_width(other),
+        }
+        .min(end - x);
+        out.push((c, x, w));
+        x += w + 1;
+    }
+    out
+}
+
 fn draw_connections(app: &mut App, r: Rect, buf: &mut Buffer, tabs_row: Rect) {
     let t = app.theme.clone();
     let now = app.now();
-    let (left, right) = app.window();
+    let (left, right) = app.list_window();
     let rows_len = app.view_rows().len();
     // info on the tabs row
     let rows = app.view_rows();
@@ -554,23 +590,9 @@ fn draw_connections(app: &mut App, r: Rect, buf: &mut Buffer, tabs_row: Rect) {
     }
     right_text(buf, tabs_row, tabs_row.y, info);
 
-    let cols = app.columns.clone();
-    let seps = cols.len().saturating_sub(1) as u16;
-    let fixed: u16 = cols.iter().map(|&c| col_width(c)).sum::<u16>() + seps;
-    // the last column is kept for the scroll indicator
-    let flexible = r.width.saturating_sub(fixed + 1);
-    let has_timeline = cols.contains(&Column::Timeline);
-    let timeline_w = if has_timeline { (flexible * 45 / 100).max(12) } else { 0 };
-    let name_w = flexible.saturating_sub(timeline_w).max(12);
-    let width_of = |c: Column| match c {
-        Column::Name => name_w,
-        Column::Timeline => timeline_w,
-        other => col_width(other),
-    };
+    let layout = list_layout(&app.columns, r);
     // header
-    let mut x = r.x;
-    for &c in &cols {
-        let w = width_of(c);
+    for &(c, x, w) in &layout {
         let sort = app.view_rows().sort;
         let arrow = if sort.column == c && (sort != Default::default() || c == Column::Timeline) {
             if sort.descending { " ↓" } else { " ↑" }
@@ -585,7 +607,6 @@ fn draw_connections(app: &mut App, r: Rect, buf: &mut Buffer, tabs_row: Rect) {
         let s = if right_aligned(c) { format!("{title:>w$}", w = w as usize) } else { truncate(&title, w as usize) };
         text(buf, x, r.y, w, vec![Span::styled(s, t.dim().add_modifier(Modifier::BOLD))]);
         app.hits.add(Rect { x, y: r.y, width: w, height: 1 }, Target::ListHeader(c));
-        x += w + 1;
     }
     let body = Rect { y: r.y + 1, height: r.height.saturating_sub(1), ..r };
     if app.list_height != body.height as usize {
@@ -637,15 +658,12 @@ fn draw_connections(app: &mut App, r: Rect, buf: &mut Buffer, tabs_row: Rect) {
             ),
         };
         let tx = store.txn(txn);
-        let mut x = r.x;
-        for &c in &cols {
-            let w = width_of(c);
+        for &(c, x, w) in &layout {
             if c == Column::Timeline {
                 for &m in &members {
                     let mt = store.txn(m);
                     draw_bar(buf, Rect::new(x, y, w, 1), (left, right), mt.segments(now), &t, selected);
                 }
-                x += w + 1;
                 continue;
             }
             let (mut s, style) = cell_text(app, tx, c, now);
@@ -661,13 +679,15 @@ fn draw_connections(app: &mut App, r: Rect, buf: &mut Buffer, tabs_row: Rect) {
                 if tx.lossy || tx.resp_body.gap {
                     marks.push_str("! ");
                 }
-                if let Row::Group { members, .. } = &row {
-                    s = format!("{s} ×{}", members.len());
-                }
+                let count = match &row {
+                    Row::Group { members, .. } => format!(" ×{}", members.len()),
+                    _ => String::new(),
+                };
                 let mw = marks.width();
                 spans.push(Span::styled(marks, t.marker().patch(row_style)));
-                let rest = truncate(&s, (w as usize).saturating_sub(mw));
-                spans.push(Span::styled(rest, style.patch(row_style)));
+                s = truncate(&s, (w as usize).saturating_sub(mw + count.width()));
+                spans.push(Span::styled(s, style.patch(row_style)));
+                spans.push(Span::styled(count, t.accent().patch(row_style)));
             } else {
                 let s = if right_aligned(c) {
                     format!("{:>w$}", truncate(&s, w as usize), w = w as usize)
@@ -677,7 +697,6 @@ fn draw_connections(app: &mut App, r: Rect, buf: &mut Buffer, tabs_row: Rect) {
                 spans.push(Span::styled(s, style.patch(row_style)));
             }
             text(buf, x, y, w, spans);
-            x += w + 1;
         }
     }
     // scroll indicator
@@ -729,7 +748,7 @@ fn layout_lanes(store: &SessionStore, left: Ts, right: Ts, now: Ts) -> (Vec<(usi
 fn draw_threads(app: &mut App, r: Rect, buf: &mut Buffer) {
     let t = app.theme.clone();
     let now = app.now();
-    let (left, right) = app.window();
+    let (left, right) = app.list_window();
     let label_w = (r.width * 28 / 100).clamp(18, 34);
     let lane_area = Rect { x: r.x + label_w + 1, width: r.width.saturating_sub(label_w + 2), ..r };
     draw_axis(app, Rect { y: r.y, height: 1, ..lane_area }, left, right, buf);
@@ -1003,25 +1022,41 @@ fn draw_status(app: &App, r: Rect, buf: &mut Buffer) {
     let t = &app.theme;
     let s = app.view_store().stats();
     let store = app.view_store();
-    let mut spans = vec![
+    let mut left = vec![
         Span::styled(format!(" {} requests", store.len()), t.text()),
         Span::styled(format!("  {} in", fmt::bytes(s.bytes_in)), t.dim()),
         Span::styled(format!("  {} out", fmt::bytes(s.bytes_out)), t.dim()),
         Span::styled(format!("  {} failed", s.failed), if s.failed > 0 { t.error() } else { t.dim() }),
         Span::styled(format!("  {} dropped", s.dropped_events), if s.dropped_events > 0 { t.warn() } else { t.dim() }),
     ];
+    // optional notes, most important first; they give way to a message
+    let mut notes = Vec::new();
     if let Some(n) = app.frozen_events() {
-        spans.push(Span::styled(format!("  ❄ frozen · {n} new events waiting · F"), t.accent()));
+        notes.push(Span::styled(format!("  ❄ frozen · {n} new events waiting · F"), t.accent()));
     }
     if let Some(d) = store.diagnostics().iter().rev().find(|d| d.level == "warn" || d.level == "error") {
-        spans.push(Span::styled(format!("  ⚠ {}", d.code.replace('_', " ")), t.warn()));
+        notes.push(Span::styled(format!("  ⚠ {}", d.code.replace('_', " ")), t.warn()));
     }
-    text(buf, r.x, r.y, r.width, spans);
+    let help = "? help ";
+    let width_of = |v: &[Span]| v.iter().map(|s| s.content.width()).sum::<usize>();
+    let mut avail = (r.width as usize).saturating_sub(width_of(&left) + help.width() + 3);
     let mut right = Vec::new();
-    if let Some(m) = app.current_message() {
+    if let Some(m) = app.current_message()
+        && avail > 8
+    {
+        let m = truncate(m, avail - 3);
+        avail -= m.width() + 3;
         right.push(Span::styled(format!("{m}   "), t.accent()));
     }
-    right.push(Span::styled("? help ", t.dim()));
+    for n in notes {
+        let w = n.content.width();
+        if w <= avail {
+            avail -= w;
+            left.push(n);
+        }
+    }
+    right.push(Span::styled(help, t.dim()));
+    text(buf, r.x, r.y, r.width, left);
     right_text(buf, r, r.y, right);
 }
 
