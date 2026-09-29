@@ -250,31 +250,38 @@ fn resume_terminal(term: &mut Term) -> anyhow::Result<()> {
 }
 
 /// SIGTERM and SIGHUP (Unix). Raw mode delivers Ctrl+C as a key, so SIGINT is not needed.
+#[cfg(unix)]
 struct StopSignals {
-    #[cfg(unix)]
     term: tokio::signal::unix::Signal,
-    #[cfg(unix)]
     hup: tokio::signal::unix::Signal,
 }
 
+#[cfg(unix)]
 impl StopSignals {
     fn new() -> io::Result<Self> {
-        #[cfg(unix)]
-        {
-            use tokio::signal::unix::{SignalKind, signal};
-            Ok(StopSignals { term: signal(SignalKind::terminate())?, hup: signal(SignalKind::hangup())? })
-        }
-        #[cfg(not(unix))]
-        Ok(StopSignals {})
+        use tokio::signal::unix::{SignalKind, signal};
+        Ok(StopSignals { term: signal(SignalKind::terminate())?, hup: signal(SignalKind::hangup())? })
     }
 
     async fn recv(&mut self) {
-        #[cfg(unix)]
         tokio::select! {
             _ = self.term.recv() => {}
             _ = self.hup.recv() => {}
         }
-        #[cfg(not(unix))]
+    }
+}
+
+/// Elsewhere (Windows) there is no terminal state to restore when the console goes away.
+#[cfg(not(unix))]
+struct StopSignals;
+
+#[cfg(not(unix))]
+impl StopSignals {
+    fn new() -> io::Result<Self> {
+        Ok(StopSignals)
+    }
+
+    async fn recv(&mut self) {
         std::future::pending::<()>().await
     }
 }
