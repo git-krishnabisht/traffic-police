@@ -186,6 +186,30 @@ impl Normalizer {
     }
 }
 
+impl crate::model::SourceInfo {
+    /// Build source info from a device's `hello` plus what the host knows about the device.
+    pub fn from_hello(id: SourceId, h: &msg::Hello, device_label: String, serial: Option<String>) -> Self {
+        crate::model::SourceInfo {
+            id,
+            device_label,
+            serial,
+            package: h.app.package.clone(),
+            process: h.app.process.clone(),
+            pid: h.app.pid,
+            instance: h.instance.clone(),
+            mode: h.runtime.mode.clone(),
+            api: Some(h.device.api),
+            runtime_version: Some(h.runtime.version.clone()),
+            capabilities: h.capabilities.clone(),
+            hooks: h.hooks.clone(),
+            okhttp_version: h.clients.get("okhttp").cloned().flatten(),
+            clock: Some((h.clock.ts, h.clock.wall_ms)),
+            started: h.started_ts.unwrap_or(h.clock.ts).min(h.clock.ts),
+            ended: None,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -4,6 +4,7 @@
 //! [`event::SessionEvent`]s, the [`store::SessionStore`] applies them, and the UI reads the
 //! store (ARCHITECTURE.md §5).
 
+pub mod backend;
 pub mod decode;
 pub mod event;
 pub mod fmt;
