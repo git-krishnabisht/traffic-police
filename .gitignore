@@ -1,0 +1,22 @@
+# OS / editors
+.DS_Store
+*.swp
+.idea/
+*.iml
+.vscode/
+
+# Rust
+/host/target/
+**/*.rs.bk
+
+# Android / Gradle
+android/.gradle/
+android/**/build/
+android/local.properties
+android/.kotlin/
+android/**/.cxx/
+android/captures/
+
+# Local netinspect state (rules.toml in .netinspect/ is meant to be committed by projects)
+.netinspect/local/
+*.nisession
