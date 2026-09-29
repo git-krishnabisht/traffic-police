@@ -12,3 +12,13 @@ These notes back the claims in `../ARCHITECTURE.md` and `../PROTOCOL.md`. Each w
 | [06-rust-crates.md](06-rust-crates.md) | Current Rust crate versions, APIs and compatibility for the host |
 
 `android.googlesource.com` was unreachable from the machine used for Phase 0, so AOSP sources were read from GitHub mirrors (GrapheneOS, LineageOS, `aosp-mirror`, `kroune/platform-tools-base`) and from AOSP Gerrit's REST API. The notes name the mirror and commit for every citation.
+
+## Device checks (2026-09-29)
+
+Read-only checks against a Nothing A015 (Android 16, API 36, user build, arm64-v8a only, 4 KB pages) through adb server version 41. They confirm points the notes above had derived from source:
+
+- The device advertises `track_app` and `app_info`; `track-app` streams `AppProcesses` entries with `process_name`, `package_names`, `uid`, `user_id` and `waiting_for_debugger` populated.
+- `forward tcp:0 localabstract:<name nobody listens on>` succeeds; connecting to the returned port succeeds and then reads EOF within about 2 ms. `killforward:tcp:<port>` answers `OKAY OKAY`.
+- `/proc/net/unix` is readable from `adb shell` (listening abstract sockets carry flags `00010000`, state `01`, and a `@` path).
+- `run-as` works for a debuggable app and runs in the `runas_app` SELinux domain; `dumpsys package` reports `primaryCpuAbi` and the `DEBUGGABLE` flag.
+- Android Studio's own forward (`localabstract:AndroidStudioTransport`) was present, which is why the host never removes forwards it did not create.
