@@ -20,6 +20,7 @@ tokio.workspace = true
 tokio-stream.workspace = true
 tracing.workspace = true
 anyhow.workspace = true
+bytes.workspace = true
 
 [dev-dependencies]
 traffic-police-backends.workspace = true

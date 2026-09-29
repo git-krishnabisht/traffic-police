@@ -2538,6 +2538,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "serde_json",
  "tokio",
  "tracing",
  "tracing-appender",
@@ -2600,6 +2601,7 @@ name = "traffic-police-tui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bytes",
  "crossterm",
  "image",
  "insta",
