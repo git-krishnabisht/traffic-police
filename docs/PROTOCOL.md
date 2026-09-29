@@ -315,7 +315,7 @@ Sent once, after the last `body_end` of the transaction (or after `resp` when th
 { "t": "traffic", "seq": 88, "ts": 5824000000000, "rx": 18234112, "tx": 1203340 }
 ```
 
-Cumulative `TrafficStats.getUidRxBytes/getUidTxBytes(Process.myUid())` for the app's uid (all sockets of the app, TCP and UDP, every interface; not only captured HTTP). Sampled every 500 ms and sent only when a value changed. The host derives rates from deltas; this is the "app total" graph series (Android Studio plots the same counters). Absent when the platform reports the counters as unsupported.
+Cumulative `TrafficStats.getUidRxBytes/getUidTxBytes(Process.myUid())` for the app's uid (all sockets of the app, TCP and UDP, every interface; not only captured HTTP). Sampled every 500 ms and sent only when a value changed. The host derives rates from deltas; this is the default graph source (Android Studio plots the same counters). Absent when the platform reports the counters as unsupported.
 
 #### `diag` — runtime diagnostics
 
