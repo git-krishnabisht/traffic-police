@@ -1,0 +1,54 @@
+---
+source: crates/tui/tests/snapshots.rs
+expression: "frame(40.0, LARGE, \"\")"
+---
+ traffic-police  Pixel 8 [demo]  com.example.deepid_example  pid 4312  ● LIVE  ✎ 1 rule active                                                                                     images: half-blocks
+ NETWORK  all app traffic · T switches                                                                                                                        ━ Receiving 2.3 KB/s   ━ Sending 1.7 KB/s
+ 1.0 MB/s                                         ┊
+                            ⢀⠏⠉⠹⡀  ⡜⠉⠉⡆     ⢰⠉⠉⢣  ⢀⠏⠉⠹⡀  ⡜⠉⠉⡆
+                          ⡖⠒⠊   ⠑⠒⠚   ⠘⠒⠒⠒⠒⠒⠃   ⠓⠒⠊   ⠑⠒⠚   ⠘⠒⠒⡆
+                          ⡇                       ┊            ⢱
+                         ⢰⠁                       ┊            ⠈⠉⠉⡇
+ 512 KB/s                ⢸                        ┊               ⢣
+                         ⢸                        ┊               ⢸
+                         ⢸                        ┊               ⠘⡄     ⣀⣀⣀
+                         ⡇                        ┊                ⠓⠒⠒⠒⠒⠒⠁  ⠉⠉⠙⡄
+        0 ⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⡇⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⢣⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀
+          00:10                          00:15                           00:20                          00:25                           00:30                          00:35
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Connection View   Thread View   Rules                                                                                                                                                          60 rows
+Name                                                                                         Size Type      Status         Time Timeline
+status?sessionId=session_15bce3a5a963c9fde0ebe700e9d76981                                   263 B json      200          284 ms       ▌
+monitor                                                                                     302 B json      200          1.56 s         ███▉
+! events                                                                                     17 B json      200          971 ms          ▐██
+status?sessionId=session_15bce3a5a963c9fde0ebe700e9d76981                                   263 B json      200          358 ms          ▕▋
+monitor                                                                                     302 B json      200          1.72 s              ████▏
+status?sessionId=session_15bce3a5a963c9fde0ebe700e9d76981                                   263 B json      200          381 ms              ▐█
+status?sessionId=session_15bce3a5a963c9fde0ebe700e9d76981                                   263 B json      200          225 ms                 ▕▍
+events                                                                                       17 B json      200          1.13 s                  ███
+monitor                                                                                     302 B json      200          1.38 s                  ▕███
+status?sessionId=session_15bce3a5a963c9fde0ebe700e9d76981                                   263 B json      200          259 ms                     ▐
+monitor                                                                                     302 B json      200          1.67 s                       ▐███▍
+status?sessionId=session_15bce3a5a963c9fde0ebe700e9d76981                                   263 B json      200          158 ms                         ▍
+events                                                                                       17 B json      200          995 ms                           ▕██▎
+monitor                                                                                     302 B json      200          1.65 s                            ████▏
+✎ status?sessionId=session_15bce3a5a963c9fde0ebe700e9d76981                                 264 B json      200          327 ms                            ▐▎                                          ▐
+monitor                                                                                     302 B json      200          1.60 s                                 ███▊                                   ▐
+events                                                                                       17 B json      200          1.49 s                                    ████                                ▐
+monitor                                                                                     302 B json      200          1.44 s                                     ▐███▏                              ▐
+monitor                                                                                     302 B json      200          1.71 s                                          ▐████                         ▐
+events                                                                                       17 B json      200          1.19 s                                            ███▋                        ▐
+monitor                                                                                     302 B json      200          1.71 s                                               █████                    ▐
+monitor                                                                                     302 B json      200          1.42 s                                                   ▕███▎                ▐
+events                                                                                       17 B json      200          1.42 s                                                    ▕███▏               ▐
+monitor                                                                                     302 B json      200          1.57 s                                                        ▐████           ▐
+init                                                                                        316 B json      200          1.80 s                                                         ▕████          ▐
+events                                                                                       17 B json      200          1.46 s                                                            ███▌        ▐
+monitor                                                                                     302 B json      200          1.41 s                                                             ▐██▋       ▐
+challenge                                                                                   144 B json      200          247 ms                                                              ▐▏        ▐
+attest                                                                                      180 B json      200          3.01 s                                                               ▕██████▉ ▐
+monitor                                                                                     302 B json      200          1.56 s                                                                  ███▊  ▐
+events                                                                                       17 B json      200          1.22 s                                                                    ███ ▐
+monitor                                                                                                     ···          500 ms                                                                      ▕█▐
+enroll                                                                                                      ···          228 ms                                                                       ▐
+ 60 requests  5.0 MB in  42 KB out  2 failed  12 dropped  ⚠ studio inspector present                                                                                                            ? help

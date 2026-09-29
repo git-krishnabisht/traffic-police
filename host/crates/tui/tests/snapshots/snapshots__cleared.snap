@@ -1,0 +1,44 @@
+---
+source: crates/tui/tests/snapshots.rs
+expression: "frame(12.0, MEDIUM, \"xy\")"
+---
+ traffic-police  Pixel 8 [demo]  com.example.deepid_example  pid 4312  ● LIVE  ✎ 1 rule active                         images: half-blocks
+ NETWORK  captured requests (whole-app data not available) · T switches                                 ━ Receiving 0 B/s   ━ Sending 0 B/s
+ 1.0 KB/s                                                                              ┊
+                                                                                       ┊
+                                                                                       ┊
+                                                                                       ┊
+  512 B/s                                                                              ┊
+                                                                                       ┊
+                                                                                       ┊
+        0                                                                              ⢀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀
+                                                                                       00:00                00:05                 00:10
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Connection View   Thread View   Rules                                                                                               0 rows
+Name                                                        Size Type      Status         Time Timeline
+
+ No requests yet. Traffic appears here as the app makes calls.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ 0 requests  0 B in  0 B out  0 failed  0 dropped                                                                 session cleared   ? help

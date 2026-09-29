@@ -1,0 +1,44 @@
+---
+source: crates/tui/tests/snapshots.rs
+expression: "frame(40.0, MEDIUM, \"3j\")"
+---
+ traffic-police  Pixel 8 [demo]  com.example.deepid_example  pid 4312  ● LIVE  ✎ 1 rule active                         images: half-blocks
+ NETWORK  all app traffic · T switches                                                            ━ Receiving 2.3 KB/s   ━ Sending 1.7 KB/s
+ 1.0 MB/s              ⣀⣀  ⢀⣀     ⣀⡀ ┊⣀⣀  ⢀⣀
+                     ⣀⡰⠁⠘⣄⣀⠎ ⢣⣀⣀⣀⡜ ⠱⣀⣠⠃⠈⢆⣀⠎ ⢣⣀⡀
+                     ⡇               ┊        ⢣
+                    ⢠⠃               ┊        ⠈⠒⡆
+ 512 KB/s           ⢸                ┊          ⢣
+                    ⢸                ┊          ⢸
+                    ⡜                ┊           ⠧⠤⠤⠤⠒⠒⠒⠲⡀
+        0 ⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⡇⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⢣⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀
+          00:10                00:15                 00:20                00:25                 00:30                00:35
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Connection View   Thread View   Rules
+     id              name                        hits                          Enroll endpoint down
+ [x] force-pass      Force verdict pass             1                          disabled
+ [ ] enroll-down     Enroll endpoint down           0
+                                                                               Match
+                                                                                 methods  POST
+                                                                                 host     any
+                                                                                 path     /api/sdk/enroll
+
+                                                                               Actions
+                                                                                 fail with timeout
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Rules come from .traffic-police/rules.toml; editing and pushing to the device arrive in Phase 3.
+ 60 requests  5.0 MB in  42 KB out  2 failed  12 dropped  ⚠ studio inspector present                                                ? help

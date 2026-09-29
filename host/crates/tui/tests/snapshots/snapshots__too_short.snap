@@ -1,0 +1,19 @@
+---
+source: crates/tui/tests/snapshots.rs
+expression: "frame(12.0, (140, 29), \"\")"
+---
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                                  traffic-police needs a terminal of at least 100×30 (this one is 140×29)

@@ -1,0 +1,34 @@
+---
+source: crates/tui/tests/snapshots.rs
+expression: "frame(12.0, SMALL, \"?\")"
+---
+ traffic-police  Pixel 8 [demo]  com.example.deepid_example  pid 4312  ● LIVE  ✎ 1 rule active
+ NETWORK  all app traffic · T switches                    ━ Receiving 2.8 KB/s   ━ Sending 1.4 KB/s
+  16 KB/s                                                      ┊
+                                                               ┊        ⢸⢇
+                                                               ┊        ⡜⢸            ⣤
+ 8.0 KB/s                                                      ┊        ⡇⠈⣆       ⢀⢤ ⢸⠸⡀      ⢀⣀
+                                                               ┊   ⢀⠖⠢⢄⢠⠃ ⣀⠑⠊⠉⠢⠔⠉⠉⠁ ⢇⡀ ⡎⠑⠒⠒⢆⣀⠤⡜⠘⣄⡀
+        0                                                      ⠈⠉⠒⠊⠁  ⠘⠉⠤⠔⠁ ⠘⠤⠊⠁ ⠑⠒⠒⠁⠑⠚⠱⠔⠒⠤⠎ ⠉⠁⠤⠒⠱⠤
+  ┌ keys ────────────────────────────────────────────────────────────────────────────────────────┐
+──│ Move     ↑↓ j k · g G top/bottom · PgUp PgDn · Tab/Shift+Tab focus                           │──
+ C│ Views    1 Connection View · 2 Thread View · 3 Rules                                         │s
+Na│ Detail   Enter open · Esc close · h l or ←→ tabs · p parsed/source · o original/modified     │
+at│ Body     Enter fold · [ fold all · ] unfold all · | jq filter · < > scroll sideways          │
+me│ Live     Space pause/resume · F freeze · L jump to live · + - 0 zoom · v select range        │
+mo│ Graph    T all app traffic / captured requests · t wall clock labels · drag to select        │
+ev│ List     c collapse repeats · s S sort · C columns · click header to sort                    │
+li│ Session  x clear session (asks first) · R reveal redacted values · ? help · q quit           │
+en│ Mouse    click rows and tabs · double-click opens · wheel scrolls · drag the divider         │ ▐
+do│                                                                                              │ ▐
+mo│ any key closes                                                                               │ ▐
+re└──────────────────────────────────────────────────────────────────────────────────────────────┘ ▐
+lookup?fields=country,region,ca…     101 B json      200          507 ms                        █▏ ▐
+monitor                              302 B json      200          1.49 s                        ▕█▏▐
+status?sessionId=session_15bce3…     263 B json      200          326 ms                         ▎ ▐
+threshold                                            ···          1.90 s                         ▐█▐
+events                                17 B json      200          970 ms                         ▐▎▐
+status?sessionId=session_15bce3…     263 B json      200          174 ms                          ▏▐
+fonts.json                                           canceled     380 ms                          ▏▐
+monitor                                              ···          500 ms                          ▐
+ 26 requests  13 KB in  18 KB out  1 failed  0 dropped  ⚠ studio inspector present          ? help

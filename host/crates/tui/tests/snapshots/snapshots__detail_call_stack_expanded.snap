@@ -1,0 +1,44 @@
+---
+source: crates/tui/tests/snapshots.rs
+expression: "detail(12.0, MEDIUM, init(), \"lll<Down><Down><Down><Enter>\")"
+---
+ traffic-police  Pixel 8 [demo]  com.example.deepid_example  pid 4312  ● LIVE  ✎ 1 rule active                         images: half-blocks
+ NETWORK  all app traffic · T switches                                                            ━ Receiving 2.9 KB/s   ━ Sending 1.4 KB/s
+  16 KB/s                                                                              ┊
+                                                                                       ┊            ⢠⠤⡀
+                                                                                       ┊            ⢸ ⡇
+                                                                                       ┊            ⡎ ⢣                 ⡤⡄
+ 8.0 KB/s                                                                              ┊            ⡇ ⢸            ⢀⣀⡀ ⢸ ⢣
+                                                                                       ┊      ⣀⣀   ⢀⠇ ⠈⠉⠣⣀⡠⠒⢢  ⡔⠒⠤⠤⠊ ⢇ ⡜ ⢸⡖⠢⣀⣀⣀⣀    ⢸⠉⢣
+                                                                                       ⢀⣀⡀ ⢀⣀⡰⠁⠒⠉⠙⢄⣸  ⢠⠤⠜⠉⢣  ⠓⠚⠃⠈⡆   ⠘⠒⢆ ⢸⡄    ⠈⠢⠤⢄⣀⡇ ⠈⠦⢄
+        0                                                                              ⠐⠒⠑⠒⠊⠉⠁    ⠣⠤⠤⠤⠃   ⠈⠒⠒⠁   ⠈⠉⠑⠒⠃ ⠈⠒⠃⠧⠔⠉⠉⠢⠴⠁   ⠘⠒⠊⠉⠈⠒⠒
+                                                                                       00:00                00:05                 00:10
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Connection View   Thread View   Rules                               26 rows │  Overview   Response   Request   Call Stack               ✕
+Name                      Size Type      Status         Time Timeline        │ Thread  DefaultDispatcher-worker-2  (id 59)
+token                    391 B json      200          513 ms          █     ▐│ captured when the app called execute() or enqueue(): the rea
+init                     316 B json      200          2.01 s          ▕▊    ▐│
+monitor                  302 B json      200          1.58 s          ▕▌    ▐│   ▾ 9 framework frames (okhttp3, retrofit2, java, $Proxy)
+events                    17 B json      200          1.45 s           █    ▐│     at okhttp3.internal.connection.RealCall.callStart(RealCa
+u_4821.png              4.5 KB png       200          476 ms           ▏    ▐│     at okhttp3.internal.connection.RealCall.enqueue(RealCall
+monitor                  302 B json      200          1.53 s           ▕▌   ▐│     at retrofit2.OkHttpCall.enqueue(OkHttpCall.java:193)
+challenge                144 B json      200          386 ms           ▕    ▐│     at retrofit2.KotlinExtensions.await(KotlinExtensions.kt:
+config                     0 B           302           61 ms            ▏   ▐│     at retrofit2.HttpServiceMethod$SuspendForBody.adapt(Http
+↪ config.json            106 B json      200          195 ms            ▏   ▐│     at retrofit2.HttpServiceMethod.invoke(HttpServiceMethod.
+attest                   180 B json      200          2.75 s            █▌  ▐│     at retrofit2.Retrofit$1.invoke(Retrofit.java:160)
+metrics                    6 B protobuf  200          224 ms            ▏   ▐│     at java.lang.reflect.Proxy.invoke(Proxy.java:1006)
+monitor                  302 B json      200          1.41 s            ▕▌  ▐│     at $Proxy14.init()
+events                    17 B json      200          1.14 s            ▕▌  ▐│   at com.example.deepid.sdk.session.SessionManager.start(Ses
+liveness-model-v3.j…     150 B json      404          346 ms             █  ▐│   at com.example.deepid.sdk.session.SessionManager$start$1.i
+enroll                    72 B json      200          2.08 s             ▐█ ▐│   ▸ 8 framework frames (kotlin, kotlinx.coroutines)  Enter e
+documents                 93 B json      200          515 ms             ▕  ▐│
+monitor                  302 B json      200          1.50 s             ▕▌ ▐│
+report                   305 B html      500          219 ms              ▏ ▐│
+lookup?fields=count…     101 B json      200          507 ms              █ ▐│
+monitor                  302 B json      200          1.49 s              ▕▌▐│
+status?sessionId=se…     263 B json      200          326 ms              ▕ ▐│
+threshold                                ···          1.90 s               █▐│
+events                    17 B json      200          970 ms               ▌▐│
+status?sessionId=se…     263 B json      200          174 ms               ▏▐│
+fonts.json                               canceled     380 ms               ▏ │
+ 26 requests  13 KB in  18 KB out  1 failed  0 dropped  ⚠ studio inspector present                                                  ? help

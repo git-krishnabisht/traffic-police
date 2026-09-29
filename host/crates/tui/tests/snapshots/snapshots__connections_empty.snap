@@ -1,0 +1,44 @@
+---
+source: crates/tui/tests/snapshots.rs
+expression: "frame(0.0, MEDIUM, \"\")"
+---
+ traffic-police  waiting for the app…  ● LIVE  ✎ 1 rule active                                                         images: half-blocks
+ NETWORK  captured requests (whole-app data not available) · T switches                                 ━ Receiving 0 B/s   ━ Sending 0 B/s
+ 1.0 KB/s
+
+
+
+  512 B/s
+
+
+        0 ⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀
+          1:36:10              1:36:15               1:36:20              1:36:25               1:36:30              1:36:35
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Connection View   Thread View   Rules                                                                                               0 rows
+Name                                                        Size Type      Status         Time Timeline
+
+ No requests yet. Traffic appears here as the app makes calls.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ 0 requests  0 B in  0 B out  0 failed  0 dropped                                                                                   ? help

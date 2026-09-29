@@ -1,0 +1,44 @@
+---
+source: crates/tui/tests/snapshots.rs
+expression: "frame(12.0, MEDIUM, \"?\")"
+---
+ traffic-police  Pixel 8 [demo]  com.example.deepid_example  pid 4312  ● LIVE  ✎ 1 rule active                         images: half-blocks
+ NETWORK  all app traffic · T switches                                                            ━ Receiving 2.9 KB/s   ━ Sending 1.4 KB/s
+  16 KB/s                                                                              ┊
+                                                                                       ┊            ⢠⠤⡀
+                                                                                       ┊            ⢸ ⡇
+                                                                                       ┊            ⡎ ⢣                 ⡤⡄
+ 8.0 KB/s                                                                              ┊            ⡇ ⢸            ⢀⣀⡀ ⢸ ⢣
+                                                                                       ┊      ⣀⣀   ⢀⠇ ⠈⠉⠣⣀⡠⠒⢢  ⡔⠒⠤⠤⠊ ⢇ ⡜ ⢸⡖⠢⣀⣀⣀⣀    ⢸⠉⢣
+                                                                                       ⢀⣀⡀ ⢀⣀⡰⠁⠒⠉⠙⢄⣸  ⢠⠤⠜⠉⢣  ⠓⠚⠃⠈⡆   ⠘⠒⢆ ⢸⡄    ⠈⠢⠤⢄⣀⡇ ⠈⠦⢄
+        0                                                                              ⠐⠒⠑⠒⠊⠉⠁    ⠣⠤⠤⠤⠃   ⠈⠒⠒⠁   ⠈⠉⠑⠒⠃ ⠈⠒⠃⠧⠔⠉⠉⠢⠴⠁   ⠘⠒⠊⠉⠈⠒⠒
+                                                                                       00:00                00:05                 00:10
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Connection View   Thread View   Rules                                                                                              26 rows
+Name                  ┌ keys ────────────────────────────────────────────────────────────────────────────────────────┐
+init                  │ Move     ↑↓ j k · g G top/bottom · PgUp PgDn · Tab/Shift+Tab focus                           │     ███▍            ▐
+monitor               │ Views    1 Connection View · 2 Thread View · 3 Rules                                         │     ▐█▉             ▐
+events                │ Detail   Enter open · Esc close · h l or ←→ tabs · p parsed/source · o original/modified     │      ██▊            ▐
+u_4821.png            │ Body     Enter fold · [ fold all · ] unfold all · | jq filter · < > scroll sideways          │       ▕▌            ▐
+monitor               │ Live     Space pause/resume · F freeze · L jump to live · + - 0 zoom · v select range        │        ▐█▊          ▐
+challenge             │ Graph    T all app traffic / captured requests · t wall clock labels · drag to select        │        ▕▍           ▐
+config                │ List     c collapse repeats · s S sort · C columns · click header to sort                    │         ▏           ▐
+↪ config.json         │ Session  x clear session (asks first) · R reveal redacted values · ? help · q quit           │         ▏           ▐
+attest                │ Mouse    click rows and tabs · double-click opens · wheel scrolls · drag the divider         │         ▕███▊       ▐
+metrics               │                                                                                              │           ▍         ▐
+monitor               │ any key closes                                                                               │           ▐█▌       ▐
+events                └──────────────────────────────────────────────────────────────────────────────────────────────┘           ▕█▌       ▐
+liveness-model-v3.json                                     150 B json      404          346 ms                                    ▐▏       ▐
+enroll                                                      72 B json      200          2.08 s                                      ███▏   ▐
+documents                                                   93 B json      200          515 ms                                      █      ▐
+monitor                                                    302 B json      200          1.50 s                                      ▐█▋    ▐
+report                                                     305 B html      500          219 ms                                       ▕█    ▐
+lookup?fields=country,region,carrier                       101 B json      200          507 ms                                         █   ▐
+monitor                                                    302 B json      200          1.49 s                                         ▐█▌ ▐
+status?sessionId=session_15bce3a5a963c9fde0ebe700e9d7…     263 B json      200          326 ms                                         ▐   ▐
+threshold                                                                  ···          1.90 s                                          ███▐
+events                                                      17 B json      200          970 ms                                          ▐█ ▐
+status?sessionId=session_15bce3a5a963c9fde0ebe700e9d7…     263 B json      200          174 ms                                           ▕ ▐
+fonts.json                                                                 canceled     380 ms                                           ▕▍▐
+monitor                                                                    ···          500 ms                                            █
+ 26 requests  13 KB in  18 KB out  1 failed  0 dropped  ⚠ studio inspector present                                                  ? help

@@ -1,0 +1,44 @@
+---
+source: crates/tui/tests/snapshots.rs
+expression: "frame(12.0, MEDIUM, \"2jl<Enter>\")"
+---
+ traffic-police  Pixel 8 [demo]  com.example.deepid_example  pid 4312  ● LIVE  ✎ 1 rule active                         images: half-blocks
+ NETWORK  all app traffic · T switches                                                            ━ Receiving 2.9 KB/s   ━ Sending 1.4 KB/s
+  16 KB/s                                                                              ┊
+                                                                                       ┊            ⢠⠤⡀
+                                                                                       ┊            ⢸ ⡇
+                                                                                       ┊            ⡎ ⢣                 ⡤⡄
+ 8.0 KB/s                                                                              ┊            ⡇ ⢸            ⢀⣀⡀ ⢸ ⢣
+                                                                                       ┊      ⣀⣀   ⢀⠇ ⠈⠉⠣⣀⡠⠒⢢  ⡔⠒⠤⠤⠊ ⢇ ⡜ ⢸⡖⠢⣀⣀⣀⣀    ⢸⠉⢣
+                                                                                       ⢀⣀⡀ ⢀⣀⡰⠁⠒⠉⠙⢄⣸  ⢠⠤⠜⠉⢣  ⠓⠚⠃⠈⡆   ⠘⠒⢆ ⢸⡄    ⠈⠢⠤⢄⣀⡇ ⠈⠦⢄
+        0                                                                              ⠐⠒⠑⠒⠊⠉⠁    ⠣⠤⠤⠤⠃   ⠈⠒⠒⠁   ⠈⠉⠑⠒⠃ ⠈⠒⠃⠧⠔⠉⠉⠢⠴⠁   ⠘⠒⠊⠉⠈⠒⠒
+                                                                                       00:00                00:05                 00:10
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Connection View   Thread View   Rules                                       │  Overview   Response   Request   Call Stack               ✕
+                                                      00:00                  │
+DefaultDispatc… 5     ·································█▍····█···▕▍··▕▏···▏· │  no response body
+DefaultDispatc… 5     ···································███··█████▕▋··▕█··█ │
+DefaultDispatc… 6     ···································▎██▌▕▎····▐███▐██▐▎ │
+Telemetry-Uplo… 4     ····································███··▕▕█▉·····▕█▌· │
+glide-source-t… 1     ·····································▕▋··············· │
+DefaultDispatc… 4     ······································▕█████▉▕███·▐███ │
+Thread-7 1            ·················································█···· │
+                                                                             │
+                                                                             │
+                                                                             │ ────────────────────────────────────────────────────────────
+                                                                             │ Request           config
+                                                                             │ Method            GET
+                                                                             │ Status            302 Found
+                                                                             │ URL               http://cdn.example.app/sdk/config
+                                                                             │ Redirect          followed by https://cdn.example.app/sdk/v2
+                                                                             │ Request type      —
+                                                                             │ Response type     —
+                                                                             │ Response size     0 B
+                                                                             │ Initiating thread DefaultDispatcher-worker-2  id 59 · call s
+                                                                             │ Client            OkHttp 4.12.0
+                                                                             │ Protocol          http/1.1
+                                                                             │ Remote address    151.101.1.195:80  connection c-4 (reused)
+                                                                             │ Started           00:04.100  (05:10:04.100)
+                                                                             │ Duration          61 ms
+                                                                             │
+ 26 requests  13 KB in  18 KB out  1 failed  0 dropped  ⚠ studio inspector present                                                  ? help
