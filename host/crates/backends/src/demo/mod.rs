@@ -1414,6 +1414,11 @@ impl DemoSession {
         self.device.elapsed()
     }
 
+    /// The device clock (`ts`) at `elapsed_ns` after the start.
+    pub fn clock_at(elapsed_ns: u64) -> u64 {
+        BASE_TS + elapsed_ns
+    }
+
     /// Advance to `elapsed_ns` after the start and return the new events.
     pub fn advance(&mut self, elapsed_ns: u64) -> Vec<SessionEvent> {
         self.buf.clear();
