@@ -209,7 +209,7 @@ Goal: capture from an unmodified debuggable app, including OkHttp clients create
 | `netinspect-runtime.dex` | `capture` library minus the library-mode entry points | same dir | read into a `ByteBuffer`, then `InMemoryDexClassLoader` |
 
 - Slicer lives in AOSP `platform/tools/dexter` (not `external/dexter`); we vendor a pinned revision (Apache-2.0).
-- The agent ABI must match the **process** ABI (ART rejects native-bridge agents), so a 32-bit app on a 64-bit device gets the armeabi-v7a agent. The host reads the process ABI from `track-app` or from `/proc/<pid>/exe`.
+- The agent ABI must match the **process** ABI (ART rejects native-bridge agents), so a 32-bit app on a 64-bit device gets the armeabi-v7a agent. The host reads the process architecture from `track-app` on Android 12+; on older devices it uses the package's primary ABI from `dumpsys package` (to be confirmed on devices in Phase 4).
 - The agent is built with NDK r28 (installed here: 28.2), which aligns ELF segments to 16 KB by default. A 4 KB-aligned `.so` fails to `dlopen` on 16 KB-page devices (Android 15+) unless the target app happens to run in page-size compat mode.
 - The `.so` must be executed from the app's own data directory: app domains may read `/data/local/tmp` (SELinux allows it explicitly for Android Studio's profilers) but never execute from it. Hence the `run-as … cp` into `code_cache/`.
 - Using `InMemoryDexClassLoader` (API 26+) sidesteps Android 14's rule that dynamically loaded dex files must not be writable (enforced for targetSdk ≥ 34, only in the file-backed `DexFile.openDexFileNative` path). `AddToBootstrapClassLoaderSearch` opens the dex with ART's own loader and is not subject to the check either; the host still `chmod 444`s both dex files, as Studio does. The ART extension `add_to_dex_class_loader_in_memory` (Android 11+) is avoided: it goes through a writable memfd path that the Android 14 check likely rejects.
@@ -363,11 +363,14 @@ With a virtual clock the generator produces a fixed timeline instantly; the snap
 
 ### 5.4 adb client and discovery
 
-- `ni-adb` speaks the adb server protocol on `127.0.0.1:5037` (overridable with `ADB_SERVER_SOCKET`-style config): one TCP connection per service, requests framed as 4 hex digits of length plus payload, `OKAY`/`FAIL` replies. Exact request and reply formats are listed in PROTOCOL.md, Appendix A, from the adb sources.
-- Long-lived tasks: one device tracker (`host:track-devices-l`), and per device a process tracker (`track-app` where the device supports it, else `track-jdwp` plus `ps`) and a socket scanner (`cat /proc/net/unix`, filtered to `@netinspect_`, every 1 s while a picker or `--follow` needs it).
-- If the adb server restarts, every connection drops. The client reconnects with backoff (250 ms to 5 s) and re-establishes trackers and forwards; live sessions switch to DETACHED during the gap and reattach automatically when the process is still alive (instance id unchanged, resume from the last sequence number).
-- If the server is not running or the protocol path fails, the client falls back to the `adb` binary for the same operations (`adb -s S shell ...`, `adb forward tcp:0 ...`) and says so in the status bar and in `doctor`.
-- Forwards are created per connection (`tcp:0` so adb chooses the port) and removed with `killforward` when the connection ends.
+- `ni-adb` speaks the adb server protocol on `127.0.0.1:5037` (or `ADB_SERVER_SOCKET` / `ANDROID_ADB_SERVER_PORT`). The exact requests and replies are in PROTOCOL.md Appendix A. The rules that shape the client: one outstanding request per TCP connection (the server does not support pipelining), a timeout on every request (some malformed requests get no reply), devices addressed by transport id rather than serial (ids are exact; serial matching is fuzzy), and device capabilities decided from the device's feature list rather than its API level (adbd is an updatable module).
+- **Long-lived tasks.** One device tracker per server (`host:track-devices-proto-binary` when the server advertises `devicetracker_proto_format`, else `host:track-devices-l`). Per online device: a process tracker (`track-app` on Android 12+ devices with the `track_app` feature, which also reports debuggability and the process architecture; else `track-jdwp` plus `/proc/<pid>/cmdline` for names) and, while a picker or `--follow` needs it, a socket scan (`cat /proc/net/unix` every second, filtered to listening `@netinspect_` names).
+- **Shell commands** use `shell,v2,raw:` so every command has an exit code (minimum API 26, so the shell protocol is always there), with arguments single-quoted.
+- **Pushing** the attach-mode files uses the sync protocol directly (`SEND`/`DATA`/`DONE`, 64 KiB chunks).
+- **Forwards** are created per connection (`tcp:0`, so the server picks the port) and removed with `killforward:tcp:<port>` when the connection ends. They also vanish whenever the device goes offline or the server restarts, so the backend re-creates them on every transition back to `device`. A forward succeeding proves nothing about the runtime (a forward to a missing socket connects and then reads EOF); only `hello` does. The client never uses `killforward-all`, which would also remove Android Studio's forwards.
+- **Server restarts.** Every connection drops and transport ids restart from 1. One supervisor reconnects with backoff (250 ms to 5 s), invalidates all cached ids, rebuilds the device table from the tracker's first message, then re-establishes per-device trackers and forwards. Live sessions show DETACHED during the gap and reattach automatically when the same process is still alive (same `instance`, resume after the last `seq`).
+- **Server not running.** The client starts it with `adb start-server` (the binary from `$ANDROID_HOME/platform-tools`, then `PATH`) and allows several seconds for the first reply.
+- **Fallback to the adb binary** for an operation the protocol path cannot perform is allowed only when `adb version` matches the running server's version: an adb client kills and restarts any server of a different version, which would also disconnect Android Studio. `doctor` reports a mismatch.
 
 ### 5.5 Device backend lifecycle
 
@@ -507,7 +510,7 @@ netinspect doctor [TARGET]
 
 - `TARGET` is `--serial`, `--package`, `--process`/`--pid`, `--mode`, `--launch`, `--follow`. With one device attached `--serial` is optional.
 - The NDJSON schema for `tail` is versioned (`"v":1`) and documented in PROTOCOL.md Appendix B.
-- `doctor` checks, in order, and prints a fix for each failure: adb found and server reachable; device authorized and online; API level (≥ 26 for attach mode); package installed and debuggable (`run-as` works); socket discovery (`/proc/net/unix` readable, runtime socket present in library mode); attachability (agent ABI matches the process, `code_cache` writable through `run-as`, a dry-run attach where safe); and host checks (terminal size, color support, clipboard path, config file validity).
+- `doctor` checks, in order, and prints a fix for each failure: adb server reachable and its version (and whether the `adb` binary on `PATH` matches it); device authorized and online; API level (≥ 26); package installed and debuggable (`run-as` works, and `ro.boot.disable_runas` is not set); socket discovery (`/proc/net/unix` readable; runtime socket present in library mode, with the process list from `track-app`/`track-jdwp`); attachability (process ABI and matching agent, device page size for 16 KB alignment, `code_cache` writable through `run-as`, stale `startup_agents` entries, the hook status of a running agent); and host checks (terminal size, color support, clipboard path, config and rules file validity).
 
 ### 5.13 Config, themes, keymap
 
@@ -651,7 +654,7 @@ A CI step (`cargo tree -e features`) fails if a C library sneaks back in through
 | Framework (`am`, ActivityThread, LoadedApk, providers, sockets) | GrapheneOS `platform_frameworks_base@17` (Android 17); `aosp-mirror/platform_frameworks_base` tags `android-8.0.0_r1` … `android-16.0.0_r1` |
 | ART (JVMTI, agents, class definition, DexFile) | LineageOS `android_art` `lineage-15.0` … `lineage-23.2` |
 | run-as, sepolicy, libcore, bionic | GrapheneOS `@17` and LineageOS branches |
-| adb | GrapheneOS `platform_packages_modules_adb@17` and older LineageOS branches |
+| adb | GrapheneOS `platform_packages_modules_adb@17`, `aosp-mirror/platform_system_core` tags (adb before Android 12), LineageOS `android_packages_modules_adb`, Android Studio's `adblib`; read-only probes of a local adb server (platform-tools 37.0.0, server version 41) |
 | OkHttp, Okio | `square/okhttp` tags `parent-3.5.0` … `parent-5.5.0` (source, API dumps, `javap` of release jars); `square/okio` `1.13.0` … `3.18.2` |
 | Socket discovery precedent | Chromium `@c6b97f11` (`android_device_info_query.cc`), `facebook/stetho` |
 | Rust crates | crates.io and docs.rs, 2026-09-29 |

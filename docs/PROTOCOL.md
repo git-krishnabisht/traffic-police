@@ -623,7 +623,51 @@ Frame types inside the gzip stream:
 
 ## Appendix A: adb services used by the host
 
-*(filled from the adb sources; see research notes)*
+Verified against `platform/packages/modules/adb` (Android 17), older `system/core/adb` tags, Android Studio's `adblib`, and read-only probes of a local adb server (platform-tools 37.0.0, server version 41). Details and citations: `research/04-adb-protocol.md`.
+
+**Framing.** Each request is `<hex4><payload>` (lowercase `%04x` byte length, payload ≤ 65,535 bytes). The reply status is `OKAY`, or `FAIL<hex4><message>`; the message may be multi-line or empty. One request per TCP connection at a time: bytes after a request are treated as part of it (no pipelining). A malformed request can get no reply at all, so every request has a timeout.
+
+**Addressing a device.** Always by transport id, which is unique within one server process (a replugged device gets a new id; ids restart at 1 when the server restarts, so all cached ids are dropped when the device tracker reconnects).
+
+| Purpose | Request | Reply |
+|---|---|---|
+| Server version | `host:version` | `OKAY` `0004` `0029` (41) |
+| Server features | `host:host-features` | `OKAY <hex4>` comma list (e.g. `devicetracker_proto_format`, `track_app`, `server_status`) |
+| Device features | `host-transport-id:<id>:features` | `OKAY <hex4>` comma list; fails unless the device is online |
+| Track devices | `host:track-devices-proto-binary` if the server has `devicetracker_proto_format`, else `host:track-devices-l` | `OKAY`, then forever `<hex4><Devices proto>` or `<hex4><lines>`, first message immediately, full list on every change (duplicates possible). Never write to this socket: any byte closes it |
+| Switch to a device | `host:transport-id:<id>` (or `host:tport:serial:<s>`, which also returns an 8-byte little-endian id) | `OKAY`; the same connection then carries one device service |
+| Device service | `<service>` after the switch | `OKAY` then a raw stream, or `FAIL…closed` (service unknown or target refused), or `FAIL…device offline…` |
+
+**Device services.**
+
+| Purpose | Service | Stream format |
+|---|---|---|
+| Shell with exit code | `shell,v2,raw:<command>` (`shell_v2`, API 24+). The command runs under `/system/bin/sh -c`; arguments are single-quoted with `'` written as `'\''` | Packets `[u8 id][u32 LE length][payload]`: 1 stdout, 2 stderr, 3 exit (payload[0] = code, 128+signal). Send `04 00000000` (close stdin) first. EOF without an exit packet means the device or transport went away |
+| Debuggable processes (Android 12+, device feature `track_app`) | `track-app` | `<hex4><AppProcesses proto>` per change: `pid`, `debuggable`, `profileable`, `architecture` (e.g. `arm64`); with feature `app_info` (Android 15+ adbd) also `user_id`, `process_name`, `package_names`, `waiting_for_debugger`, `uid`. A new list is pushed when a process starts, updates, or dies. Never write |
+| Debuggable processes (fallback) | `track-jdwp` | `<hex4>` + `pid\n` lines per change. Names come from `cat /proc/<pid>/cmdline` over shell |
+| Push a file | `sync:` | `SEND le32(len) "<path>,<decimal mode>"`, then `DATA le32(n ≤ 65,536) <bytes>`…, then `DONE le32(mtime)`; reply `OKAY 00000000` or `FAIL le32(n) <msg>` (after a FAIL, drop the connection). `QUIT 00000000` ends the session. `STAT` checks existence (16 bytes, all zero when missing) |
+
+**Forwarding to the capture runtime.**
+
+```
+→ <hex4>host-transport-id:<id>:forward:tcp:0;localabstract:netinspect_<pkg>_<pid>
+← OKAY OKAY <hex4><decimal port>        (listener bound on 127.0.0.1)
+← FAIL0000                              (empty message: device not found or not online)
+→ <hex4>host-transport-id:<id>:killforward:tcp:<port>      when done
+← OKAY OKAY                             (or FAIL "listener … not found": already gone)
+```
+
+- The forward succeeds even if nothing listens on that abstract name; the TCP client then sees a successful connect followed by EOF. Only `hello` proves the runtime is there.
+- Forwards disappear whenever the device goes offline (unplug, adbd restart, `adb root`, re-authorization) and when the server restarts. The host re-creates them on every transition back to `device`.
+- The host removes only the ports it created. It never sends `killforward-all`, which removes every forward on the server, including Android Studio's.
+
+**Discovery.** `shell,v2,raw:cat /proc/net/unix`; split each line on whitespace; keep rows with field 3 = `00010000` (listening) and field 7 starting with `@netinspect_`; the pid is the digits after the last `_` (package names may contain `_`). Accepted connections inherit the listener's name, which is why the flags field matters.
+
+**Server lifecycle.**
+
+- If the server is not reachable on `127.0.0.1:5037` (or `ADB_SERVER_SOCKET` / `ANDROID_ADB_SERVER_PORT`), the host runs `adb start-server` and retries with backoff; a freshly started server may hold connections for about 3 s.
+- When the server restarts, every connection gets EOF or a reset. One supervisor reconnects the device tracker, rebuilds the device table from its first message, then re-creates per-device trackers and forwards.
+- The `adb` binary is used as a fallback only if its version matches the running server's (`adb version` vs `host:version`): the adb client kills and restarts any server whose version differs from its own, which would also break Android Studio's session.
 
 ## Appendix B: NDJSON output of `netinspect tail`
 
