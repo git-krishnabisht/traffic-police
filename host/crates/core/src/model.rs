@@ -309,6 +309,8 @@ pub struct Transaction {
     pub failure: Option<Failure>,
     /// Some events of this transaction were dropped on the device.
     pub lossy: bool,
+    /// Store generation of the last change (lets views cache derived values).
+    pub rev: u64,
 }
 
 impl Transaction {
@@ -340,6 +342,7 @@ impl Transaction {
             state: TxnState::Waiting,
             failure: None,
             lossy: false,
+            rev: 0,
         }
     }
 

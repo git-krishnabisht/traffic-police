@@ -103,11 +103,18 @@ pub struct RowModel {
     expanded: HashSet<TxnIdx>,
     rows: Vec<Row>,
     order: Vec<TxnIdx>,
+    /// Every transaction in the current sort order, kept between refreshes so re-sorting after
+    /// a few changes is close to linear (the sort is adaptive).
+    sorted: Vec<TxnIdx>,
+    /// Sort key per transaction, with the transaction revision it was computed from.
+    keys: Vec<Option<(u64, KeyVal)>>,
+    keyed_for: Option<Sort>,
     seen_generation: Option<u64>,
+    seen_now: Ts,
     dirty: bool,
 }
 
-fn cmp_key(store: &SessionStore, t: &Transaction, col: Column, now: Ts) -> KeyVal {
+fn sort_key(t: &Transaction, col: Column, now: Ts) -> KeyVal {
     match col {
         Column::Name => KeyVal::S(t.url.name().to_lowercase()),
         Column::Size => KeyVal::N(t.response_size()),
@@ -123,20 +130,12 @@ fn cmp_key(store: &SessionStore, t: &Transaction, col: Column, now: Ts) -> KeyVa
         Column::Protocol => KeyVal::S(t.resp.as_ref().and_then(|r| r.protocol.clone()).unwrap_or_default()),
         Column::Client => KeyVal::S(t.client.as_ref().map(|c| c.label()).unwrap_or_default()),
     }
-    .with_tiebreak(store, t)
 }
 
-#[derive(PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 enum KeyVal {
     N(u64),
     S(String),
-    T(Box<KeyVal>, u64, u64),
-}
-
-impl KeyVal {
-    fn with_tiebreak(self, _store: &SessionStore, t: &Transaction) -> KeyVal {
-        KeyVal::T(Box::new(self), t.start, t.key.txn)
-    }
 }
 
 impl RowModel {
@@ -199,31 +198,32 @@ impl RowModel {
 
     /// Rebuild if the store changed or settings changed. Cheap when nothing changed.
     pub fn refresh(&mut self, store: &SessionStore, now: Ts) {
-        if !self.dirty && self.seen_generation == Some(store.generation()) {
+        // Durations of open requests grow with the clock, so a Time sort and a range filter
+        // can change even without new events.
+        let clock_matters = self.sort.column == Column::Time || self.range.is_some();
+        if !self.dirty && self.seen_generation == Some(store.generation()) && !(clock_matters && now != self.seen_now) {
             return;
         }
         self.seen_generation = Some(store.generation());
+        self.seen_now = now;
         self.dirty = false;
         let range = self.range;
+        let in_range = |t: &Transaction| match range {
+            Some((a, b)) => t.start <= b && t.end.unwrap_or(if t.state.is_open() { now } else { t.start }) >= a,
+            None => true,
+        };
         self.order.clear();
-        self.order.extend((0..store.len() as TxnIdx).filter(|&i| {
-            let t = store.txn(i);
-            match range {
-                Some((a, b)) => t.start <= b && t.end.unwrap_or(if t.state.is_open() { now } else { t.start }) >= a,
-                None => true,
-            }
-        }));
-        let sort = self.sort;
-        if sort != Sort::default() {
-            let mut keyed: Vec<(KeyVal, TxnIdx)> =
-                self.order.iter().map(|&i| (cmp_key(store, store.txn(i), sort.column, now), i)).collect();
-            keyed.sort_by(|a, b| if sort.descending { b.0.cmp(&a.0) } else { a.0.cmp(&b.0) });
-            self.order = keyed.into_iter().map(|(_, i)| i).collect();
+        if self.sort != Sort::default() {
+            self.sort_by_key(store, now);
+            self.order.extend(self.sorted.iter().copied().filter(|&i| in_range(store.txn(i))));
         } else {
-            let mut keyed: Vec<(u64, u64, TxnIdx)> =
-                self.order.iter().map(|&i| (store.txn(i).start, store.txn(i).key.txn, i)).collect();
+            let mut keyed: Vec<(u64, u64, TxnIdx)> = (0..store.len() as TxnIdx)
+                .map(|i| (store.txn(i), i))
+                .filter(|(t, _)| in_range(t))
+                .map(|(t, i)| (t.start, t.key.txn, i))
+                .collect();
             keyed.sort_unstable();
-            self.order = keyed.into_iter().map(|(_, _, i)| i).collect();
+            self.order.extend(keyed.into_iter().map(|(_, _, i)| i));
         }
         self.rows.clear();
         if !self.collapse {
@@ -249,6 +249,45 @@ impl RowModel {
             }
             i = j;
         }
+    }
+}
+
+impl RowModel {
+    /// Bring `sorted` up to date for a non-default sort: new transactions are appended, keys
+    /// are recomputed only for transactions that changed (and for open ones when sorting by
+    /// duration), and the nearly sorted order is sorted again.
+    fn sort_by_key(&mut self, store: &SessionStore, now: Ts) {
+        let sort = self.sort;
+        if self.keyed_for != Some(sort) {
+            self.keyed_for = Some(sort);
+            self.keys.clear();
+            self.sorted.clear();
+        }
+        let known = self.sorted.len();
+        self.sorted.extend(known as TxnIdx..store.len() as TxnIdx);
+        self.keys.resize(store.len(), None);
+        let mut changed = known < store.len();
+        for i in 0..store.len() {
+            let t = store.txn(i as TxnIdx);
+            let fresh = matches!(&self.keys[i], Some((rev, _)) if *rev == t.rev)
+                && !(sort.column == Column::Time && t.end.is_none());
+            if !fresh {
+                self.keys[i] = Some((t.rev, sort_key(t, sort.column, now)));
+                changed = true;
+            }
+        }
+        if !changed {
+            return;
+        }
+        let keys = &self.keys;
+        let key = |i: TxnIdx| {
+            let t = store.txn(i);
+            (&keys[i as usize].as_ref().expect("keyed").1, t.start, t.key.txn)
+        };
+        self.sorted.sort_by(|&a, &b| {
+            let o = key(a).cmp(&key(b));
+            if sort.descending { o.reverse() } else { o }
+        });
     }
 }
 

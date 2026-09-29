@@ -305,3 +305,41 @@ fn random_input_does_not_panic() {
         }
     }
 }
+
+#[test]
+fn incremental_sort_matches_a_full_sort() {
+    use traffic_police_core::rows::Sort;
+    use traffic_police_core::store::SessionStore;
+    for (column, descending) in
+        [(Column::Size, true), (Column::Time, false), (Column::Name, false), (Column::Status, true)]
+    {
+        let mut app = App::new(SessionStore::new(), Theme::default());
+        let mut session = DemoSession::new(DemoConfig::default(), app.store.source_ids());
+        app.rows.set_sort(Sort { column, descending });
+        for step in 1..=160u64 {
+            let t = step * 250_000_000; // 40 s in quarter seconds
+            app.ingest(session.advance(t));
+            let now = DemoSession::clock_at(t);
+            app.now_override = Some(now);
+            app.refresh();
+            let store = app.view_store();
+            let mut expected: Vec<u32> = (0..store.len() as u32).collect();
+            let key = |i: u32| {
+                let x = store.txn(i);
+                let k: (u64, String) = match column {
+                    Column::Size => (x.response_size(), String::new()),
+                    Column::Time => (x.duration(now), String::new()),
+                    Column::Name => (0, x.url.name().to_lowercase()),
+                    _ => (
+                        x.status().map(u64::from).unwrap_or(if x.failure.is_some() { 1000 } else { 999 }),
+                        String::new(),
+                    ),
+                };
+                (k, x.start, x.key.txn)
+            };
+            expected.sort_by(|&a, &b| if descending { key(b).cmp(&key(a)) } else { key(a).cmp(&key(b)) });
+            let got: Vec<u32> = app.view_rows().rows().iter().map(|r| r.txn()).collect();
+            assert_eq!(got, expected, "{column:?} at step {step}");
+        }
+    }
+}

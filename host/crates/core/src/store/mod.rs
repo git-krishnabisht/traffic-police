@@ -214,7 +214,9 @@ impl SessionStore {
     }
 
     fn touch(&mut self, idx: TxnIdx) -> &mut Transaction {
-        Arc::make_mut(&mut self.txns[idx as usize])
+        let t = Arc::make_mut(&mut self.txns[idx as usize]);
+        t.rev = self.generation;
+        t
     }
 
     fn lane_for(&mut self, thread: &ThreadInfo) -> u32 {
