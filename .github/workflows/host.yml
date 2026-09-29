@@ -1,0 +1,57 @@
+name: host
+
+on:
+  push:
+    paths: ["host/**", ".github/workflows/host.yml"]
+  pull_request:
+    paths: ["host/**", ".github/workflows/host.yml"]
+
+env:
+  CARGO_TERM_COLOR: always
+  # snapshot mismatches fail instead of writing new files
+  INSTA_UPDATE: "no"
+
+defaults:
+  run:
+    working-directory: host
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup toolchain install 1.98.1 --profile minimal --component clippy,rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: host
+      - run: cargo fmt --all --check
+      - run: cargo clippy --locked --all-targets -- -D warnings
+      - name: No C libraries through default features
+        run: |
+          if cargo tree --locked -e features | grep -E -i 'chafa|onig|zstd-sys|dav1d'; then
+            echo "a C library came back through default features"; exit 1
+          fi
+
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup toolchain install 1.98.1 --profile minimal
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: host
+      - run: cargo test --locked
+
+  frame-time:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup toolchain install 1.98.1 --profile minimal
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: host
+      - run: cargo test --locked --release -p traffic-police-tui --test perf -- --ignored --nocapture

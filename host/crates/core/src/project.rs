@@ -80,10 +80,15 @@ mod tests {
     #[test]
     fn parses_and_resolves_roots() {
         let root = Path::new("/work/app");
-        let text = "package = \"com.example.app\"\nsource_roots = [\"app/src/main/java\", \"/abs/src\"]\n";
-        let c = parse(root, Path::new("/work/app/.traffic-police/project.toml"), text).unwrap();
+        // an absolute path on this platform (a drive letter is needed on Windows)
+        let abs = std::env::temp_dir().join("abs-src");
+        let text = format!(
+            "package = \"com.example.app\"\nsource_roots = [\"app/src/main/java\", {}]\n",
+            toml::Value::String(abs.display().to_string())
+        );
+        let c = parse(root, Path::new("/work/app/.traffic-police/project.toml"), &text).unwrap();
         assert_eq!(c.package.as_deref(), Some("com.example.app"));
-        assert_eq!(c.source_roots, vec![PathBuf::from("/work/app/app/src/main/java"), PathBuf::from("/abs/src")]);
+        assert_eq!(c.source_roots, vec![PathBuf::from("/work/app/app/src/main/java"), abs]);
         assert!(c.warnings.is_empty());
     }
 
