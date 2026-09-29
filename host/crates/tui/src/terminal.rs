@@ -103,6 +103,7 @@ async fn event_loop(
     let mut ticker = tokio::time::interval(INPUT_FRAME);
     ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
     let mut backend_open = true;
+    let mut stop = StopSignals::new()?;
     let mut input_dirty = true;
     let mut data_dirty = false;
     let mut last_draw: Option<Instant> = None;
@@ -147,6 +148,13 @@ async fn event_loop(
             Some((job, view)) = body_rx.recv() => {
                 app.finish_body(job, view);
                 input_dirty = true;
+            }
+            _ = stop.recv() => {
+                // SIGTERM or SIGHUP: leave the loop so the terminal is restored
+                if let Some(Editor { mut child, .. }) = editor.take() {
+                    let _ = child.kill().await;
+                }
+                return Ok(());
             }
             _ = ticker.tick() => {}
         }
@@ -239,4 +247,34 @@ fn resume_terminal(term: &mut Term) -> anyhow::Result<()> {
     // after another program used the terminal.)
     *term = Terminal::new(CrosstermBackend::new(io::stdout()))?;
     Ok(())
+}
+
+/// SIGTERM and SIGHUP (Unix). Raw mode delivers Ctrl+C as a key, so SIGINT is not needed.
+struct StopSignals {
+    #[cfg(unix)]
+    term: tokio::signal::unix::Signal,
+    #[cfg(unix)]
+    hup: tokio::signal::unix::Signal,
+}
+
+impl StopSignals {
+    fn new() -> io::Result<Self> {
+        #[cfg(unix)]
+        {
+            use tokio::signal::unix::{SignalKind, signal};
+            Ok(StopSignals { term: signal(SignalKind::terminate())?, hup: signal(SignalKind::hangup())? })
+        }
+        #[cfg(not(unix))]
+        Ok(StopSignals {})
+    }
+
+    async fn recv(&mut self) {
+        #[cfg(unix)]
+        tokio::select! {
+            _ = self.term.recv() => {}
+            _ = self.hup.recv() => {}
+        }
+        #[cfg(not(unix))]
+        std::future::pending::<()>().await
+    }
 }
