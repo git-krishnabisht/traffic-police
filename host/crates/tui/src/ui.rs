@@ -172,15 +172,15 @@ fn tick_step(span: u64, width: u16) -> u64 {
         .unwrap_or(*STEPS.last().expect("non-empty"))
 }
 
-fn time_label(app: &App, ts: Ts, tick: u64) -> String {
+/// `mm:ss.mmm` since the session started, or the wall-clock time of day (`t` toggles).
+fn time_label(app: &App, ts: Ts) -> String {
     let store = app.view_store();
     if app.wall_labels
         && let Some(w) = store.wall_ms(ts)
     {
-        let s = fmt::wall_clock(w);
-        return if tick >= NS_PER_SEC { s[..8].to_string() } else { s };
+        return fmt::wall_clock(w);
     }
-    fmt::offset_label(ts.saturating_sub(store.origin()), tick)
+    fmt::offset(ts.saturating_sub(store.origin()))
 }
 
 /// Draw time-axis labels for `[left, right)` across `r` (one row).
@@ -193,7 +193,7 @@ fn draw_axis(app: &App, r: Rect, left: Ts, right: Ts, buf: &mut Buffer) {
     let mut last_end = r.x;
     while t < right {
         let x = r.x + ((t - left) as f64 / span as f64 * f64::from(r.width)) as u16;
-        let label = time_label(app, t, tick);
+        let label = time_label(app, t);
         let w = label.width() as u16;
         if x >= last_end && x + w <= r.x + r.width {
             text(buf, x, r.y, w, vec![Span::styled(label, app.theme.dim())]);
@@ -230,11 +230,11 @@ fn draw_graph(app: &mut App, r: Rect, buf: &mut Buffer) {
         spans.push(Span::styled("  ⏸ not following live · L", t.warn()));
     }
     if let Some(c) = app.graph.cursor.filter(|_| focused) {
-        spans.push(Span::styled(format!("  cursor {}", time_label(app, c, NS_PER_MS)), t.accent()));
+        spans.push(Span::styled(format!("  cursor {}", time_label(app, c)), t.accent()));
     }
     if let Some((a, z)) = app.graph.selection {
         spans.push(Span::styled(
-            format!("  range {}–{} · Esc clears", time_label(app, a, NS_PER_MS), time_label(app, z, NS_PER_MS)),
+            format!("  range {}–{} · Esc clears", time_label(app, a), time_label(app, z)),
             t.accent(),
         ));
     }

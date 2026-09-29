@@ -566,6 +566,21 @@ impl App {
         }
     }
 
+    /// Move the graph window by `frac` of its width (negative: back in time). Reaching the live
+    /// edge resumes following it.
+    fn shift_window(&mut self, frac: f64) {
+        let (_, right) = self.window();
+        let live = self.now();
+        let step = (self.graph.span as f64 * frac.abs()) as u64;
+        let r = if frac < 0.0 { right.saturating_sub(step) } else { right + step };
+        let earliest = self.view_store().origin() + self.graph.span / 10;
+        let r = r.max(earliest.min(live));
+        self.graph.pinned_right = if r >= live { None } else { Some(r) };
+        if self.graph.pinned_right.is_none() {
+            self.follow_list = true;
+        }
+    }
+
     fn apply_graph_selection(&mut self, a: Ts, b: Ts) {
         let (lo, hi) = if a <= b { (a, b) } else { (b, a) };
         if hi - lo < NS_PER_MS {
@@ -1180,19 +1195,27 @@ impl App {
             self.flash("this frame has no source file");
             return;
         };
+        let line = frame.l.unwrap_or(1).max(1) as u32;
         if self.source_roots.is_empty() {
             self.flash("set source_roots in .traffic-police/project.toml to open frames in $EDITOR");
             return;
         }
-        let pkg_path: PathBuf = frame.c.rsplit_once('.').map(|(p, _)| p.replace('.', "/")).unwrap_or_default().into();
-        for root in &self.source_roots {
-            let candidate = root.join(&pkg_path).join(&file);
-            if candidate.is_file() {
-                self.editor_request = Some((candidate, frame.l.unwrap_or(1).max(1) as u32));
-                return;
+        // the package directory first, then any file of that name under the roots
+        let pkg: PathBuf = frame.c.rsplit_once('.').map(|(p, _)| p.replace('.', "/")).unwrap_or_default().into();
+        let direct = self.source_roots.iter().map(|r| r.join(&pkg).join(&file)).find(|p| p.is_file());
+        let found = direct.or_else(|| {
+            let mut hits = Vec::new();
+            for root in &self.source_roots {
+                find_files(root, &file, &mut hits, 0, &mut 0);
             }
+            // prefer a path that ends with the package directories
+            hits.sort_by_key(|p: &PathBuf| !p.parent().is_some_and(|d| d.ends_with(&pkg)));
+            hits.into_iter().next()
+        });
+        match found {
+            Some(path) => self.editor_request = Some((path, line)),
+            None => self.flash(format!("{file} not found under the source roots")),
         }
-        self.flash(format!("{} not found under the source roots", pkg_path.join(&file).display()));
     }
 
     pub fn handle_mouse(&mut self, m: MouseEvent) {
@@ -1283,6 +1306,11 @@ impl App {
                 }
                 self.drag = None;
             }
+            MouseEventKind::ScrollLeft | MouseEventKind::ScrollRight => {
+                if let Some(Target::Graph) = self.hits.at(x, y) {
+                    self.shift_window(if m.kind == MouseEventKind::ScrollRight { 0.1 } else { -0.1 });
+                }
+            }
             MouseEventKind::ScrollDown | MouseEventKind::ScrollUp => {
                 let down = m.kind == MouseEventKind::ScrollDown;
                 match self.hits.at(x, y) {
@@ -1296,6 +1324,10 @@ impl App {
                             .cursor
                             .clamp(self.detail.scroll, self.detail.scroll + self.detail_height.saturating_sub(1));
                     }
+                    // Shift+wheel moves along the time axis; the wheel alone zooms
+                    Some(Target::Graph) if m.modifiers.contains(KeyModifiers::SHIFT) => {
+                        self.shift_window(if down { 0.1 } else { -0.1 })
+                    }
                     Some(Target::Graph) => self.zoom(if down { -1 } else { 1 }),
                     _ => {
                         let len = self.view_rows().len();
@@ -1307,6 +1339,31 @@ impl App {
                 }
             }
             _ => {}
+        }
+    }
+}
+
+/// Files named `name` under `dir` (depth- and size-limited, skipping build and VCS directories).
+fn find_files(dir: &std::path::Path, name: &str, out: &mut Vec<PathBuf>, depth: usize, seen: &mut usize) {
+    const MAX_DEPTH: usize = 24;
+    const MAX_ENTRIES: usize = 200_000;
+    if depth > MAX_DEPTH || *seen > MAX_ENTRIES {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    for e in entries.flatten() {
+        *seen += 1;
+        let path = e.path();
+        let Ok(kind) = e.file_type() else { continue };
+        if kind.is_dir() {
+            let skip = path.file_name().and_then(|n| n.to_str()).is_some_and(|n| {
+                n.starts_with('.') || matches!(n, "build" | "target" | "node_modules" | "intermediates")
+            });
+            if !skip {
+                find_files(&path, name, out, depth + 1, seen);
+            }
+        } else if path.file_name().is_some_and(|n| n == name) {
+            out.push(path);
         }
     }
 }

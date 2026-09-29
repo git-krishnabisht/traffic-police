@@ -83,12 +83,21 @@ pub async fn run(mut app: App, mut events: mpsc::Receiver<Vec<SessionEvent>>, op
     result
 }
 
+/// An editor started from the Call Stack tab; the loop keeps ingesting events while it runs.
+struct Editor {
+    child: tokio::process::Child,
+    path: std::path::PathBuf,
+}
+
 async fn event_loop(
     term: &mut Term,
     app: &mut App,
     events: &mut mpsc::Receiver<Vec<SessionEvent>>,
 ) -> anyhow::Result<()> {
-    let mut input = EventStream::new();
+    // `None` while an editor owns the terminal: the stream's reader thread would compete with
+    // the editor for keystrokes.
+    let mut input = Some(EventStream::new());
+    let mut editor: Option<Editor> = None;
     let (jq_tx, mut jq_rx) = mpsc::unbounded_channel::<(JqJob, JqResult)>();
     let (body_tx, mut body_rx) = mpsc::unbounded_channel::<(BodyJob, BodyView)>();
     let mut ticker = tokio::time::interval(INPUT_FRAME);
@@ -99,7 +108,7 @@ async fn event_loop(
     let mut last_draw: Option<Instant> = None;
     loop {
         tokio::select! {
-            ev = input.next() => match ev {
+            ev = async { input.as_mut().expect("guarded").next().await }, if input.is_some() => match ev {
                 Some(Ok(Event::Mouse(m))) if m.kind == MouseEventKind::Moved => {}
                 Some(Ok(ev)) => {
                     app.handle_event(ev);
@@ -108,6 +117,18 @@ async fn event_loop(
                 Some(Err(e)) => return Err(e.into()),
                 None => return Ok(()),
             },
+            status = async { editor.as_mut().expect("guarded").child.wait().await }, if editor.is_some() => {
+                let Editor { path, .. } = editor.take().expect("guarded");
+                resume_terminal(term)?;
+                input = Some(EventStream::new());
+                match status {
+                    Ok(s) if s.success() => app.flash(format!("returned from the editor ({})", path.display())),
+                    Ok(s) => app.flash(format!("the editor exited with {s}")),
+                    Err(e) => app.flash(format!("could not wait for the editor: {e}")),
+                }
+                input_dirty = true;
+                last_draw = None;
+            }
             batch = events.recv(), if backend_open => match batch {
                 Some(b) => {
                     app.ingest(b);
@@ -147,17 +168,24 @@ async fn event_loop(
                 let _ = tx.send((job, result));
             });
         }
-        if let Some((path, line)) = app.editor_request.take() {
-            // The input stream's reader thread would compete with the editor for keystrokes.
-            drop(input);
-            let outcome = open_editor(term, &path, line);
-            input = EventStream::new();
-            match outcome {
-                Ok(()) => app.flash(format!("returned from the editor ({})", path.display())),
-                Err(e) => app.flash(format!("could not open the editor: {e}")),
+        if let Some((path, line)) = app.editor_request.take()
+            && editor.is_none()
+        {
+            input = None;
+            match start_editor(&path, line) {
+                Ok(child) => editor = Some(Editor { child, path }),
+                Err(e) => {
+                    tracing::warn!("editor: {e:#}");
+                    resume_terminal(term)?;
+                    input = Some(EventStream::new());
+                    app.flash(format!("could not open the editor: {e}"));
+                    input_dirty = true;
+                    last_draw = None;
+                }
             }
-            input_dirty = true;
-            last_draw = None;
+        }
+        if editor.is_some() {
+            continue;
         }
         let since = last_draw.map_or(Duration::MAX, |t| t.elapsed());
         let due = (input_dirty && since >= INPUT_FRAME)
@@ -172,12 +200,12 @@ async fn event_loop(
     }
 }
 
-/// Suspend the UI, open `$VISUAL`/`$EDITOR` at `path:line`, and resume.
-fn open_editor(term: &mut Term, path: &Path, line: u32) -> anyhow::Result<()> {
+/// Give the terminal to `$VISUAL`/`$EDITOR`, opened at `path:line`.
+fn start_editor(path: &Path, line: u32) -> anyhow::Result<tokio::process::Child> {
     let editor = std::env::var("VISUAL").or_else(|_| std::env::var("EDITOR")).unwrap_or_else(|_| "vi".into());
     let mut parts = editor.split_whitespace();
     let program = parts.next().unwrap_or("vi").to_string();
-    let mut cmd = std::process::Command::new(&program);
+    let mut cmd = tokio::process::Command::new(&program);
     cmd.args(parts);
     let base = Path::new(&program).file_name().and_then(|s| s.to_str()).unwrap_or("");
     match base {
@@ -192,13 +220,23 @@ fn open_editor(term: &mut Term, path: &Path, line: u32) -> anyhow::Result<()> {
         }
     }
     restore_terminal();
-    let status = cmd.status();
+    cmd.spawn().map_err(|e| anyhow::anyhow!("{program}: {e}"))
+}
+
+/// Take the terminal back after the editor: alternate screen, raw mode, and a full repaint.
+fn resume_terminal(term: &mut Term) -> anyhow::Result<()> {
     terminal::enable_raw_mode()?;
-    execute!(io::stdout(), EnterAlternateScreen, EnableMouseCapture, EnableBracketedPaste, cursor::Hide)?;
-    term.clear()?;
-    let status = status?;
-    if !status.success() {
-        anyhow::bail!("{program} exited with {status}");
-    }
+    execute!(
+        io::stdout(),
+        EnterAlternateScreen,
+        EnableMouseCapture,
+        EnableBracketedPaste,
+        cursor::Hide,
+        terminal::Clear(terminal::ClearType::All)
+    )?;
+    // A fresh Terminal has empty buffers, so the next frame is drawn in full. (Terminal::clear
+    // would ask the terminal for the cursor position first, and that query can fail right
+    // after another program used the terminal.)
+    *term = Terminal::new(CrosstermBackend::new(io::stdout()))?;
     Ok(())
 }

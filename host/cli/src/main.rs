@@ -168,10 +168,33 @@ fn demo_app(theme: Theme) -> App {
     app
 }
 
+/// Apply `.traffic-police/project.toml` (nearest one at or above the working directory).
+fn load_project(app: &mut App) {
+    let Ok(cwd) = std::env::current_dir() else { return };
+    match traffic_police_core::project::find(&cwd) {
+        Ok(Some(p)) => {
+            tracing::info!(root = %p.root.display(), roots = p.source_roots.len(), "project config");
+            for w in &p.warnings {
+                tracing::warn!("{w}");
+            }
+            if let Some(w) = p.warnings.first() {
+                app.flash(w.clone());
+            }
+            app.source_roots = p.source_roots;
+        }
+        Ok(None) => {}
+        Err(e) => {
+            tracing::warn!("{e}");
+            app.flash(e.to_string());
+        }
+    }
+}
+
 async fn run_demo(args: &DemoArgs, theme: Theme, detect_images: bool) -> anyhow::Result<()> {
     let now_ms = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64);
     let cfg = demo_config(args, Some(now_ms))?;
     let mut app = demo_app(theme);
+    load_project(&mut app);
     let ids = app.store.source_ids();
     let (event_tx, event_rx) = mpsc::channel(256);
     let (command_tx, command_rx) = mpsc::unbounded_channel();

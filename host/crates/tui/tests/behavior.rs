@@ -362,3 +362,40 @@ fn keys_between_frames_see_the_new_order() {
         .0;
     assert_eq!(app.selected, Some(top as u32), "the largest response is selected");
 }
+
+#[test]
+fn enter_on_an_app_frame_asks_for_the_editor() {
+    let root = std::env::temp_dir().join(format!("tp-src-test-{}", std::process::id()));
+    // SessionManager.kt lives outside its package directory, as Kotlin allows
+    let file = root.join("sdk/session/SessionManager.kt");
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    std::fs::write(&file, "class SessionManager\n").unwrap();
+    let mut app = app_at(12.0);
+    let to = goto(&mut app, MEDIUM, path_is("/api/sdk/init"));
+    press(&mut app, MEDIUM, &format!("{to}<Enter>lll<Down><Down><Down><Down><Enter>"));
+    assert!(app.editor_request.is_none(), "no source roots configured yet");
+    app.source_roots = vec![root.clone()];
+    press(&mut app, MEDIUM, "<Enter>");
+    let (path, line) = app.editor_request.take().expect("editor request");
+    assert_eq!(path, file);
+    assert!(line > 0);
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn shift_wheel_pans_the_graph_and_returns_to_live() {
+    let mut app = app_at(40.0);
+    render_text(&mut app, MEDIUM.0, MEDIUM.1);
+    let g = app.hits.rect_of(Target::Graph).expect("graph");
+    let wheel = |kind| MouseEvent { kind, column: g.x + 5, row: g.y + 1, modifiers: KeyModifiers::SHIFT };
+    app.handle_mouse(wheel(MouseEventKind::ScrollUp));
+    assert!(!app.is_live(), "moved back in time");
+    let (_, right) = app.window();
+    assert!(right < app.now());
+    app.handle_mouse(mouse(MouseEventKind::ScrollRight, g.x + 5, g.y + 1));
+    assert!(app.is_live(), "back at the live edge");
+    // the wheel alone still zooms
+    let span = app.graph.span;
+    app.handle_mouse(mouse(MouseEventKind::ScrollDown, g.x + 5, g.y + 1));
+    assert!(app.graph.span > span);
+}
