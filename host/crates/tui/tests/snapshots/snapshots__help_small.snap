@@ -18,7 +18,7 @@ at│ Body     Enter fold · [ fold all · ] unfold all · | jq filter · < > sc
 me│ Live     Space pause/resume · F freeze · L jump to live · + - 0 zoom · v select range        │
 mo│ Graph    T all app traffic / captured requests · t wall clock labels · drag to select        │
 ev│ List     c collapse repeats · s S sort · C columns · click header to sort                    │
-li│ Session  x clear session (asks first) · R reveal redacted values · ? help · q quit           │
+li│ Session  x clear session (asks first) · ? help · q quit                                      │
 en│ Mouse    click rows and tabs · double-click opens · wheel scrolls · drag the divider         │ ▐
 do│                                                                                              │ ▐
 mo│ any key closes                                                                               │ ▐

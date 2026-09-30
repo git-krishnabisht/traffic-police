@@ -63,7 +63,7 @@ and a 5 MB download, on several threads.
 | Live | `Space` pause or resume recording · `F` freeze the view (capture continues) · `L` back to live · `+` `-` zoom · `0` reset zoom · `v` select a time range (`v` or `Enter` again to apply) |
 | Graph | `T` whole-app traffic or captured requests · `t` time since start or wall clock · `←` `→` move when the graph has focus |
 | List | `c` collapse repeated calls · `s` sort by the next column · `S` reverse the sort · `C` choose columns |
-| Session | `x` clear (asks first) · `R` reveal redacted values for this session · `?` help · `q` quit |
+| Session | `x` clear (asks first) · `?` help · `q` quit |
 
 Mouse: click rows and tabs, double-click a row to open it, wheel to scroll (on the graph the
 wheel zooms and Shift+wheel moves in time), drag on the graph to select a range, drag the divider
@@ -73,13 +73,11 @@ Coming in Phase 2: `/` filter bar and body search (`n`, `N`), `y` copy (includin
 export (HAR), `w` save a body, `d` diff two requests, `m` pin, `:` command palette. Phase 3 adds
 `r` (new rule from the selected request) and rule editing.
 
-## Redaction
+## What you see is what was sent
 
-Secrets are masked by default: `Authorization`, `Proxy-Authorization`, `Cookie`, `Set-Cookie`,
-`X-Api-Key`, `Api-Key` and `X-Auth-Token` values show as `‹redacted N chars›` (the `Bearer`
-scheme and cookie names stay visible). `R` reveals them until you quit, and the header shows
-`REVEALED` meanwhile. Your own headers, query parameters and JSON paths (for example `$.aadhaar`,
-`$..pan`) become configurable in Phase 2.
+traffic-police hides nothing: headers such as `Authorization` and `Cookie`, tokens and personal
+data in bodies all appear exactly as the app sent and received them, on screen and (from Phase
+2) in exports. Treat screenshots and exported files like the app's own logs.
 
 ## Project config
 
@@ -137,7 +135,7 @@ launch there).
 
 ```sh
 cd host
-cargo test                                    # unit and behavior tests, and 58 UI snapshots
+cargo test                                    # unit and behavior tests, and 56 UI snapshots
 INSTA_UPDATE=always cargo test -p traffic-police-tui   # after an intended UI change; review the snapshot diff
 cargo test --release -p traffic-police-tui --test perf -- --ignored --nocapture   # frame time at 50,000 requests
 cargo run -- demo --dump-frame 140x40@12 --keys 'g<Enter>l'   # print one frame as text

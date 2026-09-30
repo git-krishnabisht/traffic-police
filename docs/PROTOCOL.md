@@ -601,13 +601,13 @@ Frame types inside the gzip stream:
 
 | Type | Content |
 |---:|---|
-| 1, 2 | Device frames exactly as received (after redaction, see below) |
-| 16 | JSON `{"t":"session", "format":1, "created_wall_ms":…, "host":{…}, "redacted":true, "filter":null}` — first frame |
+| 1, 2 | Device frames exactly as received |
+| 16 | JSON `{"t":"session", "format":1, "created_wall_ms":…, "host":{…}, "filter":null}` — first frame |
 | 17 | JSON `{"t":"source", "source":N, "device":{…serial, model…}, "hello":{…original hello…}}` — starts or switches to source N; following device frames belong to N until the next type-17 frame |
 | 18 | JSON `{"t":"source_end", "source":N, "ts":…, "reason":"detached"}` |
 | 19 | JSON `{"t":"annotations", "pins":[…], "markers":[…], "notes":{…}}` — may repeat; the last one wins |
 
-- Redaction (on by default) is applied before writing: masked header values in `req`/`resp`/`rule` events, masked JSON paths in bodies. A masked body is written decoded (no Content-Encoding), with its header list adjusted, and `session.redacted = true`.
+- Nothing is redacted: session files hold exactly what was captured (ARCHITECTURE.md 9.2).
 - Writers flush the gzip stream at least every 5 s during `traffic-police record`, so a crash loses little.
 - HAR files are imported by a separate backend that synthesizes the same events (without threads or stacks).
 
@@ -682,7 +682,7 @@ One JSON object per line. `v` is the schema version (1). Lines are emitted when 
  "response":{"protocol":"h2","headers":[["content-type","application/json"]],"body_bytes":225,"decoded_bytes":225,"content_type":"application/json"},
  "timing":{"queued":0.4,"dns":-1,"connect":-1,"ssl":-1,"send":0.2,"wait":280.1,"receive":24.5},
  "thread":{"name":"DefaultDispatcher-worker-3","origin":"call"},
- "client":"okhttp/4.12.0","rules":[],"redacted":true}
+ "client":"okhttp/4.12.0","rules":[]}
 ```
 
-`--bodies` adds `request.body` and `response.body` as `{"text": …}` for UTF-8 text or `{"base64": …}` otherwise (after Content-Encoding decoding, and redacted unless `--no-redact`).
+`--bodies` adds `request.body` and `response.body` as `{"text": …}` for UTF-8 text or `{"base64": …}` otherwise (after Content-Encoding decoding).

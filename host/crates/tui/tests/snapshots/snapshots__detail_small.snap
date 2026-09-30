@@ -22,8 +22,8 @@ expression: "detail(12.0, SMALL, path_is(\"/api/sdk/init\"), \"l\")"
  cache-control: no-cache, no-store
  x-request-id: e9199733-54bd-4086-af69-d7eeccf00dee
  server: envoy
- set-cookie: dsid=‹redacted 24 chars›; Path=/; Secure; HttpOnly
- set-cookie: region=‹redacted 10 chars›; Path=/; Secure
+ set-cookie: dsid=ced258d0da790089d2f9467c; Path=/; Secure; HttpOnly
+ set-cookie: region=ap-south-1; Path=/; Secure
 
  Body  JSON, 316 B  [parsed · p: source]
  {

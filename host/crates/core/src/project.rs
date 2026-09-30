@@ -15,9 +15,6 @@ use serde::Deserialize;
 pub const DIR: &str = ".traffic-police";
 pub const FILE: &str = "project.toml";
 
-/// Sections that are planned but not applied yet; present ones are reported, not ignored.
-const NOT_YET: [&str; 1] = ["redaction"];
-
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ProjectConfig {
     /// The directory that contains `.traffic-police/`.
@@ -63,11 +60,7 @@ pub fn parse(root: &Path, path: &Path, text: &str) -> Result<ProjectConfig, Proj
         toml::from_str(text).map_err(|e| ProjectError::Parse { path: path.to_path_buf(), message: e.to_string() })?;
     let mut warnings = Vec::new();
     for key in raw.rest.keys() {
-        if NOT_YET.contains(&key.as_str()) {
-            warnings.push(format!("{}: [{key}] is not applied yet in this version", path.display()));
-        } else {
-            warnings.push(format!("{}: unknown key `{key}` ignored", path.display()));
-        }
+        warnings.push(format!("{}: unknown key `{key}` ignored", path.display()));
     }
     let source_roots = raw.source_roots.into_iter().map(|p| if p.is_absolute() { p } else { root.join(p) }).collect();
     Ok(ProjectConfig { root: root.to_path_buf(), package: raw.package, source_roots, warnings })
@@ -93,11 +86,11 @@ mod tests {
     }
 
     #[test]
-    fn reports_unknown_and_unapplied_keys_and_errors() {
+    fn reports_unknown_keys_and_errors() {
         let p = Path::new("p.toml");
-        let c = parse(Path::new("/w"), p, "colour = 1\n[redaction]\nheaders = [\"x\"]\n").unwrap();
+        let c = parse(Path::new("/w"), p, "colour = 1\n[extra]\nx = 1\n").unwrap();
         assert_eq!(c.warnings.len(), 2, "{:?}", c.warnings);
-        assert!(c.warnings.iter().any(|w| w.contains("[redaction] is not applied yet")));
+        assert!(c.warnings.iter().any(|w| w.contains("unknown key `extra`")));
         assert!(c.warnings.iter().any(|w| w.contains("unknown key `colour`")));
         let e = parse(Path::new("/w"), p, "source_roots = \"not a list\"\n").unwrap_err();
         assert!(e.to_string().starts_with("p.toml: "), "{e}");

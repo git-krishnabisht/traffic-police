@@ -142,13 +142,6 @@ fn jq_filter() {
     snap!("jq_error", detail(12.0, MEDIUM, init(), "l|.config[<Enter>"));
 }
 
-#[test]
-fn redaction() {
-    let init = || path_is("/api/sdk/init");
-    snap!("redacted_request_headers", detail(12.0, MEDIUM, init(), "ll"));
-    snap!("revealed_request_headers", detail(12.0, MEDIUM, init(), "llR"));
-}
-
 // --- session states and overlays -------------------------------------------------------------
 
 #[test]

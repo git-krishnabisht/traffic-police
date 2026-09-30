@@ -23,7 +23,7 @@ u_4821.png            │ Body     Enter fold · [ fold all · ] unfold all · |
 monitor               │ Live     Space pause/resume · F freeze · L jump to live · + - 0 zoom · v select range        │        ▐█▊          ▐
 challenge             │ Graph    T all app traffic / captured requests · t wall clock labels · drag to select        │        ▕▍           ▐
 config                │ List     c collapse repeats · s S sort · C columns · click header to sort                    │         ▏           ▐
-↪ config.json         │ Session  x clear session (asks first) · R reveal redacted values · ? help · q quit           │         ▏           ▐
+↪ config.json         │ Session  x clear session (asks first) · ? help · q quit                                      │         ▏           ▐
 attest                │ Mouse    click rows and tabs · double-click opens · wheel scrolls · drag the divider         │         ▕███▊       ▐
 metrics               │                                                                                              │           ▍         ▐
 monitor               │ any key closes                                                                               │           ▐█▌       ▐

@@ -20,7 +20,7 @@ Contents
 
 ## 1. Goals and constraints
 
-- A terminal equivalent of Android Studio's Network Inspector: pick a device and a debuggable app process over adb, then watch its HTTP and HTTPS traffic live with a traffic graph, a connection list with a waterfall, full request and response details, the initiating thread and call stack, a thread view, and response rewrite rules. Then add terminal-native utilities (filters, search, copy as cURL, HAR, sessions, diff, decoders, redaction, headless modes).
+- A terminal equivalent of Android Studio's Network Inspector: pick a device and a debuggable app process over adb, then watch its HTTP and HTTPS traffic live with a traffic graph, a connection list with a waterfall, full request and response details, the initiating thread and call stack, a thread view, and response rewrite rules. Then add terminal-native utilities (filters, search, copy as cURL, HAR, sessions, diff, decoders, headless modes). Nothing is redacted (decided in review, 9.2).
 - **Capture model: in-process hooks, like Studio.** No proxy and no certificates. Plaintext is observed inside the app at the HTTP-client layer, which also yields the initiating thread and stack and allows response rewriting.
 - **Two ways in, one runtime.** Library mode (the app links the capture library in debug builds) and attach mode (a JVMTI agent injects the same runtime into an unmodified debuggable app).
 - **Coverage:** OkHttp 3.9+ / 4.x / 5.x (and everything built on it: Retrofit, Ktor's OkHttp engine, Coil, Glide) and HttpURLConnection/HttpsURLConnection (and what is built on it, such as Volley). Not covered, as in Studio: Cronet, WebView, native sockets, Dart `dart:io`.
@@ -56,7 +56,7 @@ Data flow for one request: hook → `Recorder` event (app thread, microseconds) 
 docs/                    ARCHITECTURE.md, PROTOCOL.md, research notes
 host/                    Cargo workspace (Rust 2024 edition); crate names in parentheses
   crates/proto/          (traffic-police-proto)     wire codec and message types
-  crates/core/           (traffic-police-core)      event model, Backend trait, store, filters, rules model, decoders, exporters, redaction
+  crates/core/           (traffic-police-core)      event model, Backend trait, store, filters, rules model, decoders, exporters
   crates/adb/            (traffic-police-adb)       adb server client and discovery
   crates/backends/       (traffic-police-backends)  demo, device socket, session file, HAR import, attach orchestration
   crates/tui/            (traffic-police-tui)       Ratatui application
@@ -299,7 +299,7 @@ At launch no app class loader exists. That is why hooks are keyed by name, the C
 | Crate | Depends on | Contents |
 |---|---|---|
 | `traffic-police-proto` | serde, serde_json, bytes | Wire codec for PROTOCOL.md: frame encoder/decoder, typed messages, version constants. Pure (no IO); a Tokio `Decoder`/`Encoder` behind a feature. Fuzzed. |
-| `traffic-police-core` | traffic-police-proto | Normalized event model, `Backend` trait, session store, body store with disk spill, filter language, redaction, rules model (TOML), body decoders, exporters (HAR, cURL, session file), diff. No terminal code. |
+| `traffic-police-core` | traffic-police-proto | Normalized event model, `Backend` trait, session store, body store with disk spill, filter language, rules model (TOML), body decoders, exporters (HAR, cURL, session file), diff. No terminal code. |
 | `traffic-police-adb` | tokio | adb smart-socket client: device tracking, process tracking, forward, shell v2, sync push, socket discovery. Fallback to the `adb` binary. |
 | `traffic-police-backends` | traffic-police-core, traffic-police-adb, traffic-police-proto | `Backend` implementations: demo generator, device socket (library and attach share it), session file, HAR import. Attach orchestration (push, copy, attach). |
 | `traffic-police-tui` | traffic-police-core, ratatui, crossterm | Application state, views, widgets, keymap, themes, mouse hit-testing. Reads the store; sends commands. |
@@ -455,7 +455,7 @@ The pipeline for a body is: bytes (memory or spill file) → Content-Encoding de
    - Images: decoded and drawn inline through kitty, iTerm2, or sixel graphics when the terminal supports them, else half-blocks; always with format, dimensions and size.
    - Protobuf and gRPC: schemaless decode in the style of `protoc --decode_raw` (field numbers, wire types, nested messages detected heuristically, strings shown when valid UTF-8); gRPC's 5-byte message framing is split first.
    - Everything else: text if valid UTF-8, else a hex dump rendered lazily for the visible window.
-4. **Body states** are always explicit: "truncated at 10 MB of 48.2 MB", "not captured (capture disabled)", "not consumed by the app", "closed early after 12 KB", "streaming…", "gap: 64 KB lost to device buffer overflow", "redacted".
+4. **Body states** are always explicit: "truncated at 10 MB of 48.2 MB", "not captured (capture disabled)", "not consumed by the app", "closed early after 12 KB", "streaming…", "gap: 64 KB lost to device buffer overflow".
 
 Bodies up to 256 KiB are decoded on the UI task; larger ones on a worker (`spawn_blocking`), one build per body at a time, with the previous view shown meanwhile (a 10 MB JSON body takes about 55 ms). Decoded views are cached in an LRU keyed by `(TxnIdx, dir)` with a byte budget (128 MiB); clearing the session discards builds still running. Pretty-printed lines and their token spans are generated once per body and are width-independent; each frame materializes only the visible columns of the visible lines, so a 50 MB single-line body costs about a microsecond per line.
 
@@ -481,11 +481,11 @@ Bodies up to 256 KiB are decoded on the UI task; larger ones on a worker (`spawn
   Parse errors are highlighted in place and the previous valid filter stays active.
 - **Search.** `/` in the detail pane searches the current body view (n and N step; matches highlighted). `body:` in the filter bar is the cross-session search ("which request returned this value").
 - **Copy** (`y` menu): as cURL (POSIX single-quote escaping; text bodies inline with `--data-binary`, binary bodies written to a file next to the command and referenced as `@file`; headers in order; `--compressed` when the request asked for gzip; a PowerShell variant is a Phase 2 stretch), URL, request or response headers, one header, body (decoded), the value at the cursor's JSON path. `clipboard = "auto"` uses OSC 52 over SSH or when no display server is present (it works inside tmux with `set-clipboard on|external`, which the status bar hints at on failure) and the native clipboard otherwise; `osc52`, `native` and `off` force a choice. OSC 52 is copy-only by design.
-- **Save and export** (`w`, `e` menu): save a body (binary-safe, extension from Content-Type or magic); HAR 1.2 of all, filtered, or selected rows (redacted by default), with `_trafficPolice` custom fields for thread, stack, rules and timings beyond HAR's; HAR import through `traffic-police open file.har`.
+- **Save and export** (`w`, `e` menu): save a body (binary-safe, extension from Content-Type or magic); HAR 1.2 of all, filtered, or selected rows, with `_trafficPolice` custom fields for thread, stack, rules and timings beyond HAR's; HAR import through `traffic-police open file.har`.
 - **Sessions** (`e` menu, `traffic-police record`, `traffic-police open`): one file (`.trafficpolice`), see PROTOCOL.md §10. It stores the event stream exactly as captured plus host annotations, so reopening reproduces timings, threads, stacks, rule effects, pins and markers.
 - **Diff** (`d` marks; the second mark opens the diff): status lines, headers (as ordered lists and as sets), and bodies. JSON bodies are canonicalized (keys sorted recursively, pretty-printed) before a line diff, so key order does not matter; other text is diffed as is; binary bodies compare size and hash.
 - **Decoders.** JWTs are detected in `Authorization: Bearer` and in any string of the form `xxx.yyy.zzz` whose header decodes to JSON; the Overview and a decoder popup show header, claims, and `exp`/`iat`/`nbf` in local time with a relative age. Enter on any header or JSON value opens a value menu: copy, decode base64 (standard and URL-safe), URL-decode, decode JWT, filter by this value.
-- **Redaction** (on by default). Built-in header list: `Authorization`, `Proxy-Authorization`, `Cookie`, `Set-Cookie`, `X-Api-Key`, `Api-Key`, `X-Auth-Token`, plus configurable headers, query parameters, and JSON paths (`$.aadhaar`, `$..pan`, `$.data[*].mobile`). Values are masked as `‹redacted 32 chars›` in the UI (R toggles reveal for this session, and the header shows `REVEALED`) and in every export (cURL, HAR, session, NDJSON) unless `--no-redact` or the export dialog's explicit switch is used. Body masking works on decoded JSON; masked bodies are exported decoded, without Content-Encoding.
+- **No redaction** (decided in review, 9.2). Headers and bodies are shown and exported exactly as captured, secrets included, so screenshots, HAR files and session files need the same care as the app's own logs.
 - **Pins** (`m`): bookmark rows; `is:pinned` filters.
 - **Pause and freeze.** Space sends pause/resume to the device (it stops creating transactions; in-flight ones finish; rules stay active). F freezes the UI (5.8).
 
@@ -507,7 +507,7 @@ traffic-police demo [--seed N] [--speed X] [--restart-after SECS]
 traffic-police open FILE                         .trafficpolice or .har (REPLAY)
 traffic-police tail --json [TARGET] [FILTER...]  NDJSON, one line per completed transaction (--events for raw events)
 traffic-police record --out FILE [--duration 60s] [TARGET] [--filter F]
-traffic-police export --har FILE [--input FILE | TARGET --duration D] [--filter F] [--no-redact]
+traffic-police export --har FILE [--input FILE | TARGET --duration D] [--filter F]
 traffic-police doctor [TARGET]
 ```
 
@@ -517,8 +517,8 @@ traffic-police doctor [TARGET]
 
 ### 5.13 Config, themes, keymap
 
-- **User config:** `config.toml` in `$XDG_CONFIG_HOME/traffic-police` (default `~/.config/traffic-police`) on Linux and macOS, and `%APPDATA%\traffic-police` on Windows, overridable with `TRAFFIC_POLICE_CONFIG`. macOS uses the XDG location, as most terminal tools do, rather than `~/Library/Application Support`. Sections: `[ui]` (theme, time format, visible columns, divider position), `[capture]` (body cap, stack depth), `[redaction]` (enabled, headers, query params, JSON paths), `[keymap]` (action = keys), `[adb]` (server address, adb path), `[storage]` (memory budget, spill dir).
-- **Project config** (`.traffic-police/`): `rules.toml`, `project.toml` (default package, source roots for Call Stack → $EDITOR, extra redaction entries).
+- **User config:** `config.toml` in `$XDG_CONFIG_HOME/traffic-police` (default `~/.config/traffic-police`) on Linux and macOS, and `%APPDATA%\traffic-police` on Windows, overridable with `TRAFFIC_POLICE_CONFIG`. macOS uses the XDG location, as most terminal tools do, rather than `~/Library/Application Support`. Sections: `[ui]` (theme, time format, visible columns, divider position), `[capture]` (body cap, stack depth), `[keymap]` (action = keys), `[adb]` (server address, adb path), `[storage]` (memory budget, spill dir).
+- **Project config** (`.traffic-police/`): `rules.toml`, `project.toml` (default package, source roots for Call Stack → $EDITOR).
 - **Color:** `NO_COLOR` switches to a monochrome theme that carries meaning in text, bold and reverse video. (crossterm 0.29 answers color commands under `NO_COLOR` with a bare reset that also clears bold and reverse, so we detect `NO_COLOR` ourselves, force crossterm's color output on, and simply never emit colors.) `COLORTERM=truecolor|24bit` enables RGB; `TERM=*256color*` (and Apple Terminal) uses the 256-color palette; otherwise 16 colors. Dark and light palettes are chosen with `--theme`; `auto` reads `COLORFGBG` when the terminal sets it and defaults to dark. Dark and light themes ship built in; themes define semantic slots (status classes, sending, waiting, receiving, selection, focus border, markers) rather than raw widget colors.
 - **Keymap:** every action has a name, and `[keymap]` maps action names to one or more keys (`ctrl+r`, `shift+tab`, `F`, `?`); defaults follow the brief plus `T` and `R` (9.1). Multi-key sequences are not used. Invalid entries are reported with the line and the valid action names.
 
@@ -567,7 +567,7 @@ A CI step (`cargo tree -e features`) fails if a C library sneaks back in through
 - Capture runs only in debuggable apps. Library mode checks `ApplicationInfo.FLAG_DEBUGGABLE` before starting. In attach mode the platform enforces it at every step on user builds (`run-as`, `attach-agent`, ART's JDWP check, full JVMTI for retransformation, `startup_agents`), and the host additionally refuses packages whose debuggable flag is off, including on userdebug devices where `attach-agent` alone would allow it. `profileable` apps are not debuggable and are not attachable.
 - The device socket accepts only peers whose UID is 0 (root) or 2000 (shell), checked with `LocalSocket.getPeerCredentials()` before any byte is sent. Other apps on the device cannot read traffic.
 - The host opens no network connections other than to the adb server. No telemetry, no update checks.
-- Redaction is on by default in the UI and every export (5.10). Spill files live in a private temp directory (mode 0700 on Unix) and are deleted on exit.
+- Nothing is redacted (5.10): captured values, secrets included, appear in the UI and in exports as they were sent. Spill files live in a private temp directory (mode 0700 on Unix) and are deleted on exit.
 - The release no-op artifact contains no capture code at all, so a misconfigured release build cannot capture.
 - Rules can change what the app sees; the header always shows how many rules are active, and rule-modified rows are marked.
 
@@ -575,7 +575,7 @@ A CI step (`cargo tree -e features`) fails if a C library sneaks back in through
 
 **Rust**
 
-- Unit tests: frame codec and message decoding; adb reply parsing against transcripts; `/proc/net/unix` parsing; filter parser and evaluator; Content-Encoding decoders; protobuf raw decoder; cURL escaping (round-tripped through `sh -c` in a test on Unix); HAR output validated against a vendored HAR 1.2 JSON schema; redaction; rules TOML parsing and validation; session file round-trip.
+- Unit tests: frame codec and message decoding; adb reply parsing against transcripts; `/proc/net/unix` parsing; filter parser and evaluator; Content-Encoding decoders; protobuf raw decoder; cURL escaping (round-tripped through `sh -c` in a test on Unix); HAR output validated against a vendored HAR 1.2 JSON schema; rules TOML parsing and validation; session file round-trip.
 - UI snapshots: Ratatui `TestBackend` plus insta, at 100×30, 140×40 and 200×50, for every view, tab, dialog and state (LIVE, PAUSED, FROZEN, DETACHED, REPLAY), driven by the deterministic demo generator (fixed seed, virtual clock).
 - Property and fuzz tests: arbitrary byte streams into the frame decoder never panic and never allocate more than the frame limit; arbitrary filter strings never panic; arbitrary bytes into every body viewer never panic. A `cargo fuzz` target for the frame decoder runs in CI for a short time budget.
 - Integration: a fake adb server (scripted smart-socket responses) and a fake device (serves golden frames) exercise the device backend, reattach, `--follow`, protocol mismatch, and adb restarts.
@@ -607,12 +607,12 @@ A CI step (`cargo tree -e features`) fails if a C library sneaks back in through
 | 7 | Rules: fail with IOException or SocketTimeoutException | Also `ProtocolException`, `ConnectException`, `UnknownHostException`, with OkHttp's retry behaviour documented | OkHttp may retry plain `IOException`s thrown by a network interceptor, re-running the rule |
 | 8 | (not specified) | Rewritten responses get `Cache-Control: no-store` unless the rule opts out (decided in review) | OkHttp caches what leaves the network interceptors; a fake response must not outlive its rule |
 | 9 | Suggested crates: tui-textarea, zstd | ratatui-textarea + tui-input; ruzstd (+ pure-Rust gzip/brotli) | tui-textarea is stuck on Ratatui 0.29; `zstd` needs a C toolchain per target, which works against one self-contained binary per OS. The stack itself (Rust, Ratatui, crossterm, Tokio) is unchanged |
-| 10 | Keys | Adds `T` (graph source) and `R` (reveal redacted values) | Not assigned in the brief |
+| 10 | Keys | Adds `T` (graph source) | Not assigned in the brief |
 | 11 | (not specified) | One client per app process; a new client takes over (decided in review) | Makes reconnecting after a host crash always work; `tail` and the TUI cannot watch the same process at once |
 | 12 | Device clock "monotonic" | `SystemClock.elapsedRealtimeNanos()` (CLOCK_BOOTTIME) | Monotonic and shared by all processes, and keeps counting in suspend, so the wall-clock offset stays stable |
 | 13 | OkHttp 2 | Not supported | Studio still supports it; the brief lists 3.x–5.x. Android's own HttpURLConnection (built on an internal OkHttp 2 fork) is covered by 4.3 |
 | 14 | Suggested crate: syntect | Own tokenizers for JSON and markup | The pretty-printers already produce the token spans; see 5.15 |
-| 15 | Redaction on by default | Built-in header list masked from Phase 0b; configurable headers, query parameters and JSON paths in Phase 2 | The auth scheme (`Bearer`), cookie names and `Set-Cookie` attributes stay visible, since they are not secret and help debugging |
+| 15 | Redaction on by default, in the UI and every export | No redaction anywhere | Decided in the Phase 0b review (9.2) |
 
 ### 9.2 Review decisions and open questions
 
@@ -624,7 +624,12 @@ Decided in the Phase 0 review:
 - **Graph default:** all of the app's network traffic (whole-app `TrafficStats`, like Android Studio); `T` switches to captured requests.
 - **Rewritten responses** get `Cache-Control: no-store` by default, so a changed response never stays in the app's HTTP cache after its rule is turned off.
 
-No questions are open. Before Phase 1: download the Android 8.0 (API 26) ARM64 emulator image (about 700 MB); the user asked to be reminded when Phase 0b is done.
+Decided in the Phase 0b review:
+
+- **No redaction.** Nothing is hidden or masked, in the UI or in any export, including `Authorization`, cookies and personal data in bodies. The brief's redaction utility is dropped.
+- **Git:** Phase 0b merged into `master`; Phase 1 continues on `phase-1`.
+
+No questions are open.
 
 ### 9.3 Risks
 

@@ -13,7 +13,6 @@ pub mod model;
 pub mod normalize;
 pub mod phases;
 pub mod project;
-pub mod redact;
 pub mod rows;
 pub mod store;
 

@@ -129,9 +129,6 @@ fn draw_header(app: &App, r: Rect, buf: &mut Buffer) {
             spans.push(Span::styled(format!("  ✎ {n} rule{} active", if n == 1 { "" } else { "s" }), t.marker()));
         }
     }
-    if app.reveal {
-        spans.push(Span::styled("  REVEALED", t.error().add_modifier(Modifier::BOLD | Modifier::REVERSED)));
-    }
     let used: usize = spans.iter().map(|s| s.content.width()).sum();
     text(buf, r.x, r.y, r.width, spans);
     let label = format!("images: {} ", app.images.label);
@@ -1079,7 +1076,7 @@ const HELP: &[(&str, &str)] = &[
     ("Live", "Space pause/resume · F freeze · L jump to live · + - 0 zoom · v select range"),
     ("Graph", "T all app traffic / captured requests · t wall clock labels · drag to select"),
     ("List", "c collapse repeats · s S sort · C columns · click header to sort"),
-    ("Session", "x clear session (asks first) · R reveal redacted values · ? help · q quit"),
+    ("Session", "x clear session (asks first) · ? help · q quit"),
     ("Mouse", "click rows and tabs · double-click opens · wheel scrolls · drag the divider"),
 ];
 

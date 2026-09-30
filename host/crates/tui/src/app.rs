@@ -231,8 +231,6 @@ pub struct App {
     pub bars: Vec<Bar>,
     pub bar_cursor: usize,
     pub recording: bool,
-    /// Show redacted values (R). Off at start; never saved.
-    pub reveal: bool,
     pub caps: Capabilities,
     pub commands: Option<mpsc::UnboundedSender<BackendCommand>>,
     pub hits: HitMap,
@@ -283,7 +281,6 @@ impl App {
             bars: Vec::new(),
             bar_cursor: 0,
             recording: true,
-            reveal: false,
             caps: Capabilities::default(),
             commands: None,
             hits: HitMap::default(),
@@ -772,15 +769,6 @@ impl App {
             KeyCode::Char('T') => {
                 self.graph_source = self.graph_source.toggled();
                 self.flash(format!("graph: {}", self.graph_source.label()));
-                return;
-            }
-            KeyCode::Char('R') => {
-                self.reveal = !self.reveal;
-                self.flash(if self.reveal {
-                    "showing redacted values for this session · R hides them"
-                } else {
-                    "redacting secrets again"
-                });
                 return;
             }
             KeyCode::Char('t') => {

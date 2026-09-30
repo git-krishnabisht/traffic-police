@@ -142,18 +142,13 @@ fn body_state_note(meta: &BodyMeta, dir: BodyDir, t: &Transaction) -> Option<Str
     Some(if meta.gap { format!("{s}; part of it was lost on the device") } else { s })
 }
 
-fn headers_rows(theme: &Theme, rows: &mut Vec<DocRow>, headers: &[(String, String)], reveal: bool) {
+fn headers_rows(theme: &Theme, rows: &mut Vec<DocRow>, headers: &[(String, String)]) {
     rows.push(title(theme, format!("Headers ({})", headers.len())));
     for (n, v) in headers {
-        let masked = if reveal { None } else { traffic_police_core::redact::header_value(n, v) };
-        let value = match masked {
-            Some(m) => Span::styled(m, theme.dim().add_modifier(Modifier::ITALIC)),
-            None => Span::styled(v.clone(), theme.text()),
-        };
         rows.push(DocRow::Line(Line::from(vec![
             Span::styled(n.clone(), theme.tok(traffic_police_core::decode::Tok::Key)),
             Span::styled(": ", theme.dim()),
-            value,
+            Span::styled(v.clone(), theme.text()),
         ])));
     }
 }
@@ -279,7 +274,7 @@ pub fn build_doc(app: &mut App) -> Doc {
                 doc.head.push(DocRow::Line(Line::styled(n, theme.marker())));
             }
             doc.head.push(blank());
-            headers_rows(&theme, &mut doc.head, &headers, app.reveal);
+            headers_rows(&theme, &mut doc.head, &headers);
             doc.head.push(blank());
             let dir = app.response_dir(txn);
             doc.body_len = body_rows(app, txn, dir, &mut doc.head);
@@ -313,7 +308,7 @@ pub fn build_doc(app: &mut App) -> Doc {
                 }
                 doc.head.push(blank());
             }
-            headers_rows(&theme, &mut doc.head, &headers, app.reveal);
+            headers_rows(&theme, &mut doc.head, &headers);
             doc.head.push(blank());
             doc.body_len = body_rows(app, txn, BodyDir::Request, &mut doc.head);
             doc.body_dir = Some(BodyDir::Request);
