@@ -1,0 +1,22 @@
+---
+source: crates/core/tests/goldens.rs
+expression: summarize(stringify! (get_gzip_json))
+---
+hello: io.trafficpolice.test pid 4242 on API 36, runtime 0.1.0 (library), protocol 1, capabilities ["okhttp", "okhttp_events", "huc", "pause", "resume", "prog"]
+rules_ack 1: version Some("none"), active Some(0), 0 errors
+replay begin: seq Some(1)..Some(1), Some(1) events
+replay end: seq None..None, None events
+
+txn 1 (call Some(5), hop 0): GET https://api.example.app/v1/profile
+  OkHttp 4.12.0 · DefaultDispatcher-worker-3 #51 (Some("call")) · 4 frames (truncated), top com.example.app.api.StatusPoller.poll:Some(41)
+  request: Host: api.example.app | Accept-Encoding: gzip | User-Agent: okhttp/4.12.0
+  response: 200 OK Some("h2") · content-type: application/json; charset=utf-8 | content-encoding: gzip | vary: Accept-Encoding
+  state Complete · starts +0.000 ms · req +63.000 ms · ends +149.000 ms
+  request body: None 0/0 B
+  response body: Complete 63/63 B, decoded 44 B Json "{\"id\":4821,\"name\":\"Asha Verma\",\"plan\":\"pro\"}"
+  marks: call_start +0.000 ms, dns_start +1.000 ms, dns_end +9.000 ms, connect_start +9.500 ms, secure_connect_start +20.000 ms, secure_connect_end +61.000 ms, connect_end +62.000 ms, conn_acquired +62.500 ms, req_headers_start +63.000 ms, req_headers_end +64.000 ms, resp_headers_start +144.000 ms, resp_headers_end +144.000 ms, resp_body_end +149.000 ms
+  conn Some("c-17") reused Some(true) Some("h2") 142.250.183.14:443 · Some("TLSv1.3") Some("TLS_AES_128_GCM_SHA256") · 1 certs
+
+stats: 1 requests, 0 failed, 175 B in, 124 B out, 0 dropped events
+diag info started "traffic-police 0.1.0 (library) started in io.trafficpolice.test (pid 4242)" at +0.000 ms
+marker Attach "io.trafficpolice.test pid 4242" at +0.000 ms

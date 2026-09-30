@@ -1,0 +1,109 @@
+{
+  "t": "set_rules",
+  "id": 3,
+  "rules": {
+    "version": "r-2026-09-30",
+    "rules": [
+      {
+        "id": "verdict-fail",
+        "name": "Force a failed verdict",
+        "enabled": true,
+        "match": {
+          "methods": [
+            "GET",
+            "POST"
+          ],
+          "scheme": "https",
+          "host": {
+            "exact": "api.example.app"
+          },
+          "port": 443,
+          "path": {
+            "glob": "/v1/sdk/*/status"
+          },
+          "query": [
+            {
+              "name": "sessionId",
+              "value": {
+                "regex": "^session_[0-9]+$"
+              }
+            },
+            {
+              "name": "debug"
+            }
+          ]
+        },
+        "actions": [
+          {
+            "type": "delay",
+            "ms": 1500
+          },
+          {
+            "type": "status",
+            "code": 503,
+            "reason": "Service Unavailable"
+          },
+          {
+            "type": "header",
+            "op": "set",
+            "name": "Retry-After",
+            "value": "5"
+          },
+          {
+            "type": "header",
+            "op": "add",
+            "name": "Set-Cookie",
+            "value": "a=b"
+          },
+          {
+            "type": "header",
+            "op": "remove",
+            "name": "ETag"
+          },
+          {
+            "type": "body",
+            "text": "{\"verdict\":\"fail\"}",
+            "content_type": "application/json"
+          },
+          {
+            "type": "replace",
+            "find": "\"pass\"",
+            "with": "\"fail\"",
+            "regex": false
+          },
+          {
+            "type": "replace",
+            "find": "\"score\":\\d+",
+            "with": "\"score\":0",
+            "regex": true
+          }
+        ]
+      },
+      {
+        "id": "offline-images",
+        "enabled": false,
+        "match": {
+          "host": {
+            "regex": "^(cdn|img)\\.example\\.app$"
+          },
+          "path": {
+            "exact": "/v1/profile"
+          }
+        },
+        "actions": [
+          {
+            "type": "fail",
+            "exception": "java.net.UnknownHostException",
+            "message": "offline (rule)"
+          },
+          {
+            "type": "body",
+            "base64": "iVBORw0KGgo=",
+            "content_type": "image/png"
+          }
+        ],
+        "cache_rewrites": true
+      }
+    ]
+  }
+}

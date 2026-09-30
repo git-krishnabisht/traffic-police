@@ -1,0 +1,9 @@
+{
+  "t": "set_config",
+  "id": 2,
+  "config": {
+    "recording": false,
+    "body_cap": 1048576,
+    "stack_depth": 16
+  }
+}

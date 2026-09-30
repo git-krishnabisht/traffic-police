@@ -2632,6 +2632,7 @@ dependencies = [
  "brotli-decompressor",
  "bytes",
  "flate2",
+ "insta",
  "jaq-core",
  "jaq-json",
  "jaq-std",

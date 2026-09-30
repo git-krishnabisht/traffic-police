@@ -1,0 +1,20 @@
+---
+source: crates/core/tests/goldens.rs
+expression: summarize(stringify! (chunked_streaming))
+---
+hello: io.trafficpolice.test pid 4242 on API 36, runtime 0.1.0 (library), protocol 1, capabilities ["okhttp", "okhttp_events", "huc", "pause", "resume", "prog"]
+rules_ack 1: version Some("none"), active Some(0), 0 errors
+replay begin: seq Some(1)..Some(1), Some(1) events
+replay end: seq None..None, None events
+
+txn 1 (call Some(7), hop 0): GET http://10.0.2.2:8080/stream
+  OkHttp 4.12.0 · DefaultDispatcher-worker-3 #51 (Some("call")) · 4 frames (truncated), top com.example.app.api.StatusPoller.poll:Some(41)
+  request: Host: 10.0.2.2:8080
+  response: 200 OK Some("http/1.1") · Content-Type: text/plain; charset=utf-8 | Transfer-Encoding: chunked
+  state Complete · starts +0.000 ms · req +0.000 ms · ends +530.000 ms
+  request body: None 0/0 B
+  response body: Complete 120/120 B, decoded 120 B Text
+
+stats: 1 requests, 0 failed, 207 B in, 65 B out, 0 dropped events
+diag info started "traffic-police 0.1.0 (library) started in io.trafficpolice.test (pid 4242)" at +0.000 ms
+marker Attach "io.trafficpolice.test pid 4242" at +0.000 ms

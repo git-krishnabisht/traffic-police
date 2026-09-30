@@ -1,0 +1,21 @@
+{
+  "t": "hello_ack",
+  "id": 1,
+  "protocol": 1,
+  "host": {
+    "name": "traffic-police",
+    "version": "0.1.0"
+  },
+  "resume_after_seq": 0,
+  "config": {
+    "recording": true,
+    "body_cap": 4194304,
+    "capture_request_bodies": true,
+    "capture_response_bodies": false,
+    "stack_depth": 32
+  },
+  "rules": {
+    "version": "none",
+    "rules": []
+  }
+}

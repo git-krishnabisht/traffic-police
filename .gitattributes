@@ -1,2 +1,4 @@
 # insta snapshots and protocol golden files must keep LF endings on every platform
 *.snap text eol=lf
+*.frames binary
+testdata/**/*.json text eol=lf

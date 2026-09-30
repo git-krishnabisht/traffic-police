@@ -28,4 +28,5 @@ libc.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
+insta.workspace = true
 brotli = "8.0.4"

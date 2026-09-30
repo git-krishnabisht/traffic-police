@@ -282,6 +282,24 @@ mod tests {
         assert_eq!(&wire[39..], b"{\"ok\":true}");
     }
 
+    /// The largest legal frame, generated rather than stored (PROTOCOL.md §11), arriving in pieces.
+    #[test]
+    fn the_largest_allowed_frame_decodes() {
+        let overhead = r#"{"t":"x","pad":""}"#.len();
+        let json = format!(r#"{{"t":"x","pad":"{}"}}"#, "a".repeat(MAX_FRAME_LEN as usize - 1 - overhead));
+        let mut wire = BytesMut::new();
+        encode_json(json.as_bytes(), &mut wire);
+        assert_eq!(wire.len(), 4 + MAX_FRAME_LEN as usize);
+        let mut dec = Decoder::new();
+        for piece in wire.chunks(1 << 20) {
+            assert_eq!(dec.next_frame().unwrap(), None);
+            dec.push(piece);
+        }
+        let Some(Frame::Json(got)) = dec.next_frame().unwrap() else { panic!("expected a JSON frame") };
+        assert_eq!(got.len(), MAX_FRAME_LEN as usize - 1);
+        assert_eq!(dec.buffered(), 0);
+    }
+
     #[test]
     fn oversized_and_empty_frames_are_fatal() {
         let mut dec = Decoder::new();

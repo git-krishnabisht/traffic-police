@@ -166,7 +166,8 @@ final class EventWriter implements Runnable {
         });
     }
 
-    private void post(Runnable r) {
+    /** Runs {@code r} on the writer thread before the next event. */
+    void post(Runnable r) {
         tasks.add(r);
         queue.wake();
     }
