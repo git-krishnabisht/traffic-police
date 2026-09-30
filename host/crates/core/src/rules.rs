@@ -64,6 +64,8 @@ pub struct RulesFile {
     pub set: RuleSet,
     pub entries: Vec<Entry>,
     pub problems: Vec<Problem>,
+    /// The files its body actions read (`file = "…"`), so they can be watched with it.
+    pub files: Vec<PathBuf>,
 }
 
 impl RulesFile {
@@ -199,6 +201,11 @@ pub fn parse(text: &str, base: &Path) -> RulesFile {
     for (i, spanned) in file.rules.iter().enumerate() {
         let span = spanned.span();
         let r = spanned.get_ref();
+        for a in &r.actions {
+            if let Some(f) = &a.get_ref().file {
+                out.files.push(base.join(f));
+            }
+        }
         // the table's span starts at its `[[rule]]` header
         let lead = text[span.start..].len() - text[span.start..].trim_start().len();
         let header = if text[span.start + lead..].starts_with("[[") {
@@ -623,6 +630,15 @@ name = "stub"
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(d.join("fixtures")).unwrap();
         d
+    }
+
+    #[test]
+    fn the_files_bodies_come_from_are_listed_to_be_watched() {
+        let base = dir("files");
+        // listed even when missing: the rule works once the file appears
+        let f = parse(EXAMPLE, &base);
+        assert_eq!(f.files, vec![base.join("fixtures/config.json")]);
+        assert!(!f.is_valid());
     }
 
     #[test]

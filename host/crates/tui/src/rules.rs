@@ -1,9 +1,9 @@
-//! Rules in the UI (ARCHITECTURE.md §5.11): `.traffic-police/rules.toml` is watched, and a valid
-//! change goes to the app at once; an invalid one is shown while the active rules stay. In the
-//! Rules view Space turns a rule on or off and Enter opens the file at it in `$EDITOR`; `r` on
-//! a request writes a new rule that matches it.
+//! Rules in the UI (ARCHITECTURE.md §5.11): `.traffic-police/rules.toml` is watched, with the
+//! files its bodies come from, and a valid change goes to the app at once; an invalid one is
+//! shown while the active rules stay. In the Rules view Space turns a rule on or off and Enter
+//! opens the file at it in `$EDITOR`; `r` on a request writes a new rule that matches it.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::{Duration, SystemTime};
 
 use tokio::sync::mpsc;
@@ -17,14 +17,22 @@ use crate::app::App;
 const POLL: Duration = Duration::from_millis(250);
 const SETTLE: Duration = Duration::from_millis(200);
 
-/// Watches the rules file (polling: it works the same on every platform and needs no
-/// dependency) and sends it, read, after each change has settled.
+/// Watches the rules file and the files its body actions read (polling: it works the same on
+/// every platform and needs no dependency), and sends the rules, read again, after each change
+/// has settled.
 pub async fn watch(path: PathBuf, tx: mpsc::UnboundedSender<RulesFile>) {
-    let stamp = |p: &Path| std::fs::metadata(p).ok().map(|m| (m.modified().unwrap_or(SystemTime::UNIX_EPOCH), m.len()));
-    let mut last = stamp(&path);
+    let stamp = |paths: &[PathBuf]| -> Vec<Option<(SystemTime, u64)>> {
+        paths
+            .iter()
+            .map(|p| std::fs::metadata(p).ok().map(|m| (m.modified().unwrap_or(SystemTime::UNIX_EPOCH), m.len())))
+            .collect()
+    };
+    let watched = |f: &RulesFile| -> Vec<PathBuf> { std::iter::once(path.clone()).chain(f.files.clone()).collect() };
+    let mut paths = watched(&rules::load(&path));
+    let mut last = stamp(&paths);
     loop {
         tokio::time::sleep(POLL).await;
-        let now = stamp(&path);
+        let now = stamp(&paths);
         if now == last {
             continue;
         }
@@ -32,14 +40,18 @@ pub async fn watch(path: PathBuf, tx: mpsc::UnboundedSender<RulesFile>) {
         let mut settled = now;
         loop {
             tokio::time::sleep(SETTLE).await;
-            let again = stamp(&path);
+            let again = stamp(&paths);
             if again == settled {
                 break;
             }
             settled = again;
         }
-        last = settled;
-        if tx.send(rules::load(&path)).is_err() {
+        let f = rules::load(&path);
+        let now_watched = watched(&f);
+        // a file named for the first time is stamped as it is now
+        last = if now_watched == paths { settled } else { stamp(&now_watched) };
+        paths = now_watched;
+        if tx.send(f).is_err() {
             return;
         }
     }
@@ -150,5 +162,35 @@ impl App {
             }
             Err(e) => self.flash(format!("cannot write {}: {e}", path.display())),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use traffic_police_proto::msg::RuleAction;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn a_changed_body_file_is_read_again() {
+        let dir = std::env::temp_dir().join(format!("tp-rules-watch-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("fixtures")).unwrap();
+        let path = dir.join(FILE);
+        let text = "version = 1\n[[rule]]\nid = \"stub\"\n  [[rule.action]]\n  type = \"body\"\n  file = \"fixtures/b.json\"\n";
+        std::fs::write(&path, text).unwrap();
+        std::fs::write(dir.join("fixtures/b.json"), "{\"v\":1}").unwrap();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let watcher = tokio::spawn(watch(path, tx));
+        // its first look, then only the body file changes (in length too, for coarse clocks)
+        tokio::time::sleep(POLL * 2).await;
+        std::fs::write(dir.join("fixtures/b.json"), "{\"v\":22}").unwrap();
+        let f = tokio::time::timeout(Duration::from_secs(5), rx.recv()).await.expect("read again").expect("sent");
+        watcher.abort();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(
+            f.set.rules[0].actions,
+            vec![RuleAction::Body { text: Some("{\"v\":22}".into()), base64: None, content_type: None }]
+        );
     }
 }
