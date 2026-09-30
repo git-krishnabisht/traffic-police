@@ -62,7 +62,9 @@ host/                    Cargo workspace (Rust 2024 edition); crate names in par
   crates/tui/            (traffic-police-tui)       Ratatui application
   cli/                   (traffic-police)           the `traffic-police` binary
 android/                 Gradle build (Kotlin DSL)
-  capture/               capture runtime (Java 8 library, AAR)
+  capture-core/          the runtime without Android APIs (Java 8 jar): protocol, recorder, OkHttp and
+                         HttpURLConnection capture; tested on the JVM against eight OkHttp versions
+  capture/               the Android library (AAR): public API, auto-start provider, socket server
   capture-noop/          same public API, no capture code
   attach-agent/          JVMTI agent (C++17, NDK, CMake) + vendored slicer + boot trampoline dex
   sample-app/            Kotlin app exercising every capture path
@@ -197,6 +199,7 @@ val conn = TrafficPolice.wrap(URL(url).openConnection() as HttpURLConnection)
 - **Order matters** for the listener: if the app calls `eventListener(...)` or `eventListenerFactory(...)` after ours, it replaces ours; the Overview then shows `origin: interceptor` and the Call Stack tab explains why.
 - **R8/ProGuard.** The library ships consumer rules that keep its own classes; OkHttp's names do not matter in library mode because the app links against them directly.
 - **Hidden APIs.** None. Everything used is public SDK: `LocalServerSocket`, `LocalSocket.getPeerCredentials()`, `Credentials.getUid()`, `SystemClock`, `TrafficStats`, `Process`, `ApplicationInfo`.
+- **Artifacts (Phase 1).** `capture` (AAR) depends on `capture-core` (jar), which holds everything that needs no Android API and is therefore tested on the JVM; `capture-noop` stands alone. None of them has a runtime dependency (the build sets `kotlin.stdlib.default.dependency=false`, since AGP 9's built-in Kotlin would otherwise add `kotlin-stdlib` to every module). `minSdk` is 21, OkHttp's own floor, so any app that can use OkHttp can add the library; the tested range is API 26 to 37 (9.1).
 
 ### 4.7 Attach mode
 
@@ -371,6 +374,7 @@ With a virtual clock the generator produces a fixed timeline instantly; the snap
 - **Pushing** the attach-mode files uses the sync protocol directly (`SEND`/`DATA`/`DONE`, 64 KiB chunks).
 - **Forwards** are created per connection (`tcp:0`, so the server picks the port) and removed with `killforward:tcp:<port>` when the connection ends. They also vanish whenever the device goes offline or the server restarts, so the backend re-creates them on every transition back to `device`. A forward succeeding proves nothing about the runtime (a forward to a missing socket connects and then reads EOF); only `hello` does. The client never uses `killforward-all`, which would also remove Android Studio's forwards.
 - **Server restarts.** Every connection drops and transport ids restart from 1. One supervisor reconnects with backoff (250 ms to 5 s), invalidates all cached ids, rebuilds the device table from the tracker's first message, then re-establishes per-device trackers and forwards. Live sessions show DETACHED during the gap and reattach automatically when the same process is still alive (same `instance`, resume after the last `seq`).
+- **As built in Phase 1.** `watch_devices()` keeps one `track-devices` connection per session in a task that reconnects with backoff (250 ms to 2 s) and publishes each list on a watch channel; the pickers and the waiting device backend read it. Process lists are read once a second while a picker shows them (one `track-app` message, else `track-jdwp` plus `/proc/<pid>/cmdline`), and the socket scan runs once a second while the backend waits for a process; a live session needs neither, because the socket's EOF reports a process exit at once. Decisions after a connection ends ask adb directly (`host:devices-l`, the socket scan), because the tracker can report a disconnect a moment after the socket closes. The client does not restart a server that disappears mid-session (someone may have stopped it on purpose); the session waits and says so. Once per device, the backend removes forwards to `@traffic-police_*` sockets that no longer exist, left by a traffic-police that was killed; forwards to live sockets, and every other forward, are left alone.
 - **Server not running.** The client starts it with `adb start-server` (the binary from `$ANDROID_HOME/platform-tools`, then `PATH`) and allows several seconds for the first reply.
 - **Fallback to the adb binary** for an operation the protocol path cannot perform is allowed only when `adb version` matches the running server's version: an adb client kills and restarts any server of a different version, which would also disconnect Android Studio. `doctor` reports a mismatch.
 
@@ -390,6 +394,8 @@ With a virtual clock the generator produces a fixed timeline instantly; the snap
 - Detach detection: EOF or reset on the socket, the pid disappearing from process tracking, or the device leaving `track-devices`. All captured data is kept; pending transactions are shown as "detached before completion".
 - `--follow`: after DETACHED, watch process tracking for a new process of the same package, wait for its socket, connect, add a new `Source` and a reattach marker on the timeline. Rules are pushed again in `hello_ack`.
 - Several devices can be tracked at once; one session follows one package on one device. Multi-process apps show each process separately in the picker; the session attaches to the chosen one (with `--follow` matching on process name).
+- **Frozen processes (found in Phase 1).** Android 11 and later freeze processes that are cached in the background (the cgroup v2 freezer; on by default from Android 14): they run no code, so the runtime cannot accept a connection or answer a ping, and a connection attempt waits unanswered in the socket's accept backlog. The backend reads `frozen` from the process's `cgroup.events` (the path comes from `/proc/<pid>/cgroup`) before connecting, when `hello` is late, and when pings go unanswered past the next ping; while the process is frozen it keeps a single connection open, sends nothing, and shows WAITING with the reason. When Android thaws the process (the app comes back to the foreground, or a service or broadcast starts in it) the session continues without a gap: the runtime kept recording nothing, because frozen code makes no requests. The picker marks frozen processes.
+- **The header** shows the backend's own account of the connection: LIVE, WAITING (for the device, the app, a thaw, or a reconnect, with the reason), DETACHED (with the reason; data kept), FAILED (protocol mismatch, with both versions and the fix).
 
 ### 5.6 Session store
 
@@ -613,6 +619,8 @@ A CI step (`cargo tree -e features`) fails if a C library sneaks back in through
 | 13 | OkHttp 2 | Not supported | Studio still supports it; the brief lists 3.x–5.x. Android's own HttpURLConnection (built on an internal OkHttp 2 fork) is covered by 4.3 |
 | 14 | Suggested crate: syntect | Own tokenizers for JSON and markup | The pretty-printers already produce the token spans; see 5.15 |
 | 15 | Redaction on by default, in the UI and every export | No redaction anywhere | Decided in the Phase 0b review (9.2) |
+| 16 | (library API level not specified; the test matrix is API 26 and the latest) | The library builds with `minSdk` 21; it is tested on API 26 to 37 | 21 is OkHttp's own floor, so the library never blocks an app that can use OkHttp; below 26 it is untested |
+| 17 | Capture a running app at any time | A process frozen by Android's cached-apps freezer (Android 11+) cannot be captured until it runs again; traffic-police waits and says so (5.5) | Platform behaviour: frozen processes run no code, and a frozen app makes no requests either |
 
 ### 9.2 Review decisions and open questions
 
