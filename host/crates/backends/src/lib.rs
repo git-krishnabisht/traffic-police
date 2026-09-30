@@ -2,6 +2,7 @@
 //! files and HAR import follow in later phases, all producing the same
 //! [`traffic_police_core::SessionEvent`] batches.
 
+pub mod attach;
 pub mod demo;
 pub mod device;
 
@@ -12,6 +13,7 @@ use traffic_police_core::SessionEvent;
 use traffic_police_core::backend::BackendCommand;
 use traffic_police_core::store::SourceIds;
 
+pub use attach::AgentKit;
 pub use demo::{DemoConfig, DemoSession};
 pub use device::{DeviceTarget, run_device};
 

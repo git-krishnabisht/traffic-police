@@ -6,6 +6,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::attach::{self, AgentKit, AttachOutcome};
 use bytes::BytesMut;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
@@ -37,6 +38,9 @@ pub struct DeviceTarget {
     pub capture: CaptureConfig,
     /// The project's rules (`.traffic-police/rules.toml`); `SetRules` replaces them.
     pub rules: RuleSet,
+    /// When set, attach mode is active: the agent is pushed and attached instead of waiting
+    /// for a library-mode socket.
+    pub attach: Option<Arc<AgentKit>>,
 }
 
 /// What the host wants the app to run with, kept across connections: the capture configuration
@@ -161,6 +165,8 @@ pub async fn run_device(
     let mut wanted = Wanted { config: target.capture.clone(), rules: target.rules.clone() };
     // with --follow, the process that exited (its socket may linger for a moment)
     let mut followed_away_from: Option<u32> = None;
+    // in attach mode, the pid we already pushed and attached to (avoids re-pushing)
+    let mut attached_pid: Option<u32> = None;
     let mut swept = std::collections::HashSet::new();
     loop {
         // a quit while waiting ends the backend
@@ -196,28 +202,78 @@ pub async fn run_device(
             Ok(Some(s)) => s,
             Ok(None) => {
                 if let Some(mut r) = resume.take() {
-                    // the process we were attached to is gone
                     close_source(&out, &mut r, "the app exited").await;
                     if !target.follow {
                         set_status(&status, ConnectionStatus::Detached("the app exited · data kept".into()));
                         return;
                     }
                     followed_away_from = Some(r.pid);
+                    attached_pid = None;
                 }
-                let what = if followed_away_from.is_some() {
-                    format!("{} exited; waiting for it to start again (--follow)", target.package)
-                } else {
-                    let name = target.process.as_deref().unwrap_or(&target.package);
-                    let name = match target.pid {
-                        Some(pid) => format!("{name} pid {pid}"),
-                        None => name.to_string(),
-                    };
-                    format!(
-                        "waiting for {name} on {} (start the app; it needs a debug build with the traffic-police library)",
-                        device.label()
-                    )
-                };
-                set_status(&status, ConnectionStatus::Waiting(what));
+
+                match (&target.attach, attached_pid) {
+                    // attach mode: find the process and attach the agent (once per pid)
+                    (Some(kit), None) => {
+                        let name = target.process.as_deref().unwrap_or(&target.package);
+                        set_status(
+                            &status,
+                            ConnectionStatus::Waiting(format!("attaching to {name} on {}…", device.label())),
+                        );
+                        match attach::attach(&adb, &device, &target.package, target.process.as_deref(), target.pid, kit)
+                            .await
+                        {
+                            AttachOutcome::Attached { pid } => {
+                                attached_pid = Some(pid);
+                                set_status(
+                                    &status,
+                                    ConnectionStatus::Waiting(format!(
+                                        "agent sent to {name} (pid {pid}); waiting for its socket…"
+                                    )),
+                                );
+                                // give the agent a moment to start, then re-enter the loop
+                                if wait_or_quit(&mut commands, &mut wanted, &mut devices, Duration::from_millis(500))
+                                    .await
+                                {
+                                    return;
+                                }
+                                continue;
+                            }
+                            AttachOutcome::NoProcess => {
+                                let what = if followed_away_from.is_some() {
+                                    format!("{} exited; waiting for it to start again (--follow)", target.package)
+                                } else {
+                                    format!("waiting for {name} on {} (start the app)", device.label())
+                                };
+                                set_status(&status, ConnectionStatus::Waiting(what));
+                            }
+                            AttachOutcome::Failed(msg) => {
+                                set_status(&status, ConnectionStatus::Waiting(msg));
+                            }
+                        }
+                    }
+                    (Some(_), Some(pid)) => {
+                        // attached already; the agent's socket has not appeared yet
+                        let what = format!("waiting for the agent's socket on {} (pid {pid})", device.label());
+                        set_status(&status, ConnectionStatus::Waiting(what));
+                    }
+                    (None, _) => {
+                        let what = if followed_away_from.is_some() {
+                            format!("{} exited; waiting for it to start again (--follow)", target.package)
+                        } else {
+                            let name = target.process.as_deref().unwrap_or(&target.package);
+                            let name = match target.pid {
+                                Some(pid) => format!("{name} pid {pid}"),
+                                None => name.to_string(),
+                            };
+                            format!(
+                                "waiting for {name} on {} (start the app; it needs a debug build with the traffic-police library)",
+                                device.label()
+                            )
+                        };
+                        set_status(&status, ConnectionStatus::Waiting(what));
+                    }
+                }
+
                 if wait_or_quit(&mut commands, &mut wanted, &mut devices, POLL).await {
                     return;
                 }
@@ -305,6 +361,7 @@ pub async fn run_device(
         if let Some(mut r) = resume.take() {
             close_source(&out, &mut r, "the app exited").await;
             followed_away_from = Some(r.pid);
+            attached_pid = None;
         }
         if !target.follow {
             set_status(&status, ConnectionStatus::Detached("the app exited · data kept".into()));

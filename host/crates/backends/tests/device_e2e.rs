@@ -425,6 +425,7 @@ async fn sample_app_end_to_end() {
             follow: true,
             capture: Default::default(),
             rules: Default::default(),
+            attach: None,
         };
         tasks.push(tokio::spawn(run_device(
             adb.clone(),

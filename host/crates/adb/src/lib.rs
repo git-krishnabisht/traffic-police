@@ -7,6 +7,7 @@ pub mod apps;
 pub mod devices;
 pub mod pb;
 pub mod sockets;
+mod sync;
 
 use std::time::Duration;
 
@@ -372,6 +373,19 @@ impl Adb {
             .collect())
     }
 
+    /// Pushes a file to the device using the sync protocol. `mode` is the Unix permission
+    /// (e.g. `0o644` for read-only, `0o755` for executable); the regular-file flag is added.
+    pub async fn push(&self, id: TransportId, data: &[u8], remote_path: &str, mode: u32) -> Result<()> {
+        let mut s = self.open_service(id, "sync:").await?;
+        let mtime =
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0u32, |d| d.as_secs() as u32);
+        self.timed(
+            &format!("push to {remote_path}"),
+            sync::push_file(&mut s, data, remote_path, 0o100000 | mode, mtime),
+        )
+        .await
+    }
+
     /// Which of the given pids Android's cached-apps freezer has frozen (Android 11+, cgroup
     /// v2: `frozen 1` in the process cgroup's `cgroup.events`). A frozen process runs no code, so
     /// its capture runtime cannot answer until Android thaws it.
@@ -482,7 +496,7 @@ async fn read_hex4_payload(s: &mut TcpStream) -> Result<Vec<u8>> {
     Ok(buf)
 }
 
-async fn read_exact(s: &mut TcpStream, buf: &mut [u8]) -> Result<()> {
+pub(crate) async fn read_exact(s: &mut TcpStream, buf: &mut [u8]) -> Result<()> {
     match s.read_exact(buf).await {
         Ok(_) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {

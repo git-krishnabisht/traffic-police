@@ -7,6 +7,7 @@ mod headless;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command as Process, Stdio};
+use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, bail};
@@ -14,7 +15,7 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use tokio::sync::{mpsc, watch};
 use traffic_police_adb::Adb;
 use traffic_police_backends::demo::{DemoConfig, DemoSession, demo_rules};
-use traffic_police_backends::{DeviceTarget, run_device};
+use traffic_police_backends::{AgentKit, DeviceTarget, run_device};
 use traffic_police_core::backend::{Capabilities, ConnectionStatus};
 use traffic_police_core::fmt::{NS_PER_MS, NS_PER_SEC};
 use traffic_police_core::store::SessionStore;
@@ -72,9 +73,13 @@ struct TargetArgs {
     #[arg(long)]
     pid: Option<u32>,
     /// How capture gets into the app: the traffic-police library in its debug build, or attach
-    /// (no library; arrives in Phase 4).
+    /// (no library needed; works with any debuggable app).
     #[arg(long, value_enum, default_value_t = Mode::Library)]
     mode: Mode,
+    /// Where to find the agent artifacts (the .so, boot dex and runtime dex). By default
+    /// found from TRAFFIC_POLICE_AGENT_DIR, or the Android build output in the source tree.
+    #[arg(long, value_name = "DIR", env = "TRAFFIC_POLICE_AGENT_DIR")]
+    agent_dir: Option<PathBuf>,
     /// Start the app first.
     #[arg(long)]
     launch: bool,
@@ -299,18 +304,10 @@ fn main() -> anyhow::Result<()> {
             }
             ui_run(log_file.as_deref(), run_demo(args, theme, images, &settings, cli.project.as_deref()))
         }
-        None => {
-            if cli.target.mode == Mode::Attach {
-                eprintln!(
-                    "Attach mode arrives in Phase 4. Use library mode: add the traffic-police library to the app's debug build (see the README)."
-                );
-                std::process::exit(2);
-            }
-            ui_run(
-                log_file.as_deref(),
-                run_device_mode(cli.target.clone(), theme, images, &settings, cli.project.as_deref()),
-            )
-        }
+        None => ui_run(
+            log_file.as_deref(),
+            run_device_mode(cli.target.clone(), theme, images, &settings, cli.project.as_deref()),
+        ),
     }
 }
 
@@ -362,9 +359,6 @@ async fn headless_source(
         let now_ms = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64);
         return Ok(headless::Source::Demo(DemoConfig { wall_start_ms: now_ms, ..DemoConfig::default() }, 1.0));
     }
-    if args.mode == Mode::Attach || outer.mode == Mode::Attach {
-        bail!("attach mode arrives in Phase 4; use library mode (see the README)");
-    }
     let Some(package) = args.package.clone().or_else(|| outer.package.clone()) else {
         bail!("{command} needs the app: --package com.example.app (the UI lets you pick instead)");
     };
@@ -372,6 +366,12 @@ async fn headless_source(
     if let Some(s) = rules.summary() {
         headless::note(s);
     }
+    let attach_mode = args.mode == Mode::Attach || outer.mode == Mode::Attach;
+    let agent_kit = if attach_mode {
+        Some(load_agent_kit(args.agent_dir.as_deref().or(outer.agent_dir.as_deref()))?)
+    } else {
+        None
+    };
     let target = DeviceTarget {
         serial: args.serial.clone().or_else(|| outer.serial.clone()),
         package,
@@ -380,6 +380,7 @@ async fn headless_source(
         follow: args.follow || outer.follow,
         capture: settings.capture(),
         rules: rules.active(),
+        attach: agent_kit,
     };
     let adb = settings.adb();
     if args.launch || outer.launch {
@@ -510,6 +511,45 @@ impl ProjectRules {
     }
 }
 
+/// Loads the agent artifacts for attach mode. Looks in `--agent-dir`, then
+/// `TRAFFIC_POLICE_AGENT_DIR`, then the Android build output relative to the repo root.
+fn load_agent_kit(dir: Option<&Path>) -> anyhow::Result<Arc<AgentKit>> {
+    if let Some(d) = dir {
+        return AgentKit::from_dir(d)
+            .map(Arc::new)
+            .with_context(|| format!("loading agent artifacts from {}", d.display()));
+    }
+    // Try the Android build output directory: walk up from the binary to find the repo root
+    let candidates: Vec<PathBuf> = [
+        // relative to cwd (common in development)
+        Some(PathBuf::from("android/attach-agent/build/outputs/agent")),
+        // relative to the binary
+        std::env::current_exe().ok().and_then(|p| {
+            // binary is in host/target/{profile}/traffic-police
+            p.ancestors().nth(4).map(|root| root.join("android/attach-agent/build/outputs/agent"))
+        }),
+    ]
+    .into_iter()
+    .flatten()
+    .filter(|p| p.is_dir())
+    .collect();
+
+    for d in &candidates {
+        match AgentKit::from_dir(d) {
+            Ok(kit) => {
+                tracing::info!(dir = %d.display(), "loaded agent artifacts");
+                return Ok(Arc::new(kit));
+            }
+            Err(e) => tracing::debug!(dir = %d.display(), "skipping agent dir: {e}"),
+        }
+    }
+    bail!(
+        "cannot find the agent artifacts for attach mode.\n\
+         Build them: cd android && ./gradlew :attach-agent:agentArtifacts\n\
+         Or set --agent-dir or TRAFFIC_POLICE_AGENT_DIR to the directory with the .so and .dex files."
+    )
+}
+
 /// Apply `.traffic-police/project.toml` (nearest one at or above the working directory).
 fn load_project(app: &mut App, project: Option<&Path>) {
     let start = match project {
@@ -548,6 +588,7 @@ async fn run_device_mode(
 ) -> anyhow::Result<()> {
     let adb = settings.adb();
     adb.ensure_server().await.context("traffic-police talks to devices through the adb server")?;
+    let agent_kit = if args.mode == Mode::Attach { Some(load_agent_kit(args.agent_dir.as_deref())?) } else { None };
     let rules = ProjectRules::find(project);
     let target = match args.package.clone() {
         Some(package) => DeviceTarget {
@@ -558,6 +599,7 @@ async fn run_device_mode(
             follow: args.follow,
             capture: settings.capture(),
             rules: rules.active(),
+            attach: agent_kit.clone(),
         },
         None => match traffic_police_tui::picker::pick(adb.clone(), theme.clone()).await? {
             Some(p) => DeviceTarget {
@@ -568,6 +610,7 @@ async fn run_device_mode(
                 follow: args.follow,
                 capture: settings.capture(),
                 rules: rules.active(),
+                attach: agent_kit.clone(),
             },
             None => return Ok(()),
         },
