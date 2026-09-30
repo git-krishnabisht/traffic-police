@@ -2591,6 +2591,7 @@ dependencies = [
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
+ "traffic-police-adb",
  "traffic-police-backends",
  "traffic-police-core",
  "traffic-police-proto",
@@ -2617,6 +2618,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "tracing",
+ "traffic-police-adb",
  "traffic-police-core",
  "traffic-police-proto",
 ]
@@ -2669,6 +2671,7 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tracing",
+ "traffic-police-adb",
  "traffic-police-backends",
  "traffic-police-core",
  "traffic-police-proto",

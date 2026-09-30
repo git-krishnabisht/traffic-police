@@ -28,7 +28,7 @@ use crate::bodyview::BodyView;
 use crate::images::Images;
 use crate::ui;
 
-type Term = Terminal<CrosstermBackend<Stdout>>;
+pub(crate) type Term = Terminal<CrosstermBackend<Stdout>>;
 
 const INPUT_FRAME: Duration = Duration::from_millis(16);
 const DATA_FRAME: Duration = Duration::from_millis(33);
@@ -53,7 +53,7 @@ pub fn install_panic_hook() {
     });
 }
 
-fn setup() -> io::Result<Term> {
+pub(crate) fn setup() -> io::Result<Term> {
     terminal::enable_raw_mode()?;
     let mut out = io::stdout();
     if let Err(e) = execute!(out, EnterAlternateScreen, EnableMouseCapture, EnableBracketedPaste, cursor::Hide) {
@@ -66,6 +66,8 @@ fn setup() -> io::Result<Term> {
 pub struct RunOptions {
     /// Probe the terminal for a graphics protocol (otherwise half-blocks).
     pub detect_images: bool,
+    /// Connection status from the backend, shown in the header.
+    pub status: Option<tokio::sync::watch::Receiver<String>>,
 }
 
 /// Run the UI until the user quits. `events` carries batches from the backend; when it closes
@@ -78,7 +80,7 @@ pub async fn run(mut app: App, mut events: mpsc::Receiver<Vec<SessionEvent>>, op
     let mut term = setup()?;
     // The probe reads the terminal's answer from stdin, so it runs before the input stream exists.
     app.images = if opts.detect_images { Images::detect() } else { Images::halfblocks() };
-    let result = event_loop(&mut term, &mut app, &mut events).await;
+    let result = event_loop(&mut term, &mut app, &mut events, opts.status).await;
     restore_terminal();
     result
 }
@@ -93,7 +95,11 @@ async fn event_loop(
     term: &mut Term,
     app: &mut App,
     events: &mut mpsc::Receiver<Vec<SessionEvent>>,
+    mut status: Option<tokio::sync::watch::Receiver<String>>,
 ) -> anyhow::Result<()> {
+    if let Some(s) = &status {
+        app.connection = Some(s.borrow().clone());
+    }
     // `None` while an editor owns the terminal: the stream's reader thread would compete with
     // the editor for keystrokes.
     let mut input = Some(EventStream::new());
@@ -141,6 +147,16 @@ async fn event_loop(
                 }
                 None => backend_open = false,
             },
+            changed = async { status.as_mut().expect("guarded").changed().await }, if status.is_some() => {
+                match changed {
+                    Ok(()) => {
+                        let text = status.as_ref().expect("guarded").borrow().clone();
+                        app.connection = Some(text);
+                    }
+                    Err(_) => status = None, // the backend is gone; keep the last text
+                }
+                input_dirty = true;
+            }
             Some((job, result)) = jq_rx.recv() => {
                 app.finish_jq(job, result);
                 input_dirty = true;

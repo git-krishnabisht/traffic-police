@@ -1,6 +1,6 @@
 [package]
 name = "traffic-police-backends"
-description = "Event sources for traffic-police: the demo device, and later devices, session files and HAR"
+description = "Event sources for traffic-police: the demo device and live devices over adb"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,6 +9,7 @@ publish.workspace = true
 [dependencies]
 traffic-police-proto.workspace = true
 traffic-police-core.workspace = true
+traffic-police-adb.workspace = true
 bytes.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

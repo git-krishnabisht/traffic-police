@@ -1,8 +1,9 @@
 ---
 source: crates/tui/tests/snapshots.rs
+assertion_line: 30
 expression: "frame(0.0, MEDIUM, \"\")"
 ---
- traffic-police  waiting for the app…  ● LIVE  ✎ 1 rule active                                                         images: half-blocks
+ traffic-police  waiting for the app…  ● WAITING  ✎ 1 rule active                                                      images: half-blocks
  NETWORK  captured requests (whole-app data not available) · T switches                                 ━ Receiving 0 B/s   ━ Sending 0 B/s
  1.0 KB/s
 

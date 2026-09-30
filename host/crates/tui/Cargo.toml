@@ -9,6 +9,7 @@ publish.workspace = true
 [dependencies]
 traffic-police-proto.workspace = true
 traffic-police-core.workspace = true
+traffic-police-adb.workspace = true
 ratatui.workspace = true
 crossterm.workspace = true
 ratatui-image.workspace = true

@@ -109,12 +109,15 @@ fn draw_header(app: &App, r: Rect, buf: &mut Buffer) {
                 spans.push(Span::styled("  attach", t.dim()));
             }
         }
-        None => spans.push(Span::styled("waiting for the app…", t.dim())),
+        None => spans.push(Span::styled(app.connection.clone().unwrap_or_else(|| "waiting for the app…".into()), t.dim())),
     }
     spans.push(Span::raw("  "));
+    let waiting = store.current_source().is_none();
     let detached = store.current_source().is_some_and(|s| s.ended.is_some());
     let (label, style) = if app.is_frozen() {
         ("FROZEN", t.accent())
+    } else if waiting {
+        ("WAITING", t.dim())
     } else if detached {
         ("DETACHED", t.error())
     } else if !app.recording {
@@ -123,6 +126,9 @@ fn draw_header(app: &App, r: Rect, buf: &mut Buffer) {
         ("LIVE", t.ok())
     };
     spans.push(Span::styled(format!("● {label}"), style.add_modifier(Modifier::BOLD)));
+    if detached && let Some(c) = &app.connection {
+        spans.push(Span::styled(format!("  {c}"), t.dim()));
+    }
     if let Some(rules) = &app.rules {
         let n = rules.rules.iter().filter(|r| r.enabled).count();
         if n > 0 {

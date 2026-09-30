@@ -14,6 +14,7 @@ path = "src/main.rs"
 traffic-police-proto.workspace = true
 traffic-police-core.workspace = true
 traffic-police-backends.workspace = true
+traffic-police-adb.workspace = true
 traffic-police-tui.workspace = true
 anyhow.workspace = true
 clap.workspace = true

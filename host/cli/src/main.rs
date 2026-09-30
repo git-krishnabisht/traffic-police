@@ -7,8 +7,10 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, bail};
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
+use traffic_police_adb::Adb;
 use traffic_police_backends::demo::{DemoConfig, DemoSession, demo_rules};
+use traffic_police_backends::{DeviceStatus, DeviceTarget, run_device};
 use traffic_police_core::backend::Capabilities;
 use traffic_police_core::fmt::{NS_PER_MS, NS_PER_SEC};
 use traffic_police_core::store::SessionStore;
@@ -23,10 +25,17 @@ const JQ_MAX_OUTPUTS: usize = 200;
 const JQ_MAX_OUTPUT_BYTES: usize = 16 << 20;
 
 #[derive(Parser)]
-#[command(name = "traffic-police", version, about = "Watch an Android app's HTTP traffic from the terminal")]
+#[command(
+    name = "traffic-police",
+    version,
+    about = "Watch an Android app's HTTP traffic from the terminal",
+    after_help = "Without --package, traffic-police lets you choose the device and the app process."
+)]
 struct Cli {
     #[command(subcommand)]
     command: Option<Command>,
+    #[command(flatten)]
+    target: TargetArgs,
     /// Color theme.
     #[arg(long, global = true, value_enum, default_value_t = ThemeArg::Auto)]
     theme: ThemeArg,
@@ -36,6 +45,39 @@ struct Cli {
     /// Write the log here instead of the default location.
     #[arg(long, global = true, value_name = "PATH")]
     log_file: Option<PathBuf>,
+}
+
+/// Which app to watch.
+#[derive(Args, Clone)]
+struct TargetArgs {
+    /// Device serial, as `adb devices` lists it (optional with one device).
+    #[arg(long, short = 's')]
+    serial: Option<String>,
+    /// The app's package name, e.g. com.example.app.
+    #[arg(long, short = 'p')]
+    package: Option<String>,
+    /// A process name, for apps with several processes (e.g. com.example.app:sync).
+    #[arg(long, conflicts_with = "pid")]
+    process: Option<String>,
+    /// A process id.
+    #[arg(long)]
+    pid: Option<u32>,
+    /// How capture gets into the app: the traffic-police library in its debug build, or attach
+    /// (no library; arrives in Phase 4).
+    #[arg(long, value_enum, default_value_t = Mode::Library)]
+    mode: Mode,
+    /// Start the app first.
+    #[arg(long)]
+    launch: bool,
+    /// Keep watching when the app restarts; each run appears as a new segment.
+    #[arg(long)]
+    follow: bool,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum Mode {
+    Library,
+    Attach,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -92,10 +134,15 @@ fn main() -> anyhow::Result<()> {
             rt.block_on(run_demo(args, theme, !cli.no_images))
         }
         None => {
-            eprintln!(
-                "Device capture arrives in Phase 1. For now, try the inspector with simulated traffic:\n\n    traffic-police demo\n"
-            );
-            std::process::exit(2);
+            if cli.target.mode == Mode::Attach {
+                eprintln!("Attach mode arrives in Phase 4. Use library mode: add the traffic-police library to the app's debug build (see the README).");
+                std::process::exit(2);
+            }
+            let theme = theme(cli.theme);
+            let _log = init_logging(cli.log_file.as_deref())?;
+            traffic_police_core::fmt::set_local_offset_secs(traffic_police_tui::local_utc_offset_secs());
+            let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
+            rt.block_on(run_device_mode(cli.target, theme, !cli.no_images))
         }
     }
 }
@@ -190,6 +237,79 @@ fn load_project(app: &mut App) {
     }
 }
 
+/// Watch a real app: pick it (or take it from the flags), then stream it into the UI.
+async fn run_device_mode(args: TargetArgs, theme: Theme, detect_images: bool) -> anyhow::Result<()> {
+    let adb = Adb::from_env();
+    adb.ensure_server().await.context("traffic-police talks to devices through the adb server")?;
+    let target = match args.package.clone() {
+        Some(package) => DeviceTarget {
+            serial: args.serial.clone(),
+            package,
+            process: args.process.clone(),
+            pid: args.pid,
+            follow: args.follow,
+        },
+        None => match traffic_police_tui::picker::pick(adb.clone(), theme.clone()).await? {
+            Some(p) => {
+                DeviceTarget { serial: Some(p.serial), package: p.package, process: Some(p.process), pid: None, follow: args.follow }
+            }
+            None => return Ok(()),
+        },
+    };
+    if args.launch {
+        launch_app(&adb, target.serial.as_deref(), &target.package).await?;
+    }
+    tracing::info!(package = %target.package, serial = ?target.serial, follow = target.follow, "device session");
+
+    let mut app = App::new(SessionStore::new(), theme);
+    app.caps = Capabilities { pause: true, rules: false, live: true };
+    load_project(&mut app);
+    app.jq_runner = jq_in_child;
+    let ids = app.store.source_ids();
+    let (event_tx, event_rx) = mpsc::channel(256);
+    let (command_tx, command_rx) = mpsc::unbounded_channel();
+    app.commands = Some(command_tx);
+    let (status_tx, mut status_rx) = watch::channel(DeviceStatus::Waiting("looking for the device…".into()));
+    let (text_tx, text_rx) = watch::channel("looking for the device…".to_string());
+    tokio::spawn(async move {
+        while status_rx.changed().await.is_ok() {
+            let text = status_rx.borrow().text().to_string();
+            tracing::info!("connection: {text}");
+            if text_tx.send(text).is_err() {
+                break;
+            }
+        }
+    });
+    let backend = tokio::spawn(run_device(adb, target, ids, event_tx, command_rx, status_tx));
+    let result = terminal::run(app, event_rx, RunOptions { detect_images, status: Some(text_rx) }).await;
+    // the UI dropped its command sender: the backend says goodbye and removes its forward
+    let _ = tokio::time::timeout(Duration::from_secs(3), backend).await;
+    result
+}
+
+/// `--launch`: start the app's launcher activity.
+async fn launch_app(adb: &Adb, serial: Option<&str>, package: &str) -> anyhow::Result<()> {
+    let devices = adb.devices().await?;
+    let device = devices
+        .iter()
+        .filter(|d| d.is_online())
+        .find(|d| serial.is_none_or(|s| d.serial == s))
+        .context("no online device to launch the app on")?;
+    let q = traffic_police_adb::quote(package);
+    let resolved = adb
+        .shell(device.transport_id, &format!("cmd package resolve-activity --brief -c android.intent.category.LAUNCHER {q}"))
+        .await?;
+    let component = resolved.stdout_text().lines().last().unwrap_or("").trim().to_string();
+    if !component.contains('/') {
+        bail!("{package} has no launcher activity on {} (is it installed?)", device.label());
+    }
+    let started = adb.shell(device.transport_id, &format!("am start -n {}", traffic_police_adb::quote(&component))).await?;
+    if started.exit != 0 {
+        bail!("could not start {component}: {}", String::from_utf8_lossy(&started.stderr).trim());
+    }
+    Ok(())
+}
+
 async fn run_demo(args: &DemoArgs, theme: Theme, detect_images: bool) -> anyhow::Result<()> {
     let now_ms = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64);
     let cfg = demo_config(args, Some(now_ms))?;
@@ -201,7 +321,7 @@ async fn run_demo(args: &DemoArgs, theme: Theme, detect_images: bool) -> anyhow:
     app.commands = Some(command_tx);
     app.jq_runner = jq_in_child;
     let backend = tokio::spawn(traffic_police_backends::run_demo(cfg, args.speed, ids, event_tx, command_rx));
-    let result = terminal::run(app, event_rx, RunOptions { detect_images }).await;
+    let result = terminal::run(app, event_rx, RunOptions { detect_images, status: None }).await;
     backend.abort();
     result
 }

@@ -5,6 +5,7 @@ pub mod bodycache;
 pub mod bodyview;
 pub mod detail;
 pub mod images;
+pub mod picker;
 pub mod terminal;
 pub mod theme;
 pub mod ui;

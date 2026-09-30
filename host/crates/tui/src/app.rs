@@ -242,6 +242,8 @@ pub struct App {
     jq_jobs: Vec<JqJob>,
     jq_running: usize,
     pub source_roots: Vec<PathBuf>,
+    /// What the backend says about the connection ("waiting for the app…"), for the header.
+    pub connection: Option<String>,
     /// Set by input; the terminal loop suspends the UI and opens `$EDITOR`.
     pub editor_request: Option<(PathBuf, u32)>,
     pub area: Rect,
@@ -291,6 +293,7 @@ impl App {
             jq_jobs: Vec::new(),
             jq_running: 0,
             source_roots: Vec::new(),
+            connection: None,
             editor_request: None,
             area: Rect::default(),
             frozen: None,
