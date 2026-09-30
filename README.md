@@ -17,7 +17,8 @@ Build from source (release binaries come later). You need Rust through rustup; t
 is pinned in `host/rust-toolchain.toml` (1.98.1).
 
 ```sh
-# once, if you do not have Rust yet
+# once, if you do not have Rust yet; then open a new terminal (or run: source "$HOME/.cargo/env")
+# so the shell can find cargo, otherwise zsh says "command not found: cargo"
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 # if cargo says the pinned toolchain is missing
 rustup toolchain install 1.98.1 --component clippy rustfmt
