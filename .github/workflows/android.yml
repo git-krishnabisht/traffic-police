@@ -22,12 +22,12 @@ jobs:
         with:
           distribution: temurin
           java-version: "21"
-      # its default also asks for "tools", which the SDK repository no longer has; the list is
-      # split on spaces only (one package per line reaches sdkmanager as a single name)
-      - uses: android-actions/setup-android@v3
+      # the package list is split on spaces only: one package per line reaches sdkmanager as
+      # a single name
+      - uses: android-actions/setup-android@v4
         with:
           packages: platform-tools ndk;28.2.13676358 cmake;3.22.1
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v5
       # JVM tests against eight OkHttp versions (protocol goldens included), every artifact, the
       # sample app in all three build types, and the published form of the libraries
       - run: >-
@@ -81,12 +81,12 @@ jobs:
         with:
           distribution: temurin
           java-version: "21"
-      # its default also asks for "tools", which the SDK repository no longer has; the list is
-      # split on spaces only (one package per line reaches sdkmanager as a single name)
-      - uses: android-actions/setup-android@v3
+      # the package list is split on spaces only: one package per line reaches sdkmanager as
+      # a single name
+      - uses: android-actions/setup-android@v4
         with:
           packages: platform-tools ndk;28.2.13676358 cmake;3.22.1
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v5
       - run: ./gradlew :sample-app:assembleDebug :sample-app:assemblePlain :attach-agent:agentArtifacts
       - working-directory: host
         run: rustup toolchain install 1.98.1 --profile minimal
