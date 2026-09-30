@@ -1,0 +1,12 @@
+.gradle/
+build/
+local.properties
+.idea/
+*.iml
+.kotlin/
+# files editors generate when they import the Gradle build
+bin/
+.project
+.classpath
+.settings/
+.vscode/
