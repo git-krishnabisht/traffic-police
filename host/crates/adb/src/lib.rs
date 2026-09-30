@@ -391,7 +391,8 @@ impl Adb {
 }
 
 /// Where to find the adb binary to start a server: the SDK first, then PATH.
-fn find_adb_binary() -> Option<std::path::PathBuf> {
+/// The adb binary: the SDK's platform-tools, then `PATH`.
+pub fn find_adb_binary() -> Option<std::path::PathBuf> {
     let exe = if cfg!(windows) { "adb.exe" } else { "adb" };
     let mut candidates = Vec::new();
     for var in ["ANDROID_HOME", "ANDROID_SDK_ROOT"] {

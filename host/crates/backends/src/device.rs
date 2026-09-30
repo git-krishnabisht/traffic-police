@@ -33,6 +33,8 @@ pub struct DeviceTarget {
     pub pid: Option<u32>,
     /// Reattach when the app restarts, as a new segment on the timeline.
     pub follow: bool,
+    /// What to capture (`[capture]`); recording follows pause and resume.
+    pub capture: CaptureConfig,
 }
 
 /// Removes forwards to capture sockets that no longer exist on the device: a traffic-police that
@@ -136,7 +138,7 @@ pub async fn run_device(
     // the process we attach to (kept across hiccups and device disconnects, to resume it)
     let mut resume: Option<Resume> = None;
     let mut devices = adb.watch_devices();
-    let mut config = CaptureConfig::default();
+    let mut config = target.capture.clone();
     // with --follow, the process that exited (its socket may linger for a moment)
     let mut followed_away_from: Option<u32> = None;
     let mut swept = std::collections::HashSet::new();

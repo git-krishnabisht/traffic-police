@@ -11,6 +11,14 @@ use crate::model::BodyId;
 /// Bytes held in memory before bodies start moving to disk.
 pub const DEFAULT_MEMORY_BUDGET: u64 = 256 << 20;
 
+/// The budget of new stores (`[storage] memory`).
+static BUDGET: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(DEFAULT_MEMORY_BUDGET);
+
+/// Sets the memory budget of stores created from now on.
+pub fn set_default_budget(bytes: u64) {
+    BUDGET.store(bytes, std::sync::atomic::Ordering::Relaxed);
+}
+
 /// Bodies with at least this much in memory move first.
 const LARGE: u64 = 64 << 10;
 
@@ -51,7 +59,7 @@ pub struct BodyStore {
 
 impl Default for BodyStore {
     fn default() -> Self {
-        Self::with_budget(DEFAULT_MEMORY_BUDGET)
+        Self::with_budget(BUDGET.load(std::sync::atomic::Ordering::Relaxed))
     }
 }
 

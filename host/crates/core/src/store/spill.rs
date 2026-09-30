@@ -15,6 +15,18 @@ const PREFIX: &str = "traffic-police-";
 
 /// Spill directories this process created and has not removed yet.
 static DIRS: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+/// Where spill directories go (`[storage] spill_dir`); the temp directory when unset.
+static PARENT: Mutex<Option<PathBuf>> = Mutex::new(None);
+
+/// Puts spill directories (and temporary session recordings) under `dir` from now on.
+pub fn set_parent(dir: PathBuf) {
+    *PARENT.lock().unwrap_or_else(|e| e.into_inner()) = Some(dir);
+}
+
+/// Where spill directories go.
+pub fn parent() -> PathBuf {
+    PARENT.lock().unwrap_or_else(|e| e.into_inner()).clone().unwrap_or_else(std::env::temp_dir)
+}
 
 #[derive(Debug)]
 pub(crate) struct SpillFile {
@@ -25,7 +37,7 @@ pub(crate) struct SpillFile {
 
 impl SpillFile {
     pub(crate) fn create() -> io::Result<SpillFile> {
-        Self::create_in(&std::env::temp_dir())
+        Self::create_in(&parent())
     }
 
     pub(crate) fn create_in(parent: &Path) -> io::Result<SpillFile> {
@@ -81,7 +93,7 @@ impl Drop for SpillFile {
 /// A new private directory for this run (`<temp>/traffic-police-<pid>-<suffix>/`, mode 0700 on
 /// Unix), removed by [`remove_all`] or found by [`remove_stale`] if this process dies.
 pub fn private_dir() -> io::Result<PathBuf> {
-    private_dir_in(&std::env::temp_dir())
+    private_dir_in(&parent())
 }
 
 fn private_dir_in(parent: &Path) -> io::Result<PathBuf> {
@@ -109,7 +121,7 @@ pub fn remove_all() {
 /// Removes spill directories left in the temp directory by traffic-police processes that no
 /// longer run (killed, or lost power). Unix only: elsewhere they stay until the OS cleans temp.
 pub fn remove_stale() {
-    remove_stale_in(&std::env::temp_dir());
+    remove_stale_in(&parent());
 }
 
 pub(crate) fn remove_stale_in(parent: &Path) {

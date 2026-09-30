@@ -22,7 +22,7 @@ use crate::model::{
     Transaction, TxnIdx, TxnKey, TxnState, Url,
 };
 
-pub use body::{BodyStore, DEFAULT_MEMORY_BUDGET};
+pub use body::{BodyStore, DEFAULT_MEMORY_BUDGET, set_default_budget};
 pub use traffic::{Buckets, GraphSource, TrafficSeries};
 
 /// Hands out source ids; clone it into every backend.

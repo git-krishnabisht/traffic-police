@@ -1,5 +1,7 @@
 //! traffic-police: watch an Android app's HTTP traffic from the terminal.
 
+mod config;
+mod doctor;
 mod headless;
 
 use std::io::{Read, Write};
@@ -40,8 +42,8 @@ struct Cli {
     #[command(flatten)]
     target: TargetArgs,
     /// Color theme.
-    #[arg(long, global = true, value_enum, default_value_t = ThemeArg::Auto)]
-    theme: ThemeArg,
+    #[arg(long, global = true, value_enum)]
+    theme: Option<ThemeArg>,
     /// Draw images with half-blocks instead of asking the terminal for a graphics protocol.
     #[arg(long, global = true)]
     no_images: bool,
@@ -105,6 +107,13 @@ enum Command {
     /// Record a session file (.trafficpolice) without the UI, until Ctrl+C or --duration.
     #[command(after_help = "Example: traffic-police record -p com.example.app --out login.trafficpolice --duration 2m")]
     Record(RecordArgs),
+    /// Check the host, the device and the app, and say how to fix what is wrong (nothing is
+    /// changed). Exits with 1 when a check fails.
+    #[command(after_help = "Example: traffic-police doctor -p com.example.app")]
+    Doctor {
+        #[command(flatten)]
+        target: TargetArgs,
+    },
     /// Write requests as a HAR file: from a saved session, or captured live for --duration.
     #[command(
         after_help = "Examples:\n  traffic-police export --har out.har --input login.trafficpolice host:api.example.com\n  traffic-police export --har out.har -p com.example.app --duration 60s"
@@ -203,21 +212,21 @@ struct DemoArgs {
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
+    if let Some(Command::Jq { filter }) = &cli.command {
+        return jq_child(filter);
+    }
+    let settings = config::load();
+    settings.apply_storage();
+    let theme_arg = cli.theme.or_else(|| settings.theme().and_then(|t| ThemeArg::from_str(t, true).ok()));
+    let theme = theme(theme_arg.unwrap_or(ThemeArg::Auto));
+    let images = !cli.no_images && settings.images();
+    let log_file = cli.log_file.clone();
     match cli.command {
-        Some(Command::Jq { filter }) => jq_child(&filter),
-        Some(Command::Open { ref file }) => {
-            let theme = theme(cli.theme);
-            let _log = init_logging(cli.log_file.as_deref())?;
-            traffic_police_core::fmt::set_local_offset_secs(traffic_police_tui::local_utc_offset_secs());
-            spill::remove_stale();
-            let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
-            let result = rt.block_on(run_open(file, theme, !cli.no_images));
-            spill::remove_all();
-            result
-        }
-        Some(Command::Tail(args)) => headless_run(cli.log_file.as_deref(), async move {
+        Some(Command::Jq { .. }) => unreachable!("handled above"),
+        Some(Command::Open { ref file }) => ui_run(log_file.as_deref(), run_open(file, theme, images, &settings)),
+        Some(Command::Tail(args)) => headless_run(log_file.as_deref(), &settings, async {
             let filter = headless::parse_filter(&args.filter.join(" "))?;
-            let source = headless_source(&args.target, &cli.target, args.demo, "tail").await?;
+            let source = headless_source(&args.target, &cli.target, args.demo, "tail", &settings).await?;
             let format = match (args.events, args.json) {
                 (true, _) => headless::TailFormat::Events { bodies: args.bodies },
                 (false, true) => headless::TailFormat::Json { bodies: args.bodies },
@@ -227,12 +236,12 @@ fn main() -> anyhow::Result<()> {
             let lines = std::sync::Arc::new(headless::Lines::new(Box::new(std::io::stdout())));
             headless::tail(source, filter, format, args.duration, lines).await
         }),
-        Some(Command::Record(args)) => headless_run(cli.log_file.as_deref(), async move {
+        Some(Command::Record(args)) => headless_run(log_file.as_deref(), &settings, async {
             let filter = headless::parse_filter(args.filter.as_deref().unwrap_or(""))?;
-            let source = headless_source(&args.target, &cli.target, args.demo, "record").await?;
+            let source = headless_source(&args.target, &cli.target, args.demo, "record", &settings).await?;
             headless::record(source, &args.out, args.duration, filter).await
         }),
-        Some(Command::Export(args)) => headless_run(cli.log_file.as_deref(), async move {
+        Some(Command::Export(args)) => headless_run(log_file.as_deref(), &settings, async {
             let filter = headless::parse_filter(args.filter.as_deref().unwrap_or(""))?;
             let input = match (&args.input, args.duration) {
                 (Some(file), _) => {
@@ -242,25 +251,32 @@ fn main() -> anyhow::Result<()> {
                     headless::ExportInput::File(file)
                 }
                 (None, Some(d)) => headless::ExportInput::Live(
-                    headless_source(&args.target, &cli.target, args.demo, "export").await?,
+                    headless_source(&args.target, &cli.target, args.demo, "export", &settings).await?,
                     d,
                 ),
                 (None, None) => bail!("give --input FILE, or capture live with --package and --duration (like 60s)"),
             };
             headless::export_har(&args.har, input, filter).await
         }),
+        Some(Command::Doctor { ref target }) => {
+            let t = doctor::Target {
+                serial: target.serial.clone().or_else(|| cli.target.serial.clone()),
+                package: target.package.clone().or_else(|| cli.target.package.clone()),
+                process: target.process.clone().or_else(|| cli.target.process.clone()),
+                pid: target.pid.or(cli.target.pid),
+                attach: target.mode == Mode::Attach || cli.target.mode == Mode::Attach,
+            };
+            let adb = settings.adb();
+            let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
+            let report = rt.block_on(doctor::run(&t, &settings, &adb));
+            print!("{}", report.text);
+            std::process::exit(i32::from(report.failures > 0));
+        }
         Some(Command::Demo(ref args)) => {
-            let theme = theme(cli.theme);
             if let Some(spec) = &args.dump_frame {
                 return dump_frame(args, spec, theme);
             }
-            let _log = init_logging(cli.log_file.as_deref())?;
-            traffic_police_core::fmt::set_local_offset_secs(traffic_police_tui::local_utc_offset_secs());
-            spill::remove_stale();
-            let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
-            let result = rt.block_on(run_demo(args, theme, !cli.no_images));
-            spill::remove_all();
-            result
+            ui_run(log_file.as_deref(), run_demo(args, theme, images, &settings))
         }
         None => {
             if cli.target.mode == Mode::Attach {
@@ -269,20 +285,31 @@ fn main() -> anyhow::Result<()> {
                 );
                 std::process::exit(2);
             }
-            let theme = theme(cli.theme);
-            let _log = init_logging(cli.log_file.as_deref())?;
-            traffic_police_core::fmt::set_local_offset_secs(traffic_police_tui::local_utc_offset_secs());
-            spill::remove_stale();
-            let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
-            let result = rt.block_on(run_device_mode(cli.target, theme, !cli.no_images));
-            spill::remove_all();
-            result
+            ui_run(log_file.as_deref(), run_device_mode(cli.target.clone(), theme, images, &settings))
         }
     }
 }
 
+/// Runs the UI: logging to the log file, spilled bodies cleaned up after.
+fn ui_run(log_file: Option<&Path>, work: impl Future<Output = anyhow::Result<()>>) -> anyhow::Result<()> {
+    let _log = init_logging(log_file)?;
+    traffic_police_core::fmt::set_local_offset_secs(traffic_police_tui::local_utc_offset_secs());
+    spill::remove_stale();
+    let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
+    let result = rt.block_on(work);
+    spill::remove_all();
+    result
+}
+
 /// Runs a command without the UI: logging to the log file, spilled bodies cleaned up after.
-fn headless_run(log_file: Option<&Path>, work: impl Future<Output = anyhow::Result<()>>) -> anyhow::Result<()> {
+fn headless_run(
+    log_file: Option<&Path>,
+    settings: &config::Loaded,
+    work: impl Future<Output = anyhow::Result<()>>,
+) -> anyhow::Result<()> {
+    for p in &settings.problems {
+        eprintln!("traffic-police: config.toml: {p}");
+    }
     let _log = init_logging(log_file)?;
     traffic_police_core::fmt::set_local_offset_secs(traffic_police_tui::local_utc_offset_secs());
     spill::remove_stale();
@@ -304,6 +331,7 @@ async fn headless_source(
     outer: &TargetArgs,
     demo: bool,
     command: &str,
+    settings: &config::Loaded,
 ) -> anyhow::Result<headless::Source> {
     if demo {
         let now_ms = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64);
@@ -321,14 +349,15 @@ async fn headless_source(
         process: args.process.clone().or_else(|| outer.process.clone()),
         pid: args.pid.or(outer.pid),
         follow: args.follow || outer.follow,
+        capture: settings.capture(),
     };
+    let adb = settings.adb();
     if args.launch || outer.launch {
-        let adb = Adb::from_env();
         adb.ensure_server().await.context("traffic-police talks to devices through the adb server")?;
         launch_app(&adb, target.serial.as_deref(), &target.package).await?;
     }
     tracing::info!(command, package = %target.package, serial = ?target.serial, follow = target.follow, "headless session");
-    Ok(headless::Source::Device(target))
+    Ok(headless::Source::Device(target, adb))
 }
 
 fn theme(arg: ThemeArg) -> Theme {
@@ -422,8 +451,13 @@ fn load_project(app: &mut App) {
 }
 
 /// Watch a real app: pick it (or take it from the flags), then stream it into the UI.
-async fn run_device_mode(args: TargetArgs, theme: Theme, detect_images: bool) -> anyhow::Result<()> {
-    let adb = Adb::from_env();
+async fn run_device_mode(
+    args: TargetArgs,
+    theme: Theme,
+    detect_images: bool,
+    settings: &config::Loaded,
+) -> anyhow::Result<()> {
+    let adb = settings.adb();
     adb.ensure_server().await.context("traffic-police talks to devices through the adb server")?;
     let target = match args.package.clone() {
         Some(package) => DeviceTarget {
@@ -432,6 +466,7 @@ async fn run_device_mode(args: TargetArgs, theme: Theme, detect_images: bool) ->
             process: args.process.clone(),
             pid: args.pid,
             follow: args.follow,
+            capture: settings.capture(),
         },
         None => match traffic_police_tui::picker::pick(adb.clone(), theme.clone()).await? {
             Some(p) => DeviceTarget {
@@ -440,6 +475,7 @@ async fn run_device_mode(args: TargetArgs, theme: Theme, detect_images: bool) ->
                 process: Some(p.process),
                 pid: None,
                 follow: args.follow,
+                capture: settings.capture(),
             },
             None => return Ok(()),
         },
@@ -451,6 +487,7 @@ async fn run_device_mode(args: TargetArgs, theme: Theme, detect_images: bool) ->
 
     let mut app = App::new(SessionStore::new(), theme);
     app.caps = Capabilities { pause: true, rules: false, live: true };
+    settings.apply_ui(&mut app);
     load_project(&mut app);
     app.jq_runner = jq_in_child;
     let ids = app.store.source_ids();
@@ -495,10 +532,11 @@ async fn launch_app(adb: &Adb, serial: Option<&str>, package: &str) -> anyhow::R
     Ok(())
 }
 
-async fn run_demo(args: &DemoArgs, theme: Theme, detect_images: bool) -> anyhow::Result<()> {
+async fn run_demo(args: &DemoArgs, theme: Theme, detect_images: bool, settings: &config::Loaded) -> anyhow::Result<()> {
     let now_ms = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64);
     let cfg = demo_config(args, Some(now_ms))?;
     let mut app = demo_app(theme);
+    settings.apply_ui(&mut app);
     load_project(&mut app);
     let ids = app.store.source_ids();
     let (event_tx, event_rx) = mpsc::channel(256);
@@ -515,9 +553,10 @@ async fn run_demo(args: &DemoArgs, theme: Theme, detect_images: bool) -> anyhow:
 }
 
 /// `open FILE`: a saved session, replayed into the UI.
-async fn run_open(file: &Path, theme: Theme, detect_images: bool) -> anyhow::Result<()> {
+async fn run_open(file: &Path, theme: Theme, detect_images: bool, settings: &config::Loaded) -> anyhow::Result<()> {
     let mut app = App::new(SessionStore::new(), theme);
     app.caps = Capabilities { pause: false, rules: false, live: false };
+    settings.apply_ui(&mut app);
     load_project(&mut app);
     app.jq_runner = jq_in_child;
     let name = file.file_name().map_or_else(|| file.display().to_string(), |n| n.to_string_lossy().into_owned());

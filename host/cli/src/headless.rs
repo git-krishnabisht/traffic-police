@@ -76,7 +76,7 @@ fn passes(store: &SessionStore, i: TxnIdx, filter: Option<&Filter>, now: Ts) -> 
 
 /// Where a capture comes from.
 pub enum Source {
-    Device(DeviceTarget),
+    Device(DeviceTarget, Adb),
     /// The pretend app of `traffic-police demo` (a hidden `--demo` flag, for trying the commands
     /// and for tests), at `speed`.
     Demo(DemoConfig, f64),
@@ -121,8 +121,7 @@ impl Capture {
         let (command_tx, command_rx) = mpsc::unbounded_channel();
         let (status_tx, status) = watch::channel(ConnectionStatus::Waiting("looking for the device…".into()));
         let backend = match source {
-            Source::Device(target) => {
-                let adb = Adb::from_env();
+            Source::Device(target, adb) => {
                 adb.ensure_server().await.context("traffic-police talks to devices through the adb server")?;
                 tokio::spawn(run_device(adb, target, ids, event_tx, command_rx, status_tx, sink))
             }

@@ -108,6 +108,23 @@ pub fn copy(mode: ClipboardMode, text: &str) -> Result<&'static str, String> {
     }
 }
 
+/// What `y` would copy with, without copying (for `doctor`).
+pub fn describe(mode: ClipboardMode) -> Result<String, String> {
+    let tmux = if std::env::var_os("TMUX").is_some() { " (inside tmux: `set -g set-clipboard on`)" } else { "" };
+    match mode {
+        ClipboardMode::Off => Ok("off: copies stay inside traffic-police".into()),
+        ClipboardMode::Osc52 => Ok(format!("OSC 52 through the terminal{tmux}")),
+        ClipboardMode::Native => native_tool()
+            .map(|(t, _)| format!("native ({t})"))
+            .ok_or_else(|| "no clipboard tool found (pbcopy, wl-copy, xclip, xsel or clip)".to_string()),
+        ClipboardMode::Auto => Ok(match native_tool() {
+            Some((t, _)) if !over_ssh() => format!("native ({t})"),
+            Some(_) => format!("OSC 52 through the terminal (over SSH){tmux}"),
+            None => format!("OSC 52 through the terminal (no clipboard tool found){tmux}"),
+        }),
+    }
+}
+
 /// What a menu entry does.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MenuAction {
