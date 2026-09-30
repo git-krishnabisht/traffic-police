@@ -49,6 +49,7 @@ dependencies {
     releaseImplementation(project(":capture-noop"))
     "nondebuggableImplementation"(project(":capture"))
 
+    implementation(libs.kotlin.stdlib)
     implementation(libs.okhttp.latest)
     implementation(libs.okhttp.tls)
     implementation(libs.mockwebserver3)
