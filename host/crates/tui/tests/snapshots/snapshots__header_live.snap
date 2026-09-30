@@ -2,4 +2,4 @@
 source: crates/tui/tests/snapshots.rs
 expression: "header(&mut app_at(12.0),\nConnectionStatus::Live(\"Pixel 8 [emulator-5554] · com.example.app (pid 4242)\".into()))"
 ---
- traffic-police  Pixel 8 [demo]  com.example.deepid_example  pid 4312  ● LIVE  ✎ 1 rule active                         images: half-blocks
+ traffic-police  Pixel 8 [demo]  com.example.deepid_example  pid 4312  ● LIVE  ✎ 1 rule active           26 requests · 13 KB in · 18 KB out

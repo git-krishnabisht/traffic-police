@@ -2,53 +2,53 @@
 source: crates/tui/tests/snapshots.rs
 expression: "detail(40.0, LARGE, modified(), \"G\")"
 ---
- traffic-police  Pixel 8 [demo]  com.example.deepid_example  pid 4312  ● LIVE  ✎ 1 rule active                                                                                     images: half-blocks
- NETWORK  all app traffic · T switches                                                                                                                        ━ Receiving 2.3 KB/s   ━ Sending 1.7 KB/s
- 1.0 MB/s                                         ┊
-                             ┏━━┓  ┏━━┓      ┏━━┓ ┊┏━━┓  ┏━━┓
-                          ┏━━┛  ┗━━┛  ┗━━━━━━┛  ┗━━┛  ┗━━┛  ┗━━┓
-                          ┃                       ┊            ┗┓
-                          ┃                       ┊             ┗━┓
- 512 KB/s                 ┃                       ┊               ┗┓
-                          ┃                       ┊                ┃
-                         ┏┛                       ┊                ┃     ┏━━━━━┓
-                         ┃                        ┊                ┗━━━━━┛     ┗┓
-        0 ━━━━━━━━━━━━━━━┛━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-          00:10.000                      00:15.000                       00:20.000                      00:25.000                       00:30.000                      00:35.000
-────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
- Connection View   Thread View   Rules                                                                60 rows │  Overview   Response   Request   Call Stack                                          ✕
-Name                                        Size Type      Status         Time Timeline                       │  {
-attest                                     180 B json      200          2.75 s                                │    "ok": true,
-metrics                                      6 B protobuf  200          224 ms                                │    "sessionId": "session_15bce3a5a963c9fde0ebe700e9d76981",
-monitor                                    302 B json      200          1.41 s                                │    "deepid": "-fWdPR-silxdhEdA5s951RnzPITRjkkelext-Qs",
-events                                      17 B json      200          1.14 s                                │    "mobile": null,
-liveness-model-v3.json                     150 B json      404          346 ms                               ▐│    "status": "complete",
-enroll                                      72 B json      200          2.08 s                               ▐│    "verdict": "pass",
-documents                                   93 B json      200          515 ms                               ▐│    "riskScore": 0,
-monitor                                    302 B json      200          1.50 s                               ▐│    "createdAt": "2026-09-29T05:04:51.000Z",
-report                                     305 B html      500          219 ms                               ▐│    "completedAt": null,
-lookup?fields=country,region,carrier       101 B json      200          507 ms                               ▐│    "enrollmentSim": null
-monitor                                    302 B json      200          1.49 s █                             ▐│  }
-status?sessionId=session_15bce3a5a963…     263 B json      200          326 ms                               ▐│
-threshold                                                  failed       10.0 s ██████████▏                   ▐│ ───────────────────────────────────────────────────────────────────────────────────────
-events                                      17 B json      200          970 ms ██                            ▐│ Request           status?sessionId=session_15bce3a5a963c9fde0ebe700e9d76981
-status?sessionId=session_15bce3a5a963…     263 B json      200          174 ms  ▏                            ▐│ Method            GET
-fonts.json                                                 canceled     380 ms  ▏                            ▐│ Status            200 OK
-monitor                                    302 B json      200          1.44 s  ▐▉                           ▐│ URL               https://deepid.example.app/api/sdk/sim-binding/status/?sessionId=sess
-face-liveness-v3.tflite                   5.0 MB binary    200          6.38 s   ██████▋                     ▐│ Request type      —
-status?sessionId=session_15bce3a5a963…     263 B json      200          284 ms   ▏                           ▐│ Response type     application/json; charset=utf-8
-monitor                                    302 B json      200          1.56 s    ▐█▏                        ▐│ Response size     264 B
-! events                                    17 B json      200          971 ms     █                         ▐│ Initiating thread DefaultDispatcher-worker-3  id 60 · call site
-status?sessionId=session_15bce3a5a963…     263 B json      200          358 ms     ▏                         ▐│ Client            OkHttp 4.12.0
-monitor                                    302 B json      200          1.72 s      ▐█▎                       │ Protocol          h2
-status?sessionId=session_15bce3a5a963…     263 B json      200          381 ms      ▐                         │ Remote address    34.93.12.207:443  connection c-2 (reused)
-status?sessionId=session_15bce3a5a963…     263 B json      200          225 ms        ▏                       │ TLS               TLSv1.3 · TLS_AES_128_GCM_SHA256
-events                                      17 B json      200          1.13 s        █▍                      │ Certificate       CN=*.example.app · issued by WE1
-monitor                                    302 B json      200          1.38 s        ▐▉                      │ Started           00:21.632  (05:10:21.632)
-status?sessionId=session_15bce3a5a963…     263 B json      200          259 ms         ▏                      │ Duration          327 ms
-monitor                                    302 B json      200          1.67 s          ▐█▏                   │
-status?sessionId=session_15bce3a5a963…     263 B json      200          158 ms           ▏                    │ Timing            ████████████████████████████████████████████████████████████████████
-events                                      17 B json      200          995 ms            ▐▍                  │                   queued 500 µs · dns — · connect — · send 100 µs · wait 302 ms · recei
-monitor                                    302 B json      200          1.65 s            ▐█▏                 │
-✎ status?sessionId=session_15bce3a5a9…     264 B json      200          327 ms            █                   │ Rule              ✎ "Force verdict pass" changed this response: body edited (1 match),
- 60 requests  5.0 MB in  42 KB out  2 failed  12 dropped  ⚠ studio inspector present                                                                                                            ? help
+ traffic-police  Pixel 8 [demo]  com.example.deepid_example  pid 4312  ● LIVE  ✎ 1 rule active                                              60 requests · 5.0 MB in · 42 KB out · 2 failed · 12 dropped
+╭─ Network · all app traffic ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── ━ Receiving 2.3 KB/s   ━ Sending 1.6 KB/s ─╮
+│ 1.0 MB/s                                          ┊                                                                                                                                                  │
+│                             ┏━━┓   ┏━━┓     ┏━━┓  ┏━━┓  ┏━━┓                                                                                                                                         │
+│                           ┏━┛  ┗━━━┛  ┗━━━━━┛  ┗━━┛  ┗━━┛  ┗━━┓                                                                                                                                      │
+│                           ┃                       ┊           ┗┓                                                                                                                                     │
+│                          ┏┛                       ┊            ┗━┓                                                                                                                                   │
+│ 512 KB/s                 ┃                        ┊              ┗┓                                                                                                                                  │
+│                          ┃                        ┊               ┃                                                                                                                                  │
+│                          ┃                        ┊               ┃                                                                                                                                  │
+│                          ┃                        ┊               ┗━━━━━━━━━━━┓                                                                                                                      │
+│                          ┃                        ┊                           ┃                                                                                                                      │
+│        0 ━━━━━━━━━━━━━━━━┛━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ │
+│          00:10.000                      00:15.000                       00:20.000                      00:25.000                      00:30.000                      00:35.000                       │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Requests 60 ─ Connection ─ Thread ─ Rules ────────────────────────────────────────────────────────────────╮╭─ status?sessionId=session_15… ─ Overview ─ Response ─ Request ─ Call Stack ──────── ✕ ─╮
+│ Name                                      Size Type      Status         Time Timeline                      ││  {                                                                                     │
+│ monitor                                  302 B json      200          1.41 s                               ││    "ok": true,                                                                         │
+│ events                                    17 B json      200          1.14 s                               ││    "sessionId": "session_15bce3a5a963c9fde0ebe700e9d76981",                            │
+│ liveness-model-v3.json                   150 B json      404          346 ms                               ││    "deepid": "-fWdPR-silxdhEdA5s951RnzPITRjkkelext-Qs",                                │
+│ enroll                                    72 B json      200          2.08 s                               ││    "mobile": null,                                                                     │
+│ documents                                 93 B json      200          515 ms                               ││    "status": "complete",                                                               │
+│ monitor                                  302 B json      200          1.50 s                              ▐││    "verdict": "pass",                                                                  │
+│ report                                   305 B html      500          219 ms                              ▐││    "riskScore": 0,                                                                     │
+│ lookup?fields=country,region,carrier     101 B json      200          507 ms                              ▐││    "createdAt": "2026-09-29T05:04:51.000Z",                                            │
+│ monitor                                  302 B json      200          1.49 s █                            ▐││    "completedAt": null,                                                                │
+│ status?sessionId=session_15bce3a5a9…     263 B json      200          326 ms                              ▐││    "enrollmentSim": null                                                               │
+│ threshold                                                failed       10.0 s █████████▊                   ▐││  }                                                                                     │
+│ events                                    17 B json      200          970 ms █▏                           ▐││ ───────────────────────────────────────────────────────────────────────────────────────│
+│ status?sessionId=session_15bce3a5a9…     263 B json      200          174 ms  ▏                           ▐││ Method            GET                                                                  │
+│ fonts.json                                               canceled     380 ms  ▏                           ▐││ Status            200 OK                                                               │
+│ monitor                                  302 B json      200          1.44 s  ▐▉                          ▐││ URL               https://deepid.example.app/api/sdk/sim-binding/status/?sessionId=sess│
+│ face-liveness-v3.tflite                 5.0 MB binary    200          6.38 s   ██████▍                    ▐││ Request type      —                                                                    │
+│ status?sessionId=session_15bce3a5a9…     263 B json      200          284 ms   █                          ▐││ Response type     application/json; charset=utf-8                                      │
+│ monitor                                  302 B json      200          1.56 s    ▐▉                        ▐││ Response size     264 B                                                                │
+│ ! events                                  17 B json      200          971 ms     ▉                        ▐││ Initiating thread DefaultDispatcher-worker-3  id 60 · call site                        │
+│ status?sessionId=session_15bce3a5a9…     263 B json      200          358 ms     ▍                        ▐││ Client            OkHttp 4.12.0                                                        │
+│ monitor                                  302 B json      200          1.72 s      ▐█                      ▐││ Protocol          h2                                                                   │
+│ status?sessionId=session_15bce3a5a9…     263 B json      200          381 ms      █                        ││ Remote address    34.93.12.207:443  connection c-2 (reused)                            │
+│ status?sessionId=session_15bce3a5a9…     263 B json      200          225 ms       ▕▏                      ││ TLS               TLSv1.3 · TLS_AES_128_GCM_SHA256                                     │
+│ events                                    17 B json      200          1.13 s        █▏                     ││ Certificate       CN=*.example.app · issued by WE1                                     │
+│ monitor                                  302 B json      200          1.38 s        █▋                     ││ Started           00:21.632  (05:10:21.632)                                            │
+│ status?sessionId=session_15bce3a5a9…     263 B json      200          259 ms         ▏                     ││ Duration          327 ms                                                               │
+│ monitor                                  302 B json      200          1.67 s          █▊                   ││                                                                                        │
+│ status?sessionId=session_15bce3a5a9…     263 B json      200          158 ms          █                    ││ Timing            ████████████████████████████████████████████████████████████████████ │
+│ events                                    17 B json      200          995 ms            █                  ││                   queued 500 µs · dns — · connect — · send 100 µs · wait 302 ms · recei│
+│ monitor                                  302 B json      200          1.65 s            ██                 ││                                                                                        │
+│ ✎ status?sessionId=session_15bce3a5…     264 B json      200          327 ms            ▏                  ││ Rule              ✎ "Force verdict pass" changed this response: body edited (1 match), │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────────────╯╰────────────────────────────────────────────────────────────────────────────────────────╯
+ ←→ tabs   ↑↓ move   Enter fold   p parsed/source   | jq   Esc close   ? help                                                                                                ⚠ studio inspector present

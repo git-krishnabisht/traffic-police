@@ -2,43 +2,43 @@
 source: crates/tui/tests/snapshots.rs
 expression: "frame(0.0, MEDIUM, \"\")"
 ---
- traffic-police  waiting for the app…  ● WAITING  ✎ 1 rule active                                                      images: half-blocks
- NETWORK  captured requests (whole-app data not available) · T switches                                 ━ Receiving 0 B/s   ━ Sending 0 B/s
- 1.0 KB/s
-
-
-
-  512 B/s
-
-
-        0 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-          1:36:10.000          1:36:15.000           1:36:20.000          1:36:25.000           1:36:30.000          1:36:35.000
-────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
- Connection View   Thread View   Rules                                                                                               0 rows
-Name                                                        Size Type      Status         Time Timeline
-
- No requests yet. Traffic appears here as the app makes calls.
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
- 0 requests  0 B in  0 B out  0 failed  0 dropped                                                                                   ? help
+ traffic-police  waiting for the app…  ● WAITING  ✎ 1 rule active                                             0 requests · 0 B in · 0 B out
+╭─ Network · captured requests (whole-app data not available) ─────────────────────────────────────── ━ Receiving 0 B/s   ━ Sending 0 B/s ─╮
+│ 1.0 KB/s                                                                                                                                 │
+│                                                                                                                                          │
+│                                                                                                                                          │
+│                                                                                                                                          │
+│  512 B/s                                                                                                                                 │
+│                                                                                                                                          │
+│                                                                                                                                          │
+│                                                                                                                                          │
+│        0 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ │
+│          1:36:10.000          1:36:15.000          1:36:20.000          1:36:25.000           1:36:30.000          1:36:35.000           │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Requests 0 ─ Connection ─ Thread ─ Rules ───────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Name                                                       Size Type      Status         Time Timeline                                   │
+│                                                                                                                                          │
+│  No requests yet. Traffic appears here as the app makes calls.                                                                           │
+│                                                                                                                                          │
+│                                                                                                                                          │
+│                                                                                                                                          │
+│                                                                                                                                          │
+│                                                                                                                                          │
+│                                                                                                                                          │
+│                                                                                                                                          │
+│                                                                                                                                          │
+│                                                                                                                                          │
+│                                                                                                                                          │
+│                                                                                                                                          │
+│                                                                                                                                          │
+│                                                                                                                                          │
+│                                                                                                                                          │
+│                                                                                                                                          │
+│                                                                                                                                          │
+│                                                                                                                                          │
+│                                                                                                                                          │
+│                                                                                                                                          │
+│                                                                                                                                          │
+│                                                                                                                                          │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ Enter open   Space pause   c collapse   s sort   Tab next panel   q quit   ? help

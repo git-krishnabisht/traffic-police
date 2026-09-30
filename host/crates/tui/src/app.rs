@@ -18,6 +18,7 @@ use traffic_police_proto::msg::RuleSet;
 use tui_input::Input;
 use tui_input::backend::crossterm::EventHandler;
 
+use crate::actions::{Action, Keymap};
 use crate::bodycache::{BodyCache, BodyJob, Lookup};
 use crate::bodyview::BodyView;
 use crate::detail::{self, DocRow};
@@ -247,6 +248,7 @@ pub struct App {
     pub graph_source: GraphSource,
     pub graph_style: crate::graph::GraphStyle,
     pub frames: FrameStats,
+    pub keymap: Keymap,
     pub wall_labels: bool,
     pub columns: Vec<Column>,
     pub split_pct: u16,
@@ -300,6 +302,7 @@ impl App {
             graph: GraphState { span: DEFAULT_SPAN, ..Default::default() },
             graph_source: GraphSource::AppTotal,
             graph_style: crate::graph::GraphStyle::default(),
+            keymap: Keymap::default(),
             frames: FrameStats { visible: std::env::var_os("TRAFFIC_POLICE_FPS").is_some(), ..Default::default() },
             wall_labels: false,
             columns: Column::DEFAULT.to_vec(),
@@ -767,24 +770,25 @@ impl App {
             Overlay::None => {}
         }
 
-        // global keys
-        match k.code {
-            KeyCode::Char('q') => {
-                self.should_quit = true;
-                return;
-            }
-            KeyCode::Char('?') => {
-                self.overlay = Overlay::Help;
-                return;
-            }
-            KeyCode::Char('1') => return self.set_view(View::Connections),
-            KeyCode::Char('2') => return self.set_view(View::Threads),
-            KeyCode::Char('3') => return self.set_view(View::Rules),
-            KeyCode::Tab => return self.cycle_focus(1),
-            KeyCode::BackTab => return self.cycle_focus(-1),
-            KeyCode::Char(' ') => return self.toggle_recording(),
-            KeyCode::Char('F') => return self.toggle_freeze(),
-            KeyCode::Char('L') => {
+        if let Some(action) = self.keymap.action(&k) {
+            self.run(action);
+        }
+    }
+
+    /// Runs an action, from a key or the command palette.
+    pub fn run(&mut self, a: Action) {
+        let not_detail = self.focus != Focus::Detail;
+        match a {
+            Action::Quit => self.should_quit = true,
+            Action::Help => self.overlay = Overlay::Help,
+            Action::ViewConnections => self.set_view(View::Connections),
+            Action::ViewThreads => self.set_view(View::Threads),
+            Action::ViewRules => self.set_view(View::Rules),
+            Action::FocusNext => self.cycle_focus(1),
+            Action::FocusPrev => self.cycle_focus(-1),
+            Action::Pause => self.toggle_recording(),
+            Action::Freeze => self.toggle_freeze(),
+            Action::Live => {
                 self.graph.pinned_right = None;
                 self.graph.cursor = None;
                 self.follow_list = true;
@@ -792,50 +796,46 @@ impl App {
                     self.list_cursor = self.view_rows().len().saturating_sub(1);
                 }
                 self.flash("following live");
-                return;
             }
-            KeyCode::Char('+') | KeyCode::Char('=') => return self.zoom(1),
-            KeyCode::Char('-') => return self.zoom(-1),
-            KeyCode::Char('0') => {
+            Action::ZoomIn => self.zoom(1),
+            Action::ZoomOut => self.zoom(-1),
+            Action::ZoomReset => {
                 self.graph.span = DEFAULT_SPAN;
                 self.flash("window reset");
-                return;
             }
-            KeyCode::Char('T') => {
+            Action::GraphSource => {
                 self.graph_source = self.graph_source.toggled();
                 self.flash(format!("graph: {}", self.graph_source.label()));
-                return;
             }
-            KeyCode::Char('t') => {
+            Action::TimeLabels => {
                 self.wall_labels = !self.wall_labels;
                 self.flash(if self.wall_labels { "time axis: wall clock" } else { "time axis: since session start" });
-                return;
             }
-            KeyCode::Char('c') if self.focus != Focus::Detail => {
+            Action::GraphStyle => {
+                self.graph_style = self.graph_style.next();
+                self.flash(format!("graph style: {}", self.graph_style.name()));
+            }
+            Action::FrameRate => {
+                self.frames.visible = !self.frames.visible;
+                self.flash(if self.frames.visible { "showing the frame rate" } else { "frame rate hidden" });
+            }
+            Action::Collapse if not_detail => {
                 let on = !self.rows.collapse;
                 self.rows.set_collapse(on);
                 if let Some(f) = &mut self.frozen {
                     f.rows.set_collapse(on);
                 }
                 self.flash(if on { "collapsing repeated calls" } else { "showing every call" });
-                return;
             }
-            KeyCode::Char('C') => {
-                self.overlay = Overlay::Columns { cursor: 0 };
-                return;
-            }
-            KeyCode::Char('s') if self.focus != Focus::Detail => return self.cycle_sort(),
-            KeyCode::Char('S') if self.focus != Focus::Detail => {
+            Action::Columns => self.overlay = Overlay::Columns { cursor: 0 },
+            Action::Sort if not_detail => self.cycle_sort(),
+            Action::SortReverse if not_detail => {
                 let mut s = self.rows.sort;
                 s.descending = !s.descending;
                 self.set_sort(s);
-                return;
             }
-            KeyCode::Char('x') => {
-                self.overlay = Overlay::ConfirmClear;
-                return;
-            }
-            KeyCode::Char('v') if self.focus != Focus::Detail => {
+            Action::Clear => self.overlay = Overlay::ConfirmClear,
+            Action::SelectRange if not_detail => {
                 self.focus = Focus::Graph;
                 let (_, right) = self.window();
                 let c = self.graph.cursor.unwrap_or(right.saturating_sub(self.graph.span / 4));
@@ -847,35 +847,45 @@ impl App {
                     }
                     Some(a) => self.apply_graph_selection(a, c),
                 }
-                return;
             }
-            KeyCode::Esc => {
-                if self.focus == Focus::Graph && self.clear_graph_selection() {
-                    return;
-                }
-                if self.detail_open {
-                    self.close_detail();
-                    return;
-                }
-                if self.clear_graph_selection() {
-                    return;
-                }
-                if self.focus == Focus::Graph {
-                    self.focus = Focus::List;
-                }
-                return;
+            Action::Back => self.back(),
+            Action::Palette
+            | Action::Find
+            | Action::FindNext
+            | Action::FindPrev
+            | Action::Pin
+            | Action::Diff
+            | Action::Copy
+            | Action::Save
+            | Action::Export => {
+                self.flash(format!("{}: coming later in Phase 2", a.info().title));
             }
-            _ => {}
-        }
-
-        match self.focus {
-            Focus::Graph => self.graph_key(k),
-            Focus::List => match self.view {
-                View::Connections => self.list_key(k),
-                View::Threads => self.threads_key(k),
-                View::Rules => self.rules_key(k),
+            _ => match self.focus {
+                Focus::Graph => self.graph_action(a),
+                Focus::List => match self.view {
+                    View::Connections => self.list_action(a),
+                    View::Threads => self.threads_action(a),
+                    View::Rules => self.rules_action(a),
+                },
+                Focus::Detail => self.detail_action(a),
             },
-            Focus::Detail => self.detail_key(k),
+        }
+    }
+
+    /// Esc: one step back (a range being selected, the detail pane, a range, graph focus).
+    fn back(&mut self) {
+        if self.focus == Focus::Graph && self.clear_graph_selection() {
+            return;
+        }
+        if self.detail_open {
+            self.close_detail();
+            return;
+        }
+        if self.clear_graph_selection() {
+            return;
+        }
+        if self.focus == Focus::Graph {
+            self.focus = Focus::List;
         }
     }
 
@@ -918,33 +928,33 @@ impl App {
         self.list_height.max(2) - 1
     }
 
-    fn list_key(&mut self, k: KeyEvent) {
+    fn list_action(&mut self, a: Action) {
         let len = self.view_rows().len();
         if len == 0 {
             return;
         }
         let cur = self.list_cursor;
-        match k.code {
-            KeyCode::Up | KeyCode::Char('k') => self.select_row(cur.saturating_sub(1)),
-            KeyCode::Down | KeyCode::Char('j') => self.select_row(cur + 1),
-            KeyCode::PageUp => self.select_row(cur.saturating_sub(self.page())),
-            KeyCode::PageDown => self.select_row(cur + self.page()),
-            KeyCode::Home | KeyCode::Char('g') => self.select_row(0),
-            KeyCode::End | KeyCode::Char('G') => self.select_row(len - 1),
-            KeyCode::Enter | KeyCode::Right | KeyCode::Char('l') => {
+        match a {
+            Action::Up => self.select_row(cur.saturating_sub(1)),
+            Action::Down => self.select_row(cur + 1),
+            Action::PageUp => self.select_row(cur.saturating_sub(self.page())),
+            Action::PageDown => self.select_row(cur + self.page()),
+            Action::Top => self.select_row(0),
+            Action::Bottom => self.select_row(len - 1),
+            Action::Activate | Action::Right => {
                 let row = self.view_rows().rows()[cur].clone();
                 match row {
-                    Row::Group { members, expanded } if k.code != KeyCode::Enter || !expanded => {
+                    Row::Group { members, expanded } if a != Action::Activate || !expanded => {
                         self.rows.toggle_group(members[0]);
                         if let Some(f) = &mut self.frozen {
                             f.rows.toggle_group(members[0]);
                         }
                     }
-                    _ if k.code == KeyCode::Enter => self.open_detail(),
+                    _ if a == Action::Activate => self.open_detail(),
                     _ => {}
                 }
             }
-            KeyCode::Left | KeyCode::Char('h') => {
+            Action::Left => {
                 if let Row::Group { members, expanded: true } = self.view_rows().rows()[cur].clone() {
                     self.rows.toggle_group(members[0]);
                 }
@@ -953,18 +963,18 @@ impl App {
         }
     }
 
-    fn threads_key(&mut self, k: KeyEvent) {
+    fn threads_action(&mut self, a: Action) {
         if self.bars.is_empty() {
             return;
         }
         let n = self.bars.len();
         let cur = self.bar_cursor.min(n - 1);
-        let next = match k.code {
-            KeyCode::Down | KeyCode::Char('j') => {
+        let next = match a {
+            Action::Down => {
                 let lane = self.bars[cur].lane;
                 self.bars.iter().position(|b| b.lane > lane).unwrap_or(cur)
             }
-            KeyCode::Up | KeyCode::Char('k') => {
+            Action::Up => {
                 let lane = self.bars[cur].lane;
                 self.bars
                     .iter()
@@ -975,11 +985,11 @@ impl App {
                     })
                     .unwrap_or(cur)
             }
-            KeyCode::Right | KeyCode::Char('l') => (cur + 1).min(n - 1),
-            KeyCode::Left | KeyCode::Char('h') => cur.saturating_sub(1),
-            KeyCode::Home | KeyCode::Char('g') => 0,
-            KeyCode::End | KeyCode::Char('G') => n - 1,
-            KeyCode::Enter => {
+            Action::Right => (cur + 1).min(n - 1),
+            Action::Left => cur.saturating_sub(1),
+            Action::Top => 0,
+            Action::Bottom => n - 1,
+            Action::Activate => {
                 let txn = self.bars[cur].txn;
                 self.select_txn(txn);
                 self.open_detail();
@@ -992,47 +1002,47 @@ impl App {
         self.select_txn(txn);
     }
 
-    fn rules_key(&mut self, k: KeyEvent) {
+    fn rules_action(&mut self, a: Action) {
         let n = self.rules.as_ref().map_or(0, |r| r.rules.len());
         if n == 0 {
             return;
         }
-        match k.code {
-            KeyCode::Up | KeyCode::Char('k') => self.rules_cursor = self.rules_cursor.saturating_sub(1),
-            KeyCode::Down | KeyCode::Char('j') => self.rules_cursor = (self.rules_cursor + 1).min(n - 1),
-            KeyCode::Home | KeyCode::Char('g') => self.rules_cursor = 0,
-            KeyCode::End | KeyCode::Char('G') => self.rules_cursor = n - 1,
+        match a {
+            Action::Up => self.rules_cursor = self.rules_cursor.saturating_sub(1),
+            Action::Down => self.rules_cursor = (self.rules_cursor + 1).min(n - 1),
+            Action::Top => self.rules_cursor = 0,
+            Action::Bottom => self.rules_cursor = n - 1,
             _ => {}
         }
     }
 
-    fn graph_key(&mut self, k: KeyEvent) {
-        match k.code {
-            KeyCode::Left | KeyCode::Char('h') => self.pan(-0.05),
-            KeyCode::Right | KeyCode::Char('l') => self.pan(0.05),
-            KeyCode::PageUp => self.pan(-0.5),
-            KeyCode::PageDown => self.pan(0.5),
-            KeyCode::Enter => {
+    fn graph_action(&mut self, a: Action) {
+        match a {
+            Action::Left => self.pan(-0.05),
+            Action::Right => self.pan(0.05),
+            Action::PageUp => self.pan(-0.5),
+            Action::PageDown => self.pan(0.5),
+            Action::Activate => {
                 if let (Some(a), Some(c)) = (self.graph.anchor.take(), self.graph.cursor) {
                     self.apply_graph_selection(a, c);
                 }
             }
-            KeyCode::Down | KeyCode::Char('j') => self.focus = Focus::List,
+            Action::Down => self.focus = Focus::List,
             _ => {}
         }
     }
 
-    fn detail_key(&mut self, k: KeyEvent) {
+    fn detail_action(&mut self, a: Action) {
         let Some(txn) = self.selected else { return };
-        match k.code {
-            KeyCode::Left | KeyCode::Char('h') => return self.set_tab(Tab::ALL[(self.detail.tab.index() + 3) % 4]),
-            KeyCode::Right | KeyCode::Char('l') => return self.set_tab(Tab::ALL[(self.detail.tab.index() + 1) % 4]),
-            KeyCode::Char('p') => {
+        match a {
+            Action::Left => return self.set_tab(Tab::ALL[(self.detail.tab.index() + 3) % 4]),
+            Action::Right => return self.set_tab(Tab::ALL[(self.detail.tab.index() + 1) % 4]),
+            Action::Parsed => {
                 self.detail.parsed = !self.detail.parsed;
                 self.flash(if self.detail.parsed { "parsed view" } else { "source view" });
                 return;
             }
-            KeyCode::Char('o') => {
+            Action::Original => {
                 let t = self.view_store().txn(txn);
                 if t.rule_modified() {
                     self.detail.original = !self.detail.original;
@@ -1046,7 +1056,7 @@ impl App {
                 }
                 return;
             }
-            KeyCode::Char('|') => {
+            Action::Jq => {
                 if matches!(self.detail.tab, Tab::Response | Tab::Request) {
                     self.overlay = Overlay::Jq;
                 } else {
@@ -1054,11 +1064,11 @@ impl App {
                 }
                 return;
             }
-            KeyCode::Char('<') => {
+            Action::ScrollLeft => {
                 self.detail.hscroll = self.detail.hscroll.saturating_sub(20);
                 return;
             }
-            KeyCode::Char('>') => {
+            Action::ScrollRight => {
                 self.detail.hscroll = self.detail.hscroll.saturating_add(20);
                 return;
             }
@@ -1068,22 +1078,22 @@ impl App {
         let len = doc.len();
         let cur = self.detail.cursor.min(len.saturating_sub(1));
         let page = self.detail_height.max(2) - 1;
-        match k.code {
-            KeyCode::Up | KeyCode::Char('k') => self.detail.cursor = cur.saturating_sub(1),
-            KeyCode::Down | KeyCode::Char('j') => self.detail.cursor = (cur + 1).min(len.saturating_sub(1)),
-            KeyCode::PageUp => self.detail.cursor = cur.saturating_sub(page),
-            KeyCode::PageDown => self.detail.cursor = (cur + page).min(len.saturating_sub(1)),
-            KeyCode::Home | KeyCode::Char('g') => self.detail.cursor = 0,
-            KeyCode::End | KeyCode::Char('G') => self.detail.cursor = len.saturating_sub(1),
-            KeyCode::Char('[') | KeyCode::Char(']') => {
+        match a {
+            Action::Up => self.detail.cursor = cur.saturating_sub(1),
+            Action::Down => self.detail.cursor = (cur + 1).min(len.saturating_sub(1)),
+            Action::PageUp => self.detail.cursor = cur.saturating_sub(page),
+            Action::PageDown => self.detail.cursor = (cur + page).min(len.saturating_sub(1)),
+            Action::Top => self.detail.cursor = 0,
+            Action::Bottom => self.detail.cursor = len.saturating_sub(1),
+            Action::FoldAll | Action::UnfoldAll => {
                 if let Some(dir) = doc.body_dir {
-                    let fold = k.code == KeyCode::Char('[');
+                    let fold = a == Action::FoldAll;
                     if let Some(v) = self.body_view(txn, dir) {
                         if fold { v.fold_all() } else { v.unfold_all() }
                     }
                 }
             }
-            KeyCode::Enter => match doc.row(cur) {
+            Action::Activate => match doc.row(cur) {
                 Some(DocRow::Body(i)) => {
                     if let Some(dir) = doc.body_dir
                         && self.detail.parsed

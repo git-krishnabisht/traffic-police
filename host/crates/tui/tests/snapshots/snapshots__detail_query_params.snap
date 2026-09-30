@@ -2,43 +2,43 @@
 source: crates/tui/tests/snapshots.rs
 expression: "detail(40.0, MEDIUM, |t| t.url.query.is_some(), \"ll\")"
 ---
- traffic-police  Pixel 8 [demo]  com.example.deepid_example  pid 4312  ● LIVE  ✎ 1 rule active                         images: half-blocks
- NETWORK  all app traffic · T switches                                                            ━ Receiving 2.3 KB/s   ━ Sending 1.7 KB/s
- 1.0 MB/s                            ┊
-                      ┏━━┓ ┏━━┓  ┏━━┓┊┏━━┓┏━━┓
-                     ┏┛  ┗━┛  ┗━━┛  ┗━┛  ┗┛  ┗━┓
-                     ┃               ┊         ┗┓
- 512 KB/s            ┃               ┊          ┗┓
-                     ┃               ┊           ┃
-                    ┏┛               ┊           ┗━━━━━━━┓
-        0 ━━━━━━━━━━┛━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-          00:10.000            00:15.000             00:20.000            00:25.000             00:30.000            00:35.000
-────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
- Connection View   Thread View   Rules                               60 rows │  Overview   Response   Request   Call Stack               ✕
-Name                      Size Type      Status         Time Timeline        │ GET /v1/lookup?fields=country,region,carrier HTTP/1.1
-token                    391 B json      200          513 ms                ▐│
-init                     316 B json      200          2.01 s                ▐│ Query parameters (1)
-monitor                  302 B json      200          1.58 s                ▐│ fields = country,region,carrier
-events                    17 B json      200          1.45 s                ▐│
-u_4821.png              4.5 KB png       200          476 ms                ▐│ Headers (4)
-monitor                  302 B json      200          1.53 s                ▐│ User-Agent: Dalvik/2.1.0 (Linux; U; Android 16; Pixel 8 Buil
-challenge                144 B json      200          386 ms                ▐│ Host: geo.example.app
-config                     0 B           302           61 ms                ▐│ Connection: Keep-Alive
-↪ config.json            106 B json      200          195 ms                ▐│ Accept-Encoding: gzip
-attest                   180 B json      200          2.75 s                ▐│
-metrics                    6 B protobuf  200          224 ms                 │ No body
-monitor                  302 B json      200          1.41 s                 │
-events                    17 B json      200          1.14 s                 │
-liveness-model-v3.j…     150 B json      404          346 ms                 │
-enroll                    72 B json      200          2.08 s                 │
-documents                 93 B json      200          515 ms                 │
-monitor                  302 B json      200          1.50 s                 │
-report                   305 B html      500          219 ms                 │
-lookup?fields=count…     101 B json      200          507 ms                 │
-monitor                  302 B json      200          1.49 s ▌               │
-status?sessionId=se…     263 B json      200          326 ms                 │
-threshold                                failed       10.0 s █████           │
-events                    17 B json      200          970 ms ▌               │
-status?sessionId=se…     263 B json      200          174 ms ▏               │
-fonts.json                               canceled     380 ms ▏               │
- 60 requests  5.0 MB in  42 KB out  2 failed  12 dropped  ⚠ studio inspector present                                                ? help
+ traffic-police  Pixel 8 [demo]  com.example.deepid_example  pid 4312  ● LIVE  ✎ 1 rule active          60 requests · 5.0 MB in · 42 KB out
+╭─ Network · all app traffic ────────────────────────────────────────────────────────────────── ━ Receiving 2.2 KB/s   ━ Sending 1.5 KB/s ─╮
+│ 1.0 MB/s                             ┊                                                                                                   │
+│                       ┏━━┓┏━━┓   ┏━┓ ┏━━┓┏━━┓                                                                                            │
+│                      ┏┛  ┗┛  ┗━━━┛ ┗━┛  ┗┛  ┗━┓                                                                                          │
+│                     ┏┛               ┊        ┗┓                                                                                         │
+│ 512 KB/s            ┃                ┊         ┗┓                                                                                        │
+│                     ┃                ┊          ┃                                                                                        │
+│                     ┃                ┊          ┃   ┏━┓                                                                                  │
+│                     ┃                ┊          ┗━━━┛ ┗━┓                                                                                │
+│        0 ━━━━━━━━━━━┛━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ │
+│          00:10.000            00:15.000             00:20.000            00:25.000            00:30.000            00:35.000             │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Requests 60 ─ Connection ─ Thread ─ Rules ───────────────────────────────╮╭─ lookup?fields=country,regio… ─ Overview ─ Response ──── ✕ ─╮
+│ Name                    Size Type      Status         Time Timeline       ││ GET /v1/lookup?fields=country,region,carrier HTTP/1.1       │
+│ token                  391 B json      200          513 ms               ▐││                                                             │
+│ init                   316 B json      200          2.01 s               ▐││ Query parameters (1)                                        │
+│ monitor                302 B json      200          1.58 s               ▐││ fields = country,region,carrier                             │
+│ events                  17 B json      200          1.45 s               ▐││                                                             │
+│ u_4821.png            4.5 KB png       200          476 ms               ▐││ Headers (4)                                                 │
+│ monitor                302 B json      200          1.53 s               ▐││ User-Agent: Dalvik/2.1.0 (Linux; U; Android 16; Pixel 8 Buil│
+│ challenge              144 B json      200          386 ms               ▐││ Host: geo.example.app                                       │
+│ config                   0 B           302           61 ms               ▐││ Connection: Keep-Alive                                      │
+│ ↪ config.json          106 B json      200          195 ms                ││ Accept-Encoding: gzip                                       │
+│ attest                 180 B json      200          2.75 s                ││                                                             │
+│ metrics                  6 B protobuf  200          224 ms                ││ No body                                                     │
+│ monitor                302 B json      200          1.41 s                ││                                                             │
+│ events                  17 B json      200          1.14 s                ││                                                             │
+│ liveness-model-v3…     150 B json      404          346 ms                ││                                                             │
+│ enroll                  72 B json      200          2.08 s                ││                                                             │
+│ documents               93 B json      200          515 ms                ││                                                             │
+│ monitor                302 B json      200          1.50 s                ││                                                             │
+│ report                 305 B html      500          219 ms                ││                                                             │
+│ lookup?fields=cou…     101 B json      200          507 ms                ││                                                             │
+│ monitor                302 B json      200          1.49 s ▌              ││                                                             │
+│ status?sessionId=…     263 B json      200          326 ms                ││                                                             │
+│ threshold                              failed       10.0 s ████▊          ││                                                             │
+│ events                  17 B json      200          970 ms ▏              ││                                                             │
+╰───────────────────────────────────────────────────────────────────────────╯╰─────────────────────────────────────────────────────────────╯
+ ←→ tabs   ↑↓ move   Enter fold   p parsed/source   | jq   Esc close   ? help                                    ⚠ studio inspector present

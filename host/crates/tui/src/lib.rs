@@ -1,5 +1,6 @@
 //! The terminal UI: application state, input handling and drawing (ARCHITECTURE.md §5.8).
 
+pub mod actions;
 pub mod app;
 pub mod bodycache;
 pub mod bodyview;

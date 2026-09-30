@@ -16,6 +16,7 @@ use traffic_police_core::rows::{Column, Row};
 use traffic_police_core::store::SessionStore;
 use unicode_width::UnicodeWidthStr;
 
+use crate::actions::Action;
 use crate::app::{App, Bar, Focus, Overlay, Tab, Target, View};
 use crate::detail::{self, draw_line};
 use crate::graph::{self, GraphStyle};
@@ -35,33 +36,63 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         too_small(app, area, f.buffer_mut());
         return;
     }
+    // header · Network box · Requests (and Detail) boxes · key hints
     let graph_h = (area.height / 4).clamp(8, 14);
     let header = Rect { height: 1, ..area };
-    let graph = Rect { y: area.y + 1, height: graph_h, ..area };
-    let status = Rect { y: area.y + area.height - 1, height: 1, ..area };
-    let main = Rect { y: graph.y + graph_h + 1, height: area.height.saturating_sub(graph_h + 3), ..area };
+    let network = Rect { y: area.y + 1, height: graph_h + 2, ..area };
+    let footer = Rect { y: area.y + area.height - 1, height: 1, ..area };
+    let main = Rect { y: network.y + network.height, height: area.height.saturating_sub(network.height + 2), ..area };
     let buf = f.buffer_mut();
     draw_header(app, header, buf);
-    draw_graph(app, graph, buf);
-    // separator between graph and views
-    hline(buf, Rect { y: graph.y + graph_h, height: 1, ..area }, app.theme.faint());
+    draw_graph(app, network, buf);
     draw_main(app, main, buf);
-    draw_status(app, status, buf);
+    draw_footer(app, footer, buf);
     match app.overlay {
         Overlay::Help => draw_help(app, area, buf),
         Overlay::Columns { cursor } => draw_columns_menu(app, area, buf, cursor),
         Overlay::ConfirmClear => draw_confirm(app, area, buf),
-        Overlay::Jq => draw_jq(f, app, main),
+        Overlay::Jq => draw_jq(f, app, footer),
         Overlay::None => {}
     }
 }
 
-fn hline(buf: &mut Buffer, r: Rect, style: Style) {
-    for x in r.x..r.x + r.width {
-        if let Some(c) = buf.cell_mut((x, r.y)) {
-            c.set_symbol("─").set_style(style);
+/// A rounded box, its border highlighted when the panel has focus. Returns the inside.
+fn panel(buf: &mut Buffer, r: Rect, focused: bool, t: &Theme) -> Rect {
+    let style = if focused { t.accent() } else { t.faint() };
+    ratatui::widgets::Block::bordered()
+        .border_type(ratatui::widgets::BorderType::Rounded)
+        .border_style(style)
+        .render(r, buf);
+    Rect { x: r.x + 1, y: r.y + 1, width: r.width.saturating_sub(2), height: r.height.saturating_sub(2) }
+}
+
+/// Labels on a panel's border: left-aligned after the corner (`╭─ label ─`), or right-aligned
+/// before the other corner. Each label gets a space on both sides; labels that do not fit are
+/// dropped. Returns where each label went, for mouse targets.
+fn border_labels(buf: &mut Buffer, r: Rect, y: u16, right: bool, labels: Vec<Vec<Span<'_>>>) -> Vec<Rect> {
+    let widths: Vec<u16> = labels.iter().map(|l| l.iter().map(|s| s.content.width() as u16).sum::<u16>() + 2).collect();
+    let room = r.width.saturating_sub(4);
+    let mut used = 0u16;
+    let mut n = 0;
+    for w in &widths {
+        if used + w + u16::from(n > 0) > room {
+            break;
         }
+        used += w + u16::from(n > 0);
+        n += 1;
     }
+    let mut x = if right { r.x + r.width - 2 - used } else { r.x + 2 };
+    let mut out = Vec::with_capacity(n);
+    for (i, spans) in labels.into_iter().take(n).enumerate() {
+        let w = widths[i];
+        let mut padded = vec![Span::raw(" ")];
+        padded.extend(spans);
+        padded.push(Span::raw(" "));
+        text(buf, x, y, w, padded);
+        out.push(Rect { x, y, width: w, height: 1 });
+        x += w + 1;
+    }
+    out
 }
 
 fn fill(buf: &mut Buffer, r: Rect, style: Style) {
@@ -143,10 +174,24 @@ fn draw_header(app: &App, r: Rect, buf: &mut Buffer) {
     }
     let used: usize = spans.iter().map(|s| s.content.width()).sum();
     text(buf, r.x, r.y, r.width, spans);
-    let label = format!("images: {} ", app.images.label);
-    if used + label.width() + 2 <= r.width as usize {
-        right_text(buf, r, r.y, vec![Span::styled(label, t.faint())]);
+    // totals, as far as they fit
+    let st = store.stats();
+    let mut totals = vec![
+        Span::styled(format!("{} requests", store.len()), t.text()),
+        Span::styled(format!(" · {} in", fmt::bytes(st.bytes_in)), t.dim()),
+        Span::styled(format!(" · {} out", fmt::bytes(st.bytes_out)), t.dim()),
+    ];
+    if st.failed > 0 {
+        totals.push(Span::styled(format!(" · {} failed", st.failed), t.error()));
     }
+    if st.dropped_events > 0 {
+        totals.push(Span::styled(format!(" · {} dropped", st.dropped_events), t.warn()));
+    }
+    let width_of = |v: &[Span]| v.iter().map(|s| s.content.width()).sum::<usize>();
+    while !totals.is_empty() && used + width_of(&totals) + 3 > r.width as usize {
+        totals.pop();
+    }
+    right_text(buf, r, r.y, totals);
 }
 
 // --- graph -------------------------------------------------------------------------------------
@@ -212,15 +257,13 @@ fn draw_axis(app: &App, r: Rect, left: Ts, right: Ts, buf: &mut Buffer) {
     }
 }
 
-fn draw_graph(app: &mut App, r: Rect, buf: &mut Buffer) {
+fn draw_graph(app: &mut App, panel_r: Rect, buf: &mut Buffer) {
     let t = app.theme.clone();
+    let focused = app.focus == Focus::Graph;
+    let r = panel(buf, panel_r, focused, &t);
     let (left, right) = app.window();
-    let plot = Rect {
-        x: r.x + GUTTER,
-        y: r.y + 1,
-        width: r.width.saturating_sub(GUTTER + 1),
-        height: r.height.saturating_sub(2),
-    };
+    let plot =
+        Rect { x: r.x + GUTTER, y: r.y, width: r.width.saturating_sub(GUTTER + 1), height: r.height.saturating_sub(1) };
     // braille resolves two samples per cell; the other styles one per column
     let per_cell = if app.graph_style == GraphStyle::Braille { 2 } else { 1 };
     let n = (plot.width as usize * per_cell).max(2);
@@ -233,27 +276,26 @@ fn draw_graph(app: &mut App, r: Rect, buf: &mut Buffer) {
     let b = app.view_store().traffic().buckets(app.graph_source, left, right, n);
     let max = b.rx.iter().chain(b.tx.iter()).copied().fold(0.0f64, f64::max);
     let ymax = fmt::nice_rate_ceil(max.max(1024.0));
-    // title row
-    let focused = app.focus == Focus::Graph;
-    let title_style = if focused { t.accent().add_modifier(Modifier::BOLD) } else { t.title() };
+    // border: title and source on the left, the legend on the right, notes at the bottom
+    let title_style =
+        if focused { t.accent().add_modifier(Modifier::BOLD) } else { t.title().add_modifier(Modifier::BOLD) };
     let src = if b.source == app.graph_source {
         app.graph_source.label().to_string()
     } else {
         format!("{} (whole-app data not available)", b.source.label())
     };
-    let mut spans =
-        vec![Span::styled(" NETWORK ", title_style), Span::styled(format!(" {src} · T switches"), t.faint())];
+    let mut notes: Vec<Vec<Span>> = Vec::new();
     if !app.is_live() {
-        spans.push(Span::styled("  ⏸ not following live · L", t.warn()));
+        notes.push(vec![Span::styled("⏸ not following live · L", t.warn())]);
     }
     if let Some(c) = app.graph.cursor.filter(|_| focused) {
-        spans.push(Span::styled(format!("  cursor {}", time_label(app, c)), t.accent()));
+        notes.push(vec![Span::styled(format!("cursor {}", time_label(app, c)), t.accent())]);
     }
     if let Some((a, z)) = app.graph.selection {
-        spans.push(Span::styled(
-            format!("  range {}–{} · Esc clears", time_label(app, a), time_label(app, z)),
+        notes.push(vec![Span::styled(
+            format!("range {}–{} · Esc clears", time_label(app, a), time_label(app, z)),
             t.accent(),
-        ));
+        )]);
     }
     let last = |v: &[f64]| {
         let k = (v.len() / 20).max(1);
@@ -261,21 +303,20 @@ fn draw_graph(app: &mut App, r: Rect, buf: &mut Buffer) {
     };
     let (rx_now, tx_now) = if app.is_live() { (last(&b.rx), last(&b.tx)) } else { (0.0, 0.0) };
     let legend = vec![
-        Span::styled("━ ", Style::default().fg(t.recv())),
+        Span::styled("━ ", Style::default().fg(t.recv()).add_modifier(Modifier::BOLD)),
         Span::styled(format!("Receiving {}", if app.is_live() { fmt::rate(rx_now) } else { "—".into() }), t.text()),
         Span::raw("   "),
-        Span::styled("━ ", Style::default().fg(t.send())),
+        Span::styled("━ ", Style::default().fg(t.send()).add_modifier(Modifier::BOLD)),
         Span::styled(format!("Sending {}", if app.is_live() { fmt::rate(tx_now) } else { "—".into() }), t.text()),
     ];
-    // the title yields to the legend (it keeps at least its first word)
-    let legend_w: u16 = legend.iter().map(|s| s.content.width() as u16).sum();
-    let title_w = r.width.saturating_sub(legend_w + 3);
-    if title_w >= 9 {
-        text(buf, r.x, r.y, title_w, spans);
-        right_text(buf, r, r.y, legend);
-    } else {
-        text(buf, r.x, r.y, r.width, spans);
+    // the legend first; the title keeps the rest of the top border
+    let legend_at = border_labels(buf, panel_r, panel_r.y, true, vec![legend]);
+    let title_room = legend_at.first().map_or(panel_r, |l| Rect { width: l.x.saturating_sub(panel_r.x), ..panel_r });
+    let title = vec![Span::styled("Network", title_style), Span::styled(format!(" · {src}"), t.dim())];
+    if border_labels(buf, title_room, panel_r.y, false, vec![title]).is_empty() {
+        border_labels(buf, title_room, panel_r.y, false, vec![vec![Span::styled("Network", title_style)]]);
     }
+    border_labels(buf, panel_r, panel_r.y + panel_r.height - 1, false, notes);
     // selection / in-progress range shading
     let x_of = |ts: Ts| -> u16 {
         let span = right.saturating_sub(left).max(1);
@@ -378,7 +419,13 @@ fn draw_graph(app: &mut App, r: Rect, buf: &mut Buffer) {
     ] {
         text(buf, x, y, w, vec![Span::styled(s, t.faint())]);
     }
-    draw_axis(app, Rect { x: plot.x, y: r.y + r.height - 1, width: plot.width, height: 1 }, left, right, buf);
+    draw_axis(
+        app,
+        Rect { x: plot.x, y: r.y + r.height.saturating_sub(1), width: plot.width, height: 1 },
+        left,
+        right,
+        buf,
+    );
     app.hits.add(plot, Target::Graph);
 }
 
@@ -461,16 +508,14 @@ fn draw_main(app: &mut App, r: Rect, buf: &mut Buffer) {
         if side_by_side {
             let lw = (u32::from(r.width) * u32::from(app.split_pct) / 100) as u16;
             let left = Rect { width: lw, ..r };
-            let div = Rect { x: r.x + lw, width: 1, ..r };
-            let right = Rect { x: r.x + lw + 1, width: r.width.saturating_sub(lw + 1), ..r };
+            let right = Rect { x: r.x + lw, width: r.width.saturating_sub(lw), ..r };
             draw_views(app, left, buf);
-            for y in div.y..div.y + div.height {
-                if let Some(c) = buf.cell_mut((div.x, y)) {
-                    c.set_symbol("│").set_style(app.theme.faint());
-                }
-            }
-            app.hits.add(div, Target::Divider);
             draw_detail_pane(app, right, buf);
+            // the two borders where the boxes meet: drag them to resize
+            app.hits.add(
+                Rect { x: r.x + lw.saturating_sub(1), width: 2, y: r.y + 1, height: r.height.saturating_sub(2) },
+                Target::Divider,
+            );
         } else {
             draw_detail_pane(app, r, buf);
         }
@@ -479,32 +524,64 @@ fn draw_main(app: &mut App, r: Rect, buf: &mut Buffer) {
     }
 }
 
+/// The views' box: the view tabs and counts on its border, the view inside.
 fn draw_views(app: &mut App, r: Rect, buf: &mut Buffer) {
     let t = app.theme.clone();
     let focused = app.focus == Focus::List;
-    let mut x = r.x;
-    for (v, name) in [(View::Connections, "Connection View"), (View::Threads, "Thread View"), (View::Rules, "Rules")] {
-        let active = app.view == v;
-        let style = if active {
+    let inner = panel(buf, r, focused, &t);
+    let (count, sort, collapse) = {
+        let rows = app.view_rows();
+        (rows.len(), rows.sort, rows.collapse)
+    };
+    let title_style =
+        if focused { t.accent().add_modifier(Modifier::BOLD) } else { t.title().add_modifier(Modifier::BOLD) };
+    let mut labels = vec![vec![Span::styled("Requests", title_style), Span::styled(format!(" {count}"), t.dim())]];
+    let views = [(View::Connections, "Connection"), (View::Threads, "Thread"), (View::Rules, "Rules")];
+    for (v, name) in views {
+        let style = if app.view == v {
             if focused {
                 t.accent().add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
             } else {
-                t.title().add_modifier(Modifier::UNDERLINED)
+                t.text().add_modifier(Modifier::UNDERLINED)
             }
         } else {
             t.dim()
         };
-        let label = format!(" {name} ");
-        let w = label.width() as u16;
-        text(buf, x, r.y, w, vec![Span::styled(label, style)]);
-        app.hits.add(Rect { x, y: r.y, width: w, height: 1 }, Target::ViewTab(v));
-        x += w + 1;
+        labels.push(vec![Span::styled(name, style)]);
     }
-    let body = Rect { y: r.y + 1, height: r.height.saturating_sub(1), ..r };
+    let at = border_labels(buf, r, r.y, false, labels);
+    for (rect, (v, _)) in at.iter().skip(1).zip(views) {
+        app.hits.add(*rect, Target::ViewTab(v));
+    }
+    if app.view == View::Connections {
+        let mut info = Vec::new();
+        if sort != Default::default() {
+            let what = sort.column.title().to_lowercase();
+            info.push(Span::styled(format!("by {what}{}", if sort.descending { " ↓" } else { " ↑" }), t.dim()));
+        }
+        if collapse {
+            info.push(Span::styled(
+                if info.is_empty() { "repeats collapsed" } else { " · repeats collapsed" },
+                t.dim(),
+            ));
+        }
+        let used = at.last().map_or(r.x, |l| l.x + l.width);
+        if !info.is_empty() {
+            border_labels(
+                buf,
+                Rect { x: used, width: (r.x + r.width).saturating_sub(used), ..r },
+                r.y,
+                true,
+                vec![info],
+            );
+        }
+    }
+    // a column of air between the border and the text
+    let inner = Rect { x: inner.x + 1, width: inner.width.saturating_sub(1), ..inner };
     match app.view {
-        View::Connections => draw_connections(app, body, buf, Rect { y: r.y, height: 1, ..r }),
-        View::Threads => draw_threads(app, body, buf),
-        View::Rules => draw_rules(app, body, buf),
+        View::Connections => draw_connections(app, inner, buf),
+        View::Threads => draw_threads(app, inner, buf),
+        View::Rules => draw_rules(app, inner, buf),
     }
 }
 
@@ -610,22 +687,11 @@ fn list_layout(columns: &[Column], r: Rect) -> Vec<(Column, u16, u16)> {
     out
 }
 
-fn draw_connections(app: &mut App, r: Rect, buf: &mut Buffer, tabs_row: Rect) {
+fn draw_connections(app: &mut App, r: Rect, buf: &mut Buffer) {
     let t = app.theme.clone();
     let now = app.now();
     let (left, right) = app.list_window();
     let rows_len = app.view_rows().len();
-    // info on the tabs row
-    let rows = app.view_rows();
-    let mut info = vec![Span::styled(format!("{rows_len} rows"), t.dim())];
-    if rows.sort != Default::default() {
-        let what = rows.sort.column.title().to_lowercase();
-        info.push(Span::styled(format!(" · by {what}{}", if rows.sort.descending { " ↓" } else { " ↑" }), t.dim()));
-    }
-    if rows.collapse {
-        info.push(Span::styled(" · repeats collapsed", t.dim()));
-    }
-    right_text(buf, tabs_row, tabs_row.y, info);
 
     let layout = list_layout(&app.columns, r);
     // header
@@ -1041,75 +1107,129 @@ fn draw_rules(app: &mut App, r: Rect, buf: &mut Buffer) {
 fn draw_detail_pane(app: &mut App, r: Rect, buf: &mut Buffer) {
     let t = app.theme.clone();
     let focused = app.focus == Focus::Detail;
-    let mut x = r.x + 1;
+    let inner = panel(buf, r, focused, &t);
+    let close = border_labels(buf, r, r.y, true, vec![vec![Span::styled("✕", t.dim())]]);
+    if let Some(c) = close.first() {
+        app.hits.add(*c, Target::DetailClose);
+    }
+    let room = close.first().map_or(r, |c| Rect { width: c.x.saturating_sub(r.x), ..r });
+    let name = app.selected.map(|i| app.view_store().txn(i).url.name()).unwrap_or_default();
+    let title_style =
+        if focused { t.accent().add_modifier(Modifier::BOLD) } else { t.title().add_modifier(Modifier::BOLD) };
+    let mut labels = vec![vec![Span::styled(truncate(&name, 28), title_style)]];
     for tab in Tab::ALL {
-        let active = app.detail.tab == tab;
-        let label = format!(" {} ", tab.title());
-        let style = if active {
+        let style = if app.detail.tab == tab {
             if focused {
                 t.accent().add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
             } else {
-                t.title().add_modifier(Modifier::UNDERLINED)
+                t.text().add_modifier(Modifier::UNDERLINED)
             }
         } else {
             t.dim()
         };
-        let w = label.width() as u16;
-        text(buf, x, r.y, w, vec![Span::styled(label, style)]);
-        app.hits.add(Rect { x, y: r.y, width: w, height: 1 }, Target::DetailTab(tab));
-        x += w + 1;
+        labels.push(vec![Span::styled(tab.title(), style)]);
     }
-    let close = Rect { x: r.x + r.width.saturating_sub(4), y: r.y, width: 3, height: 1 };
-    text(buf, close.x, close.y, 3, vec![Span::styled(" ✕ ", t.dim())]);
-    app.hits.add(close, Target::DetailClose);
-    let content = Rect { x: r.x + 1, y: r.y + 1, width: r.width.saturating_sub(2), height: r.height.saturating_sub(1) };
+    let at = border_labels(buf, room, r.y, false, labels);
+    for (rect, tab) in at.iter().skip(1).zip(Tab::ALL) {
+        app.hits.add(*rect, Target::DetailTab(tab));
+    }
+    let content = Rect { x: inner.x + 1, width: inner.width.saturating_sub(1), ..inner };
     detail::draw(app, content, buf);
 }
 
 // --- status bar and overlays ---------------------------------------------------------------------
 
-fn draw_status(app: &App, r: Rect, buf: &mut Buffer) {
+/// What the footer suggests for the focused panel: `(actions, label)`; the keys come from the
+/// keymap, so remapped keys show as they are.
+fn hints(app: &App) -> Vec<(&'static [Action], &'static str)> {
+    use Action as A;
+    let pause: &'static str = if app.recording { "pause" } else { "resume" };
+    match (app.overlay, app.focus, app.view) {
+        (Overlay::Columns { .. }, _, _) => {
+            vec![(&[A::Up, A::Down], "move"), (&[A::Activate], "toggle"), (&[A::Back], "close")]
+        }
+        (Overlay::ConfirmClear, ..) => vec![],
+        (_, Focus::Graph, _) => vec![
+            (&[A::Left, A::Right], "move"),
+            (&[A::ZoomIn, A::ZoomOut], "zoom"),
+            (&[A::SelectRange], "range"),
+            (&[A::GraphSource], "source"),
+            (&[A::Live], "live"),
+            (&[A::Back], "back"),
+            (&[A::Help], "help"),
+        ],
+        (_, Focus::Detail, _) => vec![
+            (&[A::Left, A::Right], "tabs"),
+            (&[A::Up, A::Down], "move"),
+            (&[A::Activate], "fold"),
+            (&[A::Parsed], "parsed/source"),
+            (&[A::Jq], "jq"),
+            (&[A::Back], "close"),
+            (&[A::Help], "help"),
+        ],
+        (_, Focus::List, View::Threads) => vec![
+            (&[A::Up, A::Down], "threads"),
+            (&[A::Left, A::Right], "requests"),
+            (&[A::Activate], "open"),
+            (&[A::Pause], pause),
+            (&[A::FocusNext], "next panel"),
+            (&[A::Help], "help"),
+        ],
+        (_, Focus::List, View::Rules) => {
+            vec![(&[A::Up, A::Down], "select"), (&[A::FocusNext], "next panel"), (&[A::Help], "help")]
+        }
+        (_, Focus::List, View::Connections) => vec![
+            (&[A::Activate], "open"),
+            (&[A::Pause], pause),
+            (&[A::Collapse], "collapse"),
+            (&[A::Sort], "sort"),
+            (&[A::FocusNext], "next panel"),
+            (&[A::Quit], "quit"),
+            (&[A::Help], "help"),
+        ],
+    }
+}
+
+fn draw_footer(app: &App, r: Rect, buf: &mut Buffer) {
     let t = &app.theme;
-    let s = app.view_store().stats();
-    let store = app.view_store();
-    let mut left = vec![
-        Span::styled(format!(" {} requests", store.len()), t.text()),
-        Span::styled(format!("  {} in", fmt::bytes(s.bytes_in)), t.dim()),
-        Span::styled(format!("  {} out", fmt::bytes(s.bytes_out)), t.dim()),
-        Span::styled(format!("  {} failed", s.failed), if s.failed > 0 { t.error() } else { t.dim() }),
-        Span::styled(format!("  {} dropped", s.dropped_events), if s.dropped_events > 0 { t.warn() } else { t.dim() }),
-    ];
-    // optional notes, most important first; they give way to a message
-    let mut notes = Vec::new();
-    if let Some(n) = app.frozen_events() {
-        notes.push(Span::styled(format!("  ❄ frozen · {n} new events waiting · F"), t.accent()));
-    }
-    if let Some(d) = store.diagnostics().iter().rev().find(|d| d.level == "warn" || d.level == "error") {
-        notes.push(Span::styled(format!("  ⚠ {}", d.code.replace('_', " ")), t.warn()));
-    }
-    let help = "? help ";
-    let width_of = |v: &[Span]| v.iter().map(|s| s.content.width()).sum::<usize>();
-    let mut avail = (r.width as usize).saturating_sub(width_of(&left) + help.width() + 3);
-    let mut right = Vec::new();
-    if let Some(m) = app.current_message()
-        && avail > 8
-    {
-        let m = truncate(m, avail - 3);
-        avail -= m.width() + 3;
-        right.push(Span::styled(format!("{m}   "), t.accent()));
-    }
-    for n in notes {
-        let w = n.content.width();
-        if w <= avail {
-            avail -= w;
-            left.push(n);
+    // right: a message, else notes, and the frame rate when asked for
+    let mut right: Vec<Span> = Vec::new();
+    if let Some(m) = app.current_message() {
+        right.push(Span::styled(truncate(m, (r.width / 2) as usize), t.accent()));
+    } else {
+        if let Some(n) = app.frozen_events() {
+            right.push(Span::styled(format!("❄ frozen · {n} new events waiting · F"), t.accent()));
+        }
+        if let Some(d) = app.view_store().diagnostics().iter().rev().find(|d| d.level == "warn" || d.level == "error") {
+            if !right.is_empty() {
+                right.push(Span::raw("  "));
+            }
+            right.push(Span::styled(format!("⚠ {}", d.code.replace('_', " ")), t.warn()));
         }
     }
     if app.frames.visible {
         let (fps, took) = app.frames.summary();
-        right.insert(0, Span::styled(format!("{fps} fps · {:.1} ms  ", took.as_secs_f64() * 1e3), t.faint()));
+        if !right.is_empty() {
+            right.push(Span::raw("  "));
+        }
+        right.push(Span::styled(format!("{fps} fps · {:.1} ms", took.as_secs_f64() * 1e3), t.faint()));
     }
-    right.push(Span::styled(help, t.dim()));
+    let right_w: usize = right.iter().map(|s| s.content.width()).sum();
+    // left: the hints that fit; the last one (help) stays longest
+    let mut items: Vec<(String, &str)> = hints(app)
+        .into_iter()
+        .map(|(actions, label)| (actions.iter().map(|&a| app.keymap.key_label(a)).collect::<String>(), label))
+        .filter(|(keys, _)| !keys.is_empty())
+        .collect();
+    let width_of = |items: &[(String, &str)]| items.iter().map(|(k, l)| k.width() + l.width() + 4).sum::<usize>();
+    while items.len() > 1 && 1 + width_of(&items) + right_w + 2 > r.width as usize {
+        items.remove(items.len() - 2);
+    }
+    let mut left: Vec<Span> = vec![Span::raw(" ")];
+    for (keys, label) in items {
+        left.push(Span::styled(keys, t.accent().add_modifier(Modifier::BOLD)));
+        left.push(Span::styled(format!(" {label}   "), t.dim()));
+    }
     text(buf, r.x, r.y, r.width, left);
     right_text(buf, r, r.y, right);
 }
@@ -1122,33 +1242,68 @@ fn centered(area: Rect, w: u16, h: u16) -> Rect {
 
 fn draw_box(buf: &mut Buffer, r: Rect, title: &str, theme: &Theme) {
     fill(buf, r, Style::default().bg(theme.selected_bg().map(|_| Color::Reset).unwrap_or(Color::Reset)));
-    ratatui::widgets::Block::bordered().title(format!(" {title} ")).border_style(theme.accent()).render(r, buf);
+    ratatui::widgets::Block::bordered()
+        .border_type(ratatui::widgets::BorderType::Rounded)
+        .title(format!(" {title} "))
+        .border_style(theme.accent())
+        .render(r, buf);
 }
 
-const HELP: &[(&str, &str)] = &[
-    ("Move", "↑↓ j k · g G top/bottom · PgUp PgDn · Tab/Shift+Tab focus"),
-    ("Views", "1 Connection View · 2 Thread View · 3 Rules"),
-    ("Detail", "Enter open · Esc close · h l or ←→ tabs · p parsed/source · o original/modified"),
-    ("Body", "Enter fold · [ fold all · ] unfold all · | jq filter · < > scroll sideways"),
-    ("Live", "Space pause/resume · F freeze · L jump to live · + - 0 zoom · v select range"),
-    ("Graph", "T all app traffic / captured requests · t wall clock labels · drag to select"),
-    ("List", "c collapse repeats · s S sort · C columns · click header to sort"),
-    ("Session", "x clear session (asks first) · ? help · q quit"),
-    ("Mouse", "click rows and tabs · double-click opens · wheel scrolls · drag the divider"),
-];
-
 fn draw_help(app: &App, area: Rect, buf: &mut Buffer) {
+    use crate::actions::{ACTIONS, Group};
     let t = &app.theme;
-    let r = centered(area, 96, HELP.len() as u16 + 4);
+    let w = area.width.saturating_sub(8).min(118);
+    let label_w = 9usize;
+    let text_w = (w as usize).saturating_sub(4 + label_w);
+    // one paragraph per group: "keys what · keys what", wrapped to the box
+    let mut lines: Vec<Line> = Vec::new();
+    let mut groups: Vec<(&str, Vec<(String, &str)>)> = Group::ALL
+        .iter()
+        .map(|g| {
+            let items = ACTIONS
+                .iter()
+                .filter(|i| i.group == *g)
+                .filter_map(|i| {
+                    let keys: Vec<String> = app.keymap.keys(i.action).iter().map(ToString::to_string).collect();
+                    (!keys.is_empty()).then(|| (keys.join("/"), i.hint))
+                })
+                .collect();
+            (g.title(), items)
+        })
+        .collect();
+    groups.push((
+        "Mouse",
+        vec![
+            ("click".into(), "rows and tabs"),
+            ("double-click".into(), "opens"),
+            ("wheel".into(), "scrolls (zooms on the graph; Shift+wheel moves in time)"),
+            ("drag".into(), "the graph to select a range, the border between boxes to resize"),
+        ],
+    ));
+    for (title, items) in groups {
+        let mut row: Vec<Span> = vec![Span::styled(format!("{title:<label_w$}"), t.accent())];
+        let mut used = 0usize;
+        for (i, (keys, what)) in items.into_iter().enumerate() {
+            let sep = if i == 0 { "" } else { " · " };
+            let item_w = sep.width() + keys.width() + 1 + what.width();
+            if used + item_w > text_w && used > 0 {
+                lines.push(Line::from(std::mem::take(&mut row)));
+                row.push(Span::raw(" ".repeat(label_w)));
+                used = 0;
+                row.push(Span::styled(keys, t.text().add_modifier(Modifier::BOLD)));
+            } else {
+                row.push(Span::styled(sep, t.faint()));
+                row.push(Span::styled(keys, t.text().add_modifier(Modifier::BOLD)));
+            }
+            row.push(Span::styled(format!(" {what}"), t.dim()));
+            used += item_w;
+        }
+        lines.push(Line::from(row));
+    }
+    let r = centered(area, w, lines.len() as u16 + 4);
     draw_box(buf, r, "keys", t);
-    for (i, (k, v)) in HELP.iter().enumerate() {
-        text(
-            buf,
-            r.x + 2,
-            r.y + 1 + i as u16,
-            r.width - 4,
-            vec![Span::styled(format!("{k:<9}"), t.accent()), Span::styled(*v, t.text())],
-        );
+    for (i, line) in lines.iter().enumerate().take(r.height.saturating_sub(3) as usize) {
+        draw_line(buf, r.x + 2, r.y + 1 + i as u16, r.width - 4, line, 0, Style::default());
     }
     text(buf, r.x + 2, r.y + r.height - 2, r.width - 4, vec![Span::styled("any key closes", t.faint())]);
 }

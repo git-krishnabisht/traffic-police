@@ -164,11 +164,12 @@ fn clicking_a_header_sorts_and_double_click_opens() {
     click(&mut app, h.x + 1, h.y);
     assert!(app.rows.sort.descending);
     render_text(&mut app, MEDIUM.0, MEDIUM.1);
-    let r = app.hits.rect_of(Target::ListRow(2)).expect("row 2");
+    let row = app.list_offset + 2;
+    let r = app.hits.rect_of(Target::ListRow(row)).expect("the third visible row");
     click(&mut app, r.x + 3, r.y);
     click(&mut app, r.x + 3, r.y);
     assert!(app.detail_open);
-    assert_eq!(app.list_cursor, 2);
+    assert_eq!(app.list_cursor, row);
 }
 
 #[test]
@@ -180,8 +181,11 @@ fn dragging_the_divider_and_the_graph() {
     app.handle_mouse(mouse(MouseEventKind::Drag(MouseButton::Left), 56, d.y + 2));
     app.handle_mouse(mouse(MouseEventKind::Up(MouseButton::Left), 56, d.y + 2));
     assert_eq!(app.split_pct, 40);
+    // the detail box now starts at column 56, where its left border meets the list's right one
     let text = render_text(&mut app, MEDIUM.0, MEDIUM.1);
-    assert!(text.lines().nth(13).unwrap().chars().nth(56) == Some('│'), "{text}");
+    let row = text.lines().nth(14).unwrap();
+    assert_eq!(row.chars().nth(55), Some('│'), "{text}");
+    assert_eq!(row.chars().nth(56), Some('│'), "{text}");
 
     let g = app.hits.rect_of(Target::Graph).expect("graph");
     app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), g.x + 20, g.y + 2));
