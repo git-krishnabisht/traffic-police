@@ -15,30 +15,30 @@ expression: "detail(12.0, MEDIUM, |t| t.status() == Some(500), \"l\")"
 │        0                                                                             ━━┛        ┗━━━┛    ┗┛             ┗┛  ┗┛    ┗━┛ ┗━ │
 │                                                                                      00:00.000            00:05.000            00:10.000 │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-╭─ Requests 26 ─ Connection ─ Thread ─ Rules ───────────────────────────────╮╭─ report ─ Overview ─ Response ─ Request ─ Call Stack ─── ✕ ─╮
-│ Name                    Size Type      Status         Time Timeline       ││ HTTP/2 500 Internal Server Error                            │
-│ token                  391 B json      200          513 ms         █     ▐││                                                             │
-│ init                   316 B json      200          2.01 s          ▏    ▐││ Headers (4)                                                 │
-│ monitor                302 B json      200          1.58 s          █    ▐││ date: Tue, 29 Sep 2026 05:10:08 GMT                         │
-│ events                  17 B json      200          1.45 s          █▏   ▐││ content-type: text/html; charset=utf-8                      │
-│ u_4821.png            4.5 KB png       200          476 ms          █    ▐││ content-length: 305                                         │
-│ monitor                302 B json      200          1.53 s           ▊   ▐││ server: envoy                                               │
-│ challenge              144 B json      200          386 ms           ▏   ▐││                                                             │
-│ config                   0 B           302           61 ms           ▏   ▐││ Body  HTML, 305 B  [parsed · p: source]                     │
-│ ↪ config.json          106 B json      200          195 ms           ▏   ▐││ <!DOCTYPE html>                                             │
-│ attest                 180 B json      200          2.75 s           ▐█  ▐││ <html>                                                      │
-│ metrics                  6 B protobuf  200          224 ms           ▕   ▐││   <head>                                                    │
-│ monitor                302 B json      200          1.41 s            ▋  ▐││     <meta charset="utf-8">                                  │
-│ events                  17 B json      200          1.14 s            ▌  ▐││     <title>500 Internal Server Error</title>                │
-│ liveness-model-v3…     150 B json      404          346 ms            ▏  ▐││     <style>                                                 │
-│ enroll                  72 B json      200          2.08 s            ▕▊ ▐││       body{font-family:sans-serif;margin:2em}               │
-│ documents               93 B json      200          515 ms            ▕▏ ▐││     </style>                                                │
-│ monitor                302 B json      200          1.50 s            ▕▋ ▐││   </head>                                                   │
-│ report                 305 B html      500          219 ms             ▏ ▐││   <body>                                                    │
-│ lookup?fields=cou…     101 B json      200          507 ms             ▕ ▐││     <h1>Internal Server Error</h1>                          │
-│ monitor                302 B json      200          1.49 s             ▕▌▐││     <p>The server encountered an error and could not complet│
-│ status?sessionId=…     263 B json      200          326 ms             ▕  ││     <hr>                                                    │
-│ threshold                              ···          1.90 s              █ ││     <address>envoy</address>                                │
-│ events                  17 B json      200          970 ms              ▌ ││   </body>                                                   │
+╭─ Requests 26 ─ Connection ─ Thread ─ Rules ───────────────────────────────╮╭─ report ─ response body ─ HTML · 305 B ─ 1/16 ────────── ✕ ─╮
+│ Name                    Size Type      Status         Time Timeline       ││ <!DOCTYPE html>                                             │
+│ token                  391 B json      200          513 ms         █     ▐││ <html>                                                      │
+│ init                   316 B json      200          2.01 s          ▏    ▐││   <head>                                                    │
+│ monitor                302 B json      200          1.58 s          █    ▐││     <meta charset="utf-8">                                  │
+│ events                  17 B json      200          1.45 s          █▏   ▐││     <title>500 Internal Server Error</title>                │
+│ u_4821.png            4.5 KB png       200          476 ms          █    ▐││     <style>                                                 │
+│ monitor                302 B json      200          1.53 s           ▊   ▐││       body{font-family:sans-serif;margin:2em}               │
+│ challenge              144 B json      200          386 ms           ▏   ▐││     </style>                                                │
+│ config                   0 B           302           61 ms           ▏   ▐│╰─────────────────────────────────────────────────────────────╯
+│ ↪ config.json          106 B json      200          195 ms           ▏   ▐│╭─ Overview ─ Response ─ Request ─ Call Stack ────────────────╮
+│ attest                 180 B json      200          2.75 s           ▐█  ▐││ HTTP/2 500 Internal Server Error                            │
+│ metrics                  6 B protobuf  200          224 ms           ▕   ▐││                                                             │
+│ monitor                302 B json      200          1.41 s            ▋  ▐││ Headers (4)                                                 │
+│ events                  17 B json      200          1.14 s            ▌  ▐││ date: Tue, 29 Sep 2026 05:10:08 GMT                         │
+│ liveness-model-v3…     150 B json      404          346 ms            ▏  ▐││ content-type: text/html; charset=utf-8                      │
+│ enroll                  72 B json      200          2.08 s            ▕▊ ▐││ content-length: 305                                         │
+│ documents               93 B json      200          515 ms            ▕▏ ▐││ server: envoy                                               │
+│ monitor                302 B json      200          1.50 s            ▕▋ ▐││                                                             │
+│ report                 305 B html      500          219 ms             ▏ ▐││ Body  HTML, 305 B  [parsed · p: source]                     │
+│ lookup?fields=cou…     101 B json      200          507 ms             ▕ ▐││ <!DOCTYPE html>                                             │
+│ monitor                302 B json      200          1.49 s             ▕▌▐││ <html>                                                      │
+│ status?sessionId=…     263 B json      200          326 ms             ▕  ││   <head>                                                    │
+│ threshold                              ···          1.90 s              █ ││     <meta charset="utf-8">                                  │
+│ events                  17 B json      200          970 ms              ▌ ││     <title>500 Internal Server Error</title>                │
 ╰───────────────────────────────────────────────────────────────────────────╯╰─────────────────────────────────────────────────────────────╯
  ←→ tabs   ↑↓ move   / search   nN next/previous   y copy   w save   Enter fold   p parsed/source   ? help       ⚠ studio inspector present

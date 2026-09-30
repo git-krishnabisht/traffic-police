@@ -64,7 +64,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
 }
 
 /// A rounded box, its border highlighted when the panel has focus. Returns the inside.
-fn panel(buf: &mut Buffer, r: Rect, focused: bool, t: &Theme) -> Rect {
+pub(crate) fn panel(buf: &mut Buffer, r: Rect, focused: bool, t: &Theme) -> Rect {
     let style = t.border(focused);
     ratatui::widgets::Block::bordered()
         .border_type(ratatui::widgets::BorderType::Rounded)
@@ -76,7 +76,7 @@ fn panel(buf: &mut Buffer, r: Rect, focused: bool, t: &Theme) -> Rect {
 /// Labels on a panel's border: left-aligned after the corner (`╭─ label ─`), or right-aligned
 /// before the other corner. Each label gets a space on both sides; labels that do not fit are
 /// dropped. Returns where each label went, for mouse targets.
-fn border_labels(buf: &mut Buffer, r: Rect, y: u16, right: bool, labels: Vec<Vec<Span<'_>>>) -> Vec<Rect> {
+pub(crate) fn border_labels(buf: &mut Buffer, r: Rect, y: u16, right: bool, labels: Vec<Vec<Span<'_>>>) -> Vec<Rect> {
     let widths: Vec<u16> = labels.iter().map(|l| l.iter().map(|s| s.content.width() as u16).sum::<u16>() + 2).collect();
     let room = r.width.saturating_sub(4);
     let mut used = 0u16;
@@ -628,7 +628,7 @@ fn col_width(c: Column) -> u16 {
     }
 }
 
-fn truncate(s: &str, w: usize) -> String {
+pub(crate) fn truncate(s: &str, w: usize) -> String {
     if s.width() <= w {
         return s.to_string();
     }
@@ -1136,19 +1136,21 @@ fn draw_rules(app: &mut App, r: Rect, buf: &mut Buffer) {
     );
 }
 
+/// The request's side: the body explorer on top, the tabs below.
 fn draw_detail_pane(app: &mut App, r: Rect, buf: &mut Buffer) {
+    let top_h = (r.height * 2 / 5).clamp(5, r.height.saturating_sub(8).max(3));
+    let top = Rect { height: top_h, ..r };
+    let bottom = Rect { y: r.y + top_h, height: r.height.saturating_sub(top_h), ..r };
+    crate::explorer::draw(app, top, buf);
+    draw_tabs_box(app, bottom, buf);
+}
+
+/// The detail tabs' box: Overview, Response, Request, Call Stack.
+fn draw_tabs_box(app: &mut App, r: Rect, buf: &mut Buffer) {
     let t = app.theme.clone();
     let focused = app.focus == Focus::Detail;
     let inner = panel(buf, r, focused, &t);
-    let close = border_labels(buf, r, r.y, true, vec![vec![Span::styled("✕", t.dim())]]);
-    if let Some(c) = close.first() {
-        app.hits.add(*c, Target::DetailClose);
-    }
-    let room = close.first().map_or(r, |c| Rect { width: c.x.saturating_sub(r.x), ..r });
-    let name = app.selected.map(|i| app.view_store().txn(i).url.name()).unwrap_or_default();
-    let title_style =
-        if focused { t.accent().add_modifier(Modifier::BOLD) } else { t.title().add_modifier(Modifier::BOLD) };
-    let mut labels = vec![vec![Span::styled(truncate(&name, 28), title_style)]];
+    let mut labels = Vec::new();
     for tab in Tab::ALL {
         let style = if app.detail.tab == tab {
             if focused {
@@ -1161,8 +1163,8 @@ fn draw_detail_pane(app: &mut App, r: Rect, buf: &mut Buffer) {
         };
         labels.push(vec![Span::styled(tab.title(), style)]);
     }
-    let at = border_labels(buf, room, r.y, false, labels);
-    for (rect, tab) in at.iter().skip(1).zip(Tab::ALL) {
+    let at = border_labels(buf, r, r.y, false, labels);
+    for (rect, tab) in at.iter().zip(Tab::ALL) {
         app.hits.add(*rect, Target::DetailTab(tab));
     }
     let content = Rect { x: inner.x + 1, width: inner.width.saturating_sub(1), ..inner };
@@ -1308,6 +1310,17 @@ fn hints(app: &App) -> Vec<(&'static [Action], &'static str)> {
             (&[A::GraphSource], "source"),
             (&[A::Live], "live"),
             (&[A::Back], "back"),
+            (&[A::Help], "help"),
+        ],
+        (_, Focus::Preview, _) => vec![
+            (&[A::Up, A::Down], "move"),
+            (&[A::Left], "fold/up"),
+            (&[A::Right], "unfold/in"),
+            (&[A::Activate], "fold/decode"),
+            (&[A::FoldAll, A::UnfoldAll], "fold/unfold all"),
+            (&[A::Copy], "copy"),
+            (&[A::FocusNext], "tabs"),
+            (&[A::Back], "close"),
             (&[A::Help], "help"),
         ],
         (_, Focus::Detail, _) => vec![

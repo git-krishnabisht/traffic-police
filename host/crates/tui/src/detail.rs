@@ -11,7 +11,7 @@ use traffic_police_core::fmt;
 use traffic_police_core::model::{BodyDir, BodyMeta, BodyState, Transaction, TxnIdx, TxnState, header};
 
 use crate::app::{App, Focus, Tab, Target};
-use crate::bodyview::{BodyView, Window};
+use crate::bodyview::Window;
 use crate::theme::Theme;
 
 #[derive(Debug, Clone)]
@@ -718,19 +718,6 @@ pub fn draw(app: &mut App, area: Rect, buf: &mut Buffer) {
     let Some(txn) = app.selected else { return };
     let theme = app.theme.clone();
     let focused = app.focus == Focus::Detail;
-    let mut area = area;
-    if app.detail.tab == Tab::Overview {
-        let preview_h = (area.height * 2 / 5).clamp(4, 14);
-        let preview = Rect { height: preview_h.min(area.height.saturating_sub(4)), ..area };
-        draw_preview(app, txn, preview, buf);
-        area = Rect { y: area.y + preview.height + 1, height: area.height.saturating_sub(preview.height + 1), ..area };
-        // separator
-        for x in area.x..area.x + area.width {
-            if let Some(c) = buf.cell_mut((x, area.y.saturating_sub(1))) {
-                c.set_symbol("─").set_style(theme.faint());
-            }
-        }
-    }
     app.detail_height = area.height as usize;
     let doc = build_doc(app);
     let len = doc.len();
@@ -909,74 +896,6 @@ fn draw_timing_bar(theme: &Theme, t: &Transaction, now: u64, buf: &mut Buffer, a
             })
             .set_style(Style::default().fg(color));
         }
-    }
-}
-
-fn draw_preview(app: &mut App, txn: TxnIdx, area: Rect, buf: &mut Buffer) {
-    let theme = app.theme.clone();
-    let dir = app.response_dir(txn);
-    let has_body =
-        app.view_store().txn(txn).resp_body.id.is_some() || app.view_store().txn(txn).delivered_body.is_some();
-    if !has_body {
-        let t = app.view_store().txn(txn);
-        let msg = if let Some(f) = &t.failure {
-            format!("{}: {}", f.class, f.message.clone().unwrap_or_default())
-        } else if t.state.is_open() {
-            "waiting for the response…".into()
-        } else {
-            "no response body".into()
-        };
-        draw_line(
-            buf,
-            area.x + 1,
-            area.y + 1,
-            area.width.saturating_sub(2),
-            &Line::styled(msg, theme.dim()),
-            0,
-            Style::default(),
-        );
-        return;
-    }
-    let Some(view) = app.body_view(txn, dir) else {
-        let msg = if app.body_decoding(txn, dir) { "decoding…" } else { "" };
-        draw_line(
-            buf,
-            area.x + 1,
-            area.y + 1,
-            area.width.saturating_sub(2),
-            &Line::styled(msg, theme.dim()),
-            0,
-            Style::default(),
-        );
-        return;
-    };
-    if let Some(img) = view.image().and_then(|i| i.image.clone()) {
-        let r = Rect { x: area.x + 1, y: area.y, width: area.width.saturating_sub(2), height: area.height };
-        app.images.render(&img, r, buf);
-        return;
-    }
-    let view: &BodyView = view;
-    let n = view.len(true);
-    for row in 0..area.height as usize {
-        if row >= n {
-            break;
-        }
-        let width = area.width.saturating_sub(2);
-        let l = view.line(row, true, &theme, Window { skip: 0, take: usize::from(width) });
-        draw_line(buf, area.x + 1, area.y + row as u16, width, &l, 0, Style::default());
-    }
-    if n > area.height as usize {
-        let more = format!(" +{} lines · Response tab ", n - area.height as usize);
-        let w = more.chars().count() as u16;
-        draw_line(
-            buf,
-            area.x + area.width.saturating_sub(w + 1),
-            area.y + area.height - 1,
-            w,
-            &Line::styled(more, theme.faint()),
-            0,
-            Style::default(),
-        );
     }
 }
 

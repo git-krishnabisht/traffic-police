@@ -15,17 +15,17 @@ expression: "detail(12.0, MEDIUM, |t| t.hop > 0, \"\")"
 │        0                                                                             ━━┛        ┗━━━┛    ┗┛             ┗┛  ┗┛    ┗━┛ ┗━ │
 │                                                                                      00:00.000            00:05.000            00:10.000 │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-╭─ Requests 26 ─ Connection ─ Thread ─ Rules ───────────────────────────────╮╭─ config.json ─ Overview ─ Response ─ Request ─────────── ✕ ─╮
-│ Name                    Size Type      Status         Time Timeline       ││  {                                                          │
-│ token                  391 B json      200          513 ms         █     ▐││    "version": 42,                                           │
-│ init                   316 B json      200          2.01 s          ▏    ▐││    "minSdk": "2.3.0",                                       │
-│ monitor                302 B json      200          1.58 s          █    ▐││    "flags": {                                               │
-│ events                  17 B json      200          1.45 s          █▏   ▐││      "newLivenessModel": true,                              │
-│ u_4821.png            4.5 KB png       200          476 ms          █    ▐││      "strictAttestation": false                             │
-│ monitor                302 B json      200          1.53 s           ▊   ▐││    },                                                       │
-│ challenge              144 B json      200          386 ms           ▏   ▐││    "rollout": 0.25                                          │
-│ config                   0 B           302           61 ms           ▏   ▐││  }                                                          │
-│ ↪ config.json          106 B json      200          195 ms           ▏   ▐││ ────────────────────────────────────────────────────────────│
+╭─ Requests 26 ─ Connection ─ Thread ─ Rules ───────────────────────────────╮╭─ config.json ─ response body ─ JSON · 106 B ─ 1/9 ────── ✕ ─╮
+│ Name                    Size Type      Status         Time Timeline       ││ {                                                           │
+│ token                  391 B json      200          513 ms         █     ▐││   "version": 42,                                            │
+│ init                   316 B json      200          2.01 s          ▏    ▐││   "minSdk": "2.3.0",                                        │
+│ monitor                302 B json      200          1.58 s          █    ▐││   "flags": {                                                │
+│ events                  17 B json      200          1.45 s          █▏   ▐││     "newLivenessModel": true,                               │
+│ u_4821.png            4.5 KB png       200          476 ms          █    ▐││     "strictAttestation": false                              │
+│ monitor                302 B json      200          1.53 s           ▊   ▐││   },                                                        │
+│ challenge              144 B json      200          386 ms           ▏   ▐││   "rollout": 0.25                                           │
+│ config                   0 B           302           61 ms           ▏   ▐│╰─────────────────────────────────────────────────────────────╯
+│ ↪ config.json          106 B json      200          195 ms           ▏   ▐│╭─ Overview ─ Response ─ Request ─ Call Stack ────────────────╮
 │ attest                 180 B json      200          2.75 s           ▐█  ▐││ Request           config.json                               │
 │ metrics                  6 B protobuf  200          224 ms           ▕   ▐││ Method            GET                                       │
 │ monitor                302 B json      200          1.41 s            ▋  ▐││ Status            200 OK                                    │

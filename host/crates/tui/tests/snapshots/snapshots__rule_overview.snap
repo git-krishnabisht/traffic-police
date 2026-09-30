@@ -17,20 +17,20 @@ expression: "detail(40.0, LARGE, modified(), \"G\")"
 │        0 ━━━━━━━━━━━━━━━━┛━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ │
 │          00:10.000                      00:15.000                       00:20.000                      00:25.000                      00:30.000                      00:35.000                       │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-╭─ Requests 60 ─ Connection ─ Thread ─ Rules ────────────────────────────────────────────────────────────────╮╭─ status?sessionId=session_15… ─ Overview ─ Response ─ Request ─ Call Stack ──────── ✕ ─╮
-│ Name                                      Size Type      Status         Time Timeline                      ││  {                                                                                     │
-│ monitor                                  302 B json      200          1.41 s                               ││    "ok": true,                                                                         │
-│ events                                    17 B json      200          1.14 s                               ││    "sessionId": "session_15bce3a5a963c9fde0ebe700e9d76981",                            │
-│ liveness-model-v3.json                   150 B json      404          346 ms                               ││    "deepid": "-fWdPR-silxdhEdA5s951RnzPITRjkkelext-Qs",                                │
-│ enroll                                    72 B json      200          2.08 s                               ││    "mobile": null,                                                                     │
-│ documents                                 93 B json      200          515 ms                               ││    "status": "complete",                                                               │
-│ monitor                                  302 B json      200          1.50 s                              ▐││    "verdict": "pass",                                                                  │
-│ report                                   305 B html      500          219 ms                              ▐││    "riskScore": 0,                                                                     │
-│ lookup?fields=country,region,carrier     101 B json      200          507 ms                              ▐││    "createdAt": "2026-09-29T05:04:51.000Z",                                            │
-│ monitor                                  302 B json      200          1.49 s █                            ▐││    "completedAt": null,                                                                │
-│ status?sessionId=session_15bce3a5a9…     263 B json      200          326 ms                              ▐││    "enrollmentSim": null                                                               │
-│ threshold                                                failed       10.0 s █████████▊                   ▐││  }                                                                                     │
-│ events                                    17 B json      200          970 ms █▏                           ▐││ ───────────────────────────────────────────────────────────────────────────────────────│
+╭─ Requests 60 ─ Connection ─ Thread ─ Rules ────────────────────────────────────────────────────────────────╮╭─ status?sessionId=session_15… ─ response body (as delivered) ─ JSON · 261 B ─────── ✕ ─╮
+│ Name                                      Size Type      Status         Time Timeline                      ││ {                                                                                      │
+│ monitor                                  302 B json      200          1.41 s                               ││   "ok": true,                                                                          │
+│ events                                    17 B json      200          1.14 s                               ││   "sessionId": "session_15bce3a5a963c9fde0ebe700e9d76981",                             │
+│ liveness-model-v3.json                   150 B json      404          346 ms                               ││   "deepid": "-fWdPR-silxdhEdA5s951RnzPITRjkkelext-Qs",                                 │
+│ enroll                                    72 B json      200          2.08 s                               ││   "mobile": null,                                                                      │
+│ documents                                 93 B json      200          515 ms                               ││   "status": "complete",                                                                │
+│ monitor                                  302 B json      200          1.50 s                              ▐││   "verdict": "pass",                                                                   │
+│ report                                   305 B html      500          219 ms                              ▐││   "riskScore": 0,                                                                      │
+│ lookup?fields=country,region,carrier     101 B json      200          507 ms                              ▐││   "createdAt": "2026-09-29T05:04:51.000Z",                                             │
+│ monitor                                  302 B json      200          1.49 s █                            ▐││   "completedAt": null,                                                                 │
+│ status?sessionId=session_15bce3a5a9…     263 B json      200          326 ms                              ▐││   "enrollmentSim": null                                                                │
+│ threshold                                                failed       10.0 s █████████▊                   ▐│╰────────────────────────────────────────────────────────────────────────────────────────╯
+│ events                                    17 B json      200          970 ms █▏                           ▐│╭─ Overview ─ Response ─ Request ─ Call Stack ───────────────────────────────────────────╮
 │ status?sessionId=session_15bce3a5a9…     263 B json      200          174 ms  ▏                           ▐││ Status            200 OK                                                               │
 │ fonts.json                                               canceled     380 ms  ▏                           ▐││ URL               https://deepid.example.app/api/sdk/sim-binding/status/?sessionId=sess│
 │ monitor                                  302 B json      200          1.44 s  ▐▉                          ▐││ Request type      —                                                                    │

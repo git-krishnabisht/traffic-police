@@ -314,6 +314,44 @@ impl BodyView {
         }
     }
 
+    /// For the body explorer: the container visible line `i` opens (parsed JSON, no jq result),
+    /// and whether it is folded.
+    pub fn container_at(&self, i: usize) -> Option<(u32, bool)> {
+        if self.jq.is_some() {
+            return None;
+        }
+        let Content::Json(doc) = &self.parsed else { return None };
+        let node = doc.lines[*self.visible.get(i)? as usize].opens?;
+        Some((node, self.folded.contains(&node)))
+    }
+
+    /// For the body explorer: the visible line that opens the container holding visible line
+    /// `i` (for a closing line, the line that opened it).
+    pub fn parent_line(&self, i: usize) -> Option<usize> {
+        if self.jq.is_some() {
+            return None;
+        }
+        let Content::Json(doc) = &self.parsed else { return None };
+        let line = *self.visible.get(i)?;
+        if let Some(n) = doc.nodes.iter().find(|n| n.close_line == line && n.open_line != line) {
+            return self.visible.iter().position(|&l| l == n.open_line);
+        }
+        let depth = doc.lines[line as usize].depth;
+        (0..i).rev().find(|&j| {
+            let l = &doc.lines[self.visible[j] as usize];
+            l.depth < depth && l.opens.is_some()
+        })
+    }
+
+    /// Folds (`fold`) or unfolds the container opening on visible line `i`; returns whether
+    /// anything changed.
+    pub fn set_fold(&mut self, i: usize, fold: bool) -> bool {
+        match self.container_at(i) {
+            Some((_, folded)) if folded != fold => self.toggle_fold(i),
+            _ => false,
+        }
+    }
+
     /// Toggle the fold of the container opening on visible line `i`; returns whether it was one.
     pub fn toggle_fold(&mut self, i: usize) -> bool {
         let node = match &self.parsed {

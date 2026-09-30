@@ -160,6 +160,7 @@ costs per request, in logcat), `security` (checks that another uid is refused).
 | Move | `↑` `↓` or `j` `k` · `g` `G` top and bottom · `PgUp` `PgDn` · `Tab` `Shift+Tab` move focus between graph, list and detail |
 | Views | `1` Connection View · `2` Thread View · `3` Rules |
 | Detail pane | `Enter` open · `Esc` close · `h` `l` or `←` `→` switch tabs · `p` parsed or source · `o` original or rule-modified response |
+| Body explorer | The box above the tabs shows the response body; `Shift+Tab` from the tabs (or `Tab` from the list, or a click) goes there: `j` `k` move · `h` fold, or go up to the enclosing object · `l` unfold, or step in · `Enter` fold, or the value menu on a single value · `[` `]` fold or unfold all |
 | Bodies | `Enter` fold or unfold JSON · `[` fold all · `]` unfold all · <code>&#124;</code> jq filter (empty filter clears) · `<` `>` scroll sideways |
 | Call Stack | `Enter` on a framework group expands it · `Enter` on an app frame opens `$EDITOR` there (needs source roots, below) |
 | Live | `Space` pause or resume recording · `F` freeze the view (capture continues) · `L` back to live · `+` `-` zoom · `0` reset zoom · `v` select a time range (`v` or `Enter` again to apply) |

@@ -12,7 +12,7 @@ use traffic_police_core::export::har::har;
 use traffic_police_core::model::{BodyDir, TxnIdx, header};
 use tui_input::Input;
 
-use crate::app::{App, Overlay, Tab};
+use crate::app::{App, Focus, Overlay, Tab};
 
 /// Where copied text goes (`clipboard` in the user config).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -253,7 +253,8 @@ impl App {
 
     /// The header on the detail cursor's row, when the cursor is on one.
     pub(crate) fn header_at_cursor(&mut self, txn: TxnIdx) -> Option<(String, String)> {
-        if !self.detail_open || !matches!(self.detail.tab, Tab::Request | Tab::Response) {
+        if !self.detail_open || self.focus == Focus::Preview || !matches!(self.detail.tab, Tab::Request | Tab::Response)
+        {
             return None;
         }
         let doc = crate::detail::build_doc(self);
@@ -265,6 +266,11 @@ impl App {
 
     /// The JSON path of the detail cursor's body line, when it has one.
     pub(crate) fn path_at_cursor(&mut self, txn: TxnIdx) -> Option<String> {
+        if self.detail_open && self.focus == Focus::Preview {
+            let (txn, dir) = self.explorer_body()?;
+            let i = self.explorer.cursor;
+            return self.body_view(txn, dir)?.path_at(i, true);
+        }
         if !self.detail_open || !matches!(self.detail.tab, Tab::Request | Tab::Response) {
             return None;
         }
@@ -507,7 +513,8 @@ impl App {
 
     /// The JSON value at a path like `$.config.items[2].id`, as JSON text.
     pub(crate) fn json_value(&self, txn: TxnIdx, path: &str) -> Option<String> {
-        let dir = if self.detail.tab == Tab::Request { BodyDir::Request } else { self.response_dir(txn) };
+        let request = self.focus != Focus::Preview && self.detail.tab == Tab::Request;
+        let dir = if request { BodyDir::Request } else { self.response_dir(txn) };
         let text = self.body_text(txn, dir).ok()?;
         let mut v: serde_json::Value = serde_json::from_str(&text).ok()?;
         let rest = path.strip_prefix('$')?;

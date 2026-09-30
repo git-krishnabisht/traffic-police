@@ -6,6 +6,7 @@ pub mod bodycache;
 pub mod bodyview;
 pub mod detail;
 pub mod diffview;
+pub mod explorer;
 pub mod graph;
 pub mod images;
 pub mod palette;

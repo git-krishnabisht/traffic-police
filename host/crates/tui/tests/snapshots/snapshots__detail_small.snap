@@ -13,7 +13,14 @@ expression: "detail(12.0, SMALL, path_is(\"/api/sdk/init\"), \"l\")"
 │        0                                                      ━━┗┛   ┗━━┛  ┗┛    ┗┛ ┗┛┗┛┗┛   ┗┛  │
 │                                                               00:00.000                          │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
-╭─ init ─ Overview ─ Response ─ Request ─ Call Stack ────────────────────────────────────────── ✕ ─╮
+╭─ init ─ response body ─ JSON · 316 B ─ 1/18 ───────────────────────────────────────────────── ✕ ─╮
+│ {                                                                                                │
+│   "ok": true,                                                                                    │
+│   "sessionId": "session_15bce3a5a963c9fde0ebe700e9d76981",                                       │
+│   "deepid": "-a02mRsDvpclHF1i8eoravsWmApTcmegxpqeKsY",                                           │
+│   "config": {                                                                                    │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Overview ─ Response ─ Request ─ Call Stack ─────────────────────────────────────────────────────╮
 │ HTTP/2 200 OK                                                                                    │
 │                                                                                                  │
 │ Headers (8)                                                                                      │
@@ -23,12 +30,5 @@ expression: "detail(12.0, SMALL, path_is(\"/api/sdk/init\"), \"l\")"
 │ cache-control: no-cache, no-store                                                                │
 │ x-request-id: e9199733-54bd-4086-af69-d7eeccf00dee                                               │
 │ server: envoy                                                                                    │
-│ set-cookie: dsid=ced258d0da790089d2f9467c; Path=/; Secure; HttpOnly                              │
-│ set-cookie: region=ap-south-1; Path=/; Secure                                                    │
-│                                                                                                  │
-│ Body  JSON, 316 B  [parsed · p: source]                                                          │
-│ {                                                                                                │
-│   "ok": true,                                                                                    │
-│   "sessionId": "session_15bce3a5a963c9fde0ebe700e9d76981",                                       │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
  ←→ tabs   ↑↓ move   / search   nN next/previous   y copy   ? help       ⚠ studio inspector present

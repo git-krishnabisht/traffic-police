@@ -39,6 +39,8 @@ pub enum View {
 pub enum Focus {
     Graph,
     List,
+    /// The body explorer above the detail tabs.
+    Preview,
     Detail,
 }
 
@@ -173,6 +175,7 @@ pub enum Target {
     DetailTab(Tab),
     DetailLine(usize),
     DetailClose,
+    ExplorerLine(usize),
     Divider,
     Graph,
     ThreadBar(usize),
@@ -291,6 +294,7 @@ pub struct App {
     pub detail_open: bool,
     pub detail: DetailState,
     pub detail_height: usize,
+    pub explorer: crate::explorer::Explorer,
     pub graph: GraphState,
     pub graph_source: GraphSource,
     pub graph_style: crate::graph::GraphStyle,
@@ -369,6 +373,7 @@ impl App {
             detail_open: false,
             detail: DetailState::default(),
             detail_height: 10,
+            explorer: crate::explorer::Explorer::default(),
             graph: GraphState { span: DEFAULT_SPAN, ..Default::default() },
             graph_source: GraphSource::AppTotal,
             graph_style: crate::graph::GraphStyle::default(),
@@ -653,9 +658,9 @@ impl App {
         }
     }
 
-    fn close_detail(&mut self) {
+    pub(crate) fn close_detail(&mut self) {
         self.detail_open = false;
-        if self.focus == Focus::Detail {
+        if matches!(self.focus, Focus::Detail | Focus::Preview) {
             self.focus = Focus::List;
         }
     }
@@ -1002,7 +1007,7 @@ impl App {
 
     /// Runs an action, from a key or the command palette.
     pub fn run(&mut self, a: Action) {
-        let not_detail = self.focus != Focus::Detail;
+        let not_detail = !matches!(self.focus, Focus::Detail | Focus::Preview);
         match a {
             Action::Quit => self.should_quit = true,
             Action::Help => self.overlay = Overlay::Help,
@@ -1106,6 +1111,7 @@ impl App {
                     View::Threads => self.threads_action(a),
                     View::Rules => self.rules_action(a),
                 },
+                Focus::Preview => self.explorer_action(a),
                 Focus::Detail => self.detail_action(a),
             },
         }
@@ -1285,7 +1291,7 @@ impl App {
 
     fn cycle_focus(&mut self, dir: i32) {
         let order: Vec<Focus> = if self.detail_open {
-            vec![Focus::Graph, Focus::List, Focus::Detail]
+            vec![Focus::Graph, Focus::List, Focus::Preview, Focus::Detail]
         } else {
             vec![Focus::Graph, Focus::List]
         };
@@ -1718,6 +1724,7 @@ impl App {
                         self.set_tab(t);
                     }
                     Some(Target::DetailClose) => self.close_detail(),
+                    Some(Target::ExplorerLine(i)) => self.explorer_click(i, double),
                     Some(Target::DetailLine(i)) => {
                         self.focus = Focus::Detail;
                         self.detail.cursor = i;
@@ -1783,6 +1790,7 @@ impl App {
             MouseEventKind::ScrollDown | MouseEventKind::ScrollUp => {
                 let down = m.kind == MouseEventKind::ScrollDown;
                 match self.hits.at(x, y) {
+                    Some(Target::ExplorerLine(_)) => self.explorer_scroll(down),
                     Some(Target::DetailLine(_) | Target::DetailTab(_)) => {
                         let doc_len = detail::build_doc(self).len();
                         let max = doc_len.saturating_sub(self.detail_height.max(1));

@@ -15,30 +15,30 @@ expression: "detail(12.0, MEDIUM, init(), \"l|.config.features<Enter>\")"
 │        0                                                                             ━━┛        ┗━━━┛    ┗┛             ┗┛  ┗┛    ┗━┛ ┗━ │
 │                                                                                      00:00.000            00:05.000            00:10.000 │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-╭─ Requests 26 ─ Connection ─ Thread ─ Rules ───────────────────────────────╮╭─ init ─ Overview ─ Response ─ Request ─ Call Stack ───── ✕ ─╮
-│ Name                    Size Type      Status         Time Timeline       ││ HTTP/2 200 OK                                               │
-│ token                  391 B json      200          513 ms         █     ▐││                                                             │
-│ init                   316 B json      200          2.01 s          ▏    ▐││ Headers (8)                                                 │
-│ monitor                302 B json      200          1.58 s          █    ▐││ date: Tue, 29 Sep 2026 05:10:01 GMT                         │
-│ events                  17 B json      200          1.45 s          █▏   ▐││ content-type: application/json; charset=utf-8               │
-│ u_4821.png            4.5 KB png       200          476 ms          █    ▐││ content-length: 316                                         │
-│ monitor                302 B json      200          1.53 s           ▊   ▐││ cache-control: no-cache, no-store                           │
-│ challenge              144 B json      200          386 ms           ▏   ▐││ x-request-id: e9199733-54bd-4086-af69-d7eeccf00dee          │
-│ config                   0 B           302           61 ms           ▏   ▐││ server: envoy                                               │
-│ ↪ config.json          106 B json      200          195 ms           ▏   ▐││ set-cookie: dsid=ced258d0da790089d2f9467c; Path=/; Secure; H│
-│ attest                 180 B json      200          2.75 s           ▐█  ▐││ set-cookie: region=ap-south-1; Path=/; Secure               │
+╭─ Requests 26 ─ Connection ─ Thread ─ Rules ───────────────────────────────╮╭─ init ─ response body ─ JSON · 316 B ─────────────────── ✕ ─╮
+│ Name                    Size Type      Status         Time Timeline       ││ {                                                           │
+│ token                  391 B json      200          513 ms         █     ▐││   "simBinding": true,                                       │
+│ init                   316 B json      200          2.01 s          ▏    ▐││   "liveness": true,                                         │
+│ monitor                302 B json      200          1.58 s          █    ▐││   "nfc": false                                              │
+│ events                  17 B json      200          1.45 s          █▏   ▐││ }                                                           │
+│ u_4821.png            4.5 KB png       200          476 ms          █    ▐││                                                             │
+│ monitor                302 B json      200          1.53 s           ▊   ▐││                                                             │
+│ challenge              144 B json      200          386 ms           ▏   ▐││                                                             │
+│ config                   0 B           302           61 ms           ▏   ▐│╰─────────────────────────────────────────────────────────────╯
+│ ↪ config.json          106 B json      200          195 ms           ▏   ▐│╭─ Overview ─ Response ─ Request ─ Call Stack ────────────────╮
+│ attest                 180 B json      200          2.75 s           ▐█  ▐││ HTTP/2 200 OK                                               │
 │ metrics                  6 B protobuf  200          224 ms           ▕   ▐││                                                             │
-│ monitor                302 B json      200          1.41 s            ▋  ▐││ Body  JSON, 316 B  [parsed · p: source]                     │
-│ events                  17 B json      200          1.14 s            ▌  ▐││ jq filter: .config.features   (| edits · empty filter clears│
-│ liveness-model-v3…     150 B json      404          346 ms            ▏  ▐││ {                                                           │
-│ enroll                  72 B json      200          2.08 s            ▕▊ ▐││   "simBinding": true,                                       │
-│ documents               93 B json      200          515 ms            ▕▏ ▐││   "liveness": true,                                         │
-│ monitor                302 B json      200          1.50 s            ▕▋ ▐││   "nfc": false                                              │
-│ report                 305 B html      500          219 ms             ▏ ▐││ }                                                           │
-│ lookup?fields=cou…     101 B json      200          507 ms             ▕ ▐││                                                             │
-│ monitor                302 B json      200          1.49 s             ▕▌▐││                                                             │
+│ monitor                302 B json      200          1.41 s            ▋  ▐││ Headers (8)                                                 │
+│ events                  17 B json      200          1.14 s            ▌  ▐││ date: Tue, 29 Sep 2026 05:10:01 GMT                         │
+│ liveness-model-v3…     150 B json      404          346 ms            ▏  ▐││ content-type: application/json; charset=utf-8               │
+│ enroll                  72 B json      200          2.08 s            ▕▊ ▐││ content-length: 316                                         │
+│ documents               93 B json      200          515 ms            ▕▏ ▐││ cache-control: no-cache, no-store                           │
+│ monitor                302 B json      200          1.50 s            ▕▋ ▐││ x-request-id: e9199733-54bd-4086-af69-d7eeccf00dee          │
+│ report                 305 B html      500          219 ms             ▏ ▐││ server: envoy                                               │
+│ lookup?fields=cou…     101 B json      200          507 ms             ▕ ▐││ set-cookie: dsid=ced258d0da790089d2f9467c; Path=/; Secure; H│
+│ monitor                302 B json      200          1.49 s             ▕▌▐││ set-cookie: region=ap-south-1; Path=/; Secure               │
 │ status?sessionId=…     263 B json      200          326 ms             ▕  ││                                                             │
-│ threshold                              ···          1.90 s              █ ││                                                             │
-│ events                  17 B json      200          970 ms              ▌ ││                                                             │
+│ threshold                              ···          1.90 s              █ ││ Body  JSON, 316 B  [parsed · p: source]                     │
+│ events                  17 B json      200          970 ms              ▌ ││ jq filter: .config.features   (| edits · empty filter clears│
 ╰───────────────────────────────────────────────────────────────────────────╯╰─────────────────────────────────────────────────────────────╯
  ←→ tabs   ↑↓ move   / search   nN next/previous   y copy   w save   ? help          jq: .config.features  (| to edit, empty filter clears)
