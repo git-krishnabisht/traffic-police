@@ -119,7 +119,7 @@ pub enum MenuAction {
     CopyHeader(String, String),
     CopyValue(String),
     ExportHar(Scope),
-    ExportSession,
+    ExportSession(Scope),
 }
 
 /// Which requests an export covers.
@@ -149,7 +149,8 @@ pub struct Menu {
 pub enum PromptAction {
     SaveBody(TxnIdx, BodyDir),
     Har(Vec<TxnIdx>),
-    Session,
+    /// `None`: every request.
+    Session(Option<Vec<TxnIdx>>),
 }
 
 #[derive(Debug, Clone)]
@@ -323,6 +324,20 @@ impl App {
                 action: MenuAction::ExportHar(Scope::Selected),
             });
         }
+        if self.session_log.is_some() {
+            items.push(MenuItem {
+                key: 's',
+                label: "the session (.trafficpolice: reopens with timings, threads and stacks)".into(),
+                action: MenuAction::ExportSession(Scope::All),
+            });
+            if listed != total {
+                items.push(MenuItem {
+                    key: 'S',
+                    label: format!("the {listed} requests in the list as a session"),
+                    action: MenuAction::ExportSession(Scope::Listed),
+                });
+            }
+        }
         self.menu = Some(Menu { title: "export", items, cursor: 0 });
         self.overlay = Overlay::Menu;
     }
@@ -362,42 +377,31 @@ impl App {
     pub fn run_menu(&mut self, action: MenuAction) {
         self.overlay = Overlay::None;
         self.menu = None;
-        let Some(txn) = self.selected else { return };
-        let text = match action {
+        match action {
             MenuAction::ExportHar(scope) => {
-                let txns: Vec<TxnIdx> = match scope {
-                    Scope::All => (0..self.view_store().len() as TxnIdx).collect(),
-                    Scope::Listed => {
-                        let rows = self.view_rows();
-                        let mut v: Vec<TxnIdx> = Vec::new();
-                        for r in rows.rows() {
-                            match r {
-                                traffic_police_core::rows::Row::Group { members, expanded: false } => v.extend(members),
-                                other => v.push(other.txn()),
-                            }
-                        }
-                        v.sort_unstable();
-                        v.dedup();
-                        v
-                    }
-                    Scope::Selected => vec![txn],
-                };
+                let txns = self.scope_txns(scope);
                 let path = format!("./{}.har", timestamp_name());
                 self.prompt =
                     Some(Prompt { label: "export HAR to", input: Input::new(path), action: PromptAction::Har(txns) });
                 self.overlay = Overlay::Prompt;
                 return;
             }
-            MenuAction::ExportSession => {
+            MenuAction::ExportSession(scope) => {
+                let keep = (scope != Scope::All).then(|| self.scope_txns(scope));
                 let path = format!("./{}.trafficpolice", timestamp_name());
                 self.prompt = Some(Prompt {
                     label: "save the session to",
                     input: Input::new(path),
-                    action: PromptAction::Session,
+                    action: PromptAction::Session(keep),
                 });
                 self.overlay = Overlay::Prompt;
                 return;
             }
+            _ => {}
+        }
+        let Some(txn) = self.selected else { return };
+        let text = match action {
+            MenuAction::ExportHar(_) | MenuAction::ExportSession(_) => return,
             MenuAction::CopyUrl => self.view_store().txn(txn).url.raw.clone(),
             MenuAction::CopyRequestHeaders => {
                 self.view_store().txn(txn).req_headers.iter().map(|(n, v)| format!("{n}: {v}\n")).collect()
@@ -424,6 +428,26 @@ impl App {
             },
         };
         self.copy_text(text);
+    }
+
+    /// The transactions an export covers.
+    fn scope_txns(&self, scope: Scope) -> Vec<TxnIdx> {
+        match scope {
+            Scope::All => (0..self.view_store().len() as TxnIdx).collect(),
+            Scope::Listed => {
+                let mut v: Vec<TxnIdx> = Vec::new();
+                for r in self.view_rows().rows() {
+                    match r {
+                        traffic_police_core::rows::Row::Group { members, expanded: false } => v.extend(members),
+                        other => v.push(other.txn()),
+                    }
+                }
+                v.sort_unstable();
+                v.dedup();
+                v
+            }
+            Scope::Selected => self.selected.into_iter().collect(),
+        }
     }
 
     pub fn copy_text(&mut self, text: String) {
@@ -542,7 +566,15 @@ impl App {
                     .and_then(|bytes| std::fs::write(&path, bytes))
                     .map(|_| format!("wrote {} requests", txns.len()))
             }
-            PromptAction::Session => Ok("session files are not written yet".into()),
+            PromptAction::Session(keep) => match self.session_log.clone() {
+                Some(log) => {
+                    let store = self.view_store();
+                    let keep: Option<std::collections::HashSet<_>> =
+                        keep.map(|v| v.iter().map(|&i| store.txn(i).key).collect());
+                    log.export(store, &path, keep.as_ref()).map(|n| format!("saved a session of {n} requests"))
+                }
+                None => Ok("this session has no recording to save".into()),
+            },
         };
         match result {
             Ok(what) => self.flash(format!("{what} to {}", path.display())),

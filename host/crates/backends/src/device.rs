@@ -3,6 +3,7 @@
 //! going across hiccups: the same process is resumed where it left off (by `seq`), a restarted
 //! app is followed with `--follow`, and anything else ends in DETACHED with all data kept.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use bytes::BytesMut;
@@ -16,6 +17,7 @@ use traffic_police_core::SessionEvent;
 use traffic_police_core::backend::{BackendCommand, ConnectionStatus};
 use traffic_police_core::model::{SourceId, SourceInfo};
 use traffic_police_core::normalize::{Control, Normalizer};
+use traffic_police_core::session::{DeviceRecord, SessionLog};
 use traffic_police_core::store::SourceIds;
 use traffic_police_proto::msg::{self, CaptureConfig, CaptureConfigPatch, HostMsg, RuleSet};
 use traffic_police_proto::{Decoder, PROTOCOL_VERSION};
@@ -113,6 +115,14 @@ enum End {
     Mismatch(String),
 }
 
+/// Where a connection's results go: events for the store, and the captured stream for the
+/// session log (when one is kept).
+struct Out {
+    events: mpsc::Sender<Vec<SessionEvent>>,
+    log: Option<Arc<SessionLog>>,
+}
+
+#[allow(clippy::too_many_arguments)]
 pub async fn run_device(
     adb: Adb,
     target: DeviceTarget,
@@ -120,7 +130,9 @@ pub async fn run_device(
     events: mpsc::Sender<Vec<SessionEvent>>,
     mut commands: mpsc::UnboundedReceiver<BackendCommand>,
     status: watch::Sender<ConnectionStatus>,
+    log: Option<Arc<SessionLog>>,
 ) {
+    let out = Out { events, log };
     // the process we attach to (kept across hiccups and device disconnects, to resume it)
     let mut resume: Option<Resume> = None;
     let mut devices = adb.watch_devices();
@@ -137,7 +149,7 @@ pub async fn run_device(
                 _ => {}
             }
         }
-        if events.is_closed() {
+        if out.events.is_closed() {
             return;
         }
         let snapshot = devices.borrow_and_update().clone();
@@ -164,7 +176,7 @@ pub async fn run_device(
             Ok(None) => {
                 if let Some(mut r) = resume.take() {
                     // the process we were attached to is gone
-                    close_source(&events, &mut r, "the app exited").await;
+                    close_source(&out, &mut r, "the app exited").await;
                     if !target.follow {
                         set_status(&status, ConnectionStatus::Detached("the app exited · data kept".into()));
                         return;
@@ -209,12 +221,11 @@ pub async fn run_device(
             continue;
         }
 
-        let end =
-            connect(&adb, &device, &socket, &ids, &events, &mut commands, &status, &mut resume, &mut config).await;
+        let end = connect(&adb, &device, &socket, &ids, &out, &mut commands, &status, &mut resume, &mut config).await;
         let reason = match end {
             End::Shutdown => {
                 if let Some(r) = resume.as_mut() {
-                    close_source(&events, r, "traffic-police quit").await;
+                    close_source(&out, r, "traffic-police quit").await;
                 }
                 return;
             }
@@ -224,7 +235,7 @@ pub async fn run_device(
             }
             End::Bye(reason, message) if reason == "replaced" => {
                 if let Some(r) = resume.as_mut() {
-                    close_source(&events, r, "another traffic-police connected to the app").await;
+                    close_source(&out, r, "another traffic-police connected to the app").await;
                 }
                 set_status(
                     &status,
@@ -265,13 +276,13 @@ pub async fn run_device(
         if find_device(&adb, target.serial.as_deref()).await.is_err() {
             // keep `resume`: when the device returns with the process alive, it continues
             if let Some(r) = resume.as_mut() {
-                close_source(&events, r, "the device was disconnected").await;
+                close_source(&out, r, "the device was disconnected").await;
             }
             continue;
         }
         // the process is gone
         if let Some(mut r) = resume.take() {
-            close_source(&events, &mut r, "the app exited").await;
+            close_source(&out, &mut r, "the app exited").await;
             followed_away_from = Some(r.pid);
         }
         if !target.follow {
@@ -313,12 +324,15 @@ async fn wait_or_quit(
 }
 
 /// Ends the process's source on the timeline (once).
-async fn close_source(events: &mpsc::Sender<Vec<SessionEvent>>, r: &mut Resume, reason: &str) {
+async fn close_source(out: &Out, r: &mut Resume, reason: &str) {
     if !r.closed {
         r.closed = true;
-        let _ = events
-            .send(vec![SessionEvent::SourceDown { source: r.source, at: r.device_now(), reason: reason.to_string() }])
-            .await;
+        let at = r.device_now();
+        if let Some(log) = &out.log {
+            log.source_end(r.source, at, reason);
+        }
+        let _ =
+            out.events.send(vec![SessionEvent::SourceDown { source: r.source, at, reason: reason.to_string() }]).await;
     }
 }
 
@@ -392,7 +406,7 @@ async fn connect(
     device: &Device,
     socket: &RuntimeSocket,
     ids: &SourceIds,
-    events: &mpsc::Sender<Vec<SessionEvent>>,
+    out: &Out,
     commands: &mut mpsc::UnboundedReceiver<BackendCommand>,
     status: &watch::Sender<ConnectionStatus>,
     resume: &mut Option<Resume>,
@@ -402,7 +416,7 @@ async fn connect(
         Ok(p) => p,
         Err(e) => return End::Lost(format!("adb forward failed: {e}")),
     };
-    let end = stream(adb, port, device, socket, ids, events, commands, status, resume, config).await;
+    let end = stream(adb, port, device, socket, ids, out, commands, status, resume, config).await;
     if let Err(e) = adb.kill_forward(device.transport_id, port).await {
         tracing::debug!("removing forward tcp:{port}: {e}");
     }
@@ -416,7 +430,7 @@ async fn stream(
     device: &Device,
     socket: &RuntimeSocket,
     ids: &SourceIds,
-    events: &mpsc::Sender<Vec<SessionEvent>>,
+    out: &Out,
     commands: &mut mpsc::UnboundedReceiver<BackendCommand>,
     status: &watch::Sender<ConnectionStatus>,
     resume: &mut Option<Resume>,
@@ -436,7 +450,7 @@ async fn stream(
     let hello = loop {
         tokio::select! {
             r = read_hello(&mut rd, &mut decoder, &mut buf) => match r {
-                Ok(Some(h)) => break h,
+                Ok(Some((h, raw))) => break (h, raw),
                 Ok(None) => return End::NoRuntime,
                 Err(e) => return End::Lost(e),
             },
@@ -453,6 +467,7 @@ async fn stream(
             }
         }
     };
+    let (hello, raw_hello) = hello;
     if hello.protocol != PROTOCOL_VERSION {
         let bye = HostMsg::Bye(msg::Bye {
             reason: "protocol_mismatch".into(),
@@ -476,7 +491,7 @@ async fn stream(
         && let Some(old) = resume.as_mut()
     {
         // same pid, different runtime instance: the old process is gone
-        close_source(events, old, "the app restarted").await;
+        close_source(out, old, "the app restarted").await;
     }
     let (source, resume_after) = resumed.unwrap_or_else(|| (ids.next(), 0));
     let ack = HostMsg::HelloAck(msg::HelloAck {
@@ -494,8 +509,12 @@ async fn stream(
     if resumed.is_some() {
         info.started = info.clock.map_or(info.started, |(ts, _)| ts);
     }
+    if let Some(log) = &out.log {
+        let device = DeviceRecord { label: device.label(), serial: Some(device.serial.clone()) };
+        log.source(source, &device, &raw_hello, resumed.is_some());
+    }
     // a resumed process gets a reattach marker from the store (same source, new segment)
-    if events.send(vec![SessionEvent::SourceUp(Box::new(info))]).await.is_err() {
+    if out.events.send(vec![SessionEvent::SourceUp(Box::new(info))]).await.is_err() {
         return End::Shutdown;
     }
     *resume = Some(Resume {
@@ -519,7 +538,7 @@ async fn stream(
 
     // frames already buffered behind the hello
     let mut batch = Vec::new();
-    if let Some(end) = drain(&mut decoder, &mut normalizer, &mut batch) {
+    if let Some(end) = drain(&mut decoder, &mut normalizer, &mut batch, out.log.as_deref()) {
         return end;
     }
     loop {
@@ -532,7 +551,7 @@ async fn stream(
                     }
                 }
             }
-            if events.send(std::mem::take(&mut batch)).await.is_err() {
+            if out.events.send(std::mem::take(&mut batch)).await.is_err() {
                 return End::Shutdown;
             }
         }
@@ -546,11 +565,11 @@ async fn stream(
                         set_status(status, ConnectionStatus::Live(live.clone()));
                     }
                     decoder.push(&buf[..n]);
-                    if let Some(end) = drain(&mut decoder, &mut normalizer, &mut batch) {
+                    if let Some(end) = drain(&mut decoder, &mut normalizer, &mut batch, out.log.as_deref()) {
                         if let Some(r) = resume.as_mut() {
                             r.last_seq = normalizer.last_seq();
                         }
-                        let _ = events.send(std::mem::take(&mut batch)).await;
+                        let _ = out.events.send(std::mem::take(&mut batch)).await;
                         return end;
                     }
                 }
@@ -612,15 +631,26 @@ async fn stream(
 }
 
 /// Decodes buffered frames into `batch`; returns how the connection ends, if it does.
-fn drain(decoder: &mut Decoder, normalizer: &mut Normalizer, batch: &mut Vec<SessionEvent>) -> Option<End> {
+fn drain(
+    decoder: &mut Decoder,
+    normalizer: &mut Normalizer,
+    batch: &mut Vec<SessionEvent>,
+    log: Option<&SessionLog>,
+) -> Option<End> {
     loop {
         match decoder.next_frame() {
             // pongs become Clock events in the batch (the normalizer adds them)
-            Ok(Some(frame)) => match normalizer.frame(frame, batch) {
-                Ok(Some(Control::Bye(b))) => return Some(End::Bye(b.reason, b.message.unwrap_or_default())),
-                Ok(_) => {}
-                Err(e) => tracing::warn!("undecodable message from the device: {e}"),
-            },
+            Ok(Some(frame)) => {
+                if let Some(log) = log {
+                    log.frame(normalizer.source(), &frame);
+                }
+                let control = normalizer.frame(frame, batch);
+                match control {
+                    Ok(Some(Control::Bye(b))) => return Some(End::Bye(b.reason, b.message.unwrap_or_default())),
+                    Ok(_) => {}
+                    Err(e) => tracing::warn!("undecodable message from the device: {e}"),
+                }
+            }
             Ok(None) => return None,
             Err(e) if e.is_fatal() => return Some(End::Lost(format!("corrupt stream from the device: {e}"))),
             Err(e) => tracing::warn!("bad frame from the device: {e}"),
@@ -632,12 +662,12 @@ async fn read_hello(
     rd: &mut tokio::net::tcp::OwnedReadHalf,
     decoder: &mut Decoder,
     buf: &mut [u8],
-) -> Result<Option<Box<msg::Hello>>, String> {
+) -> Result<Option<(Box<msg::Hello>, bytes::Bytes)>, String> {
     loop {
         match decoder.next_frame() {
             Ok(Some(traffic_police_proto::Frame::Json(json))) => {
                 return match msg::parse_device(&json) {
-                    Ok(msg::DeviceMsg::Hello(h)) => Ok(Some(Box::new(h))),
+                    Ok(msg::DeviceMsg::Hello(h)) => Ok(Some((Box::new(h), json))),
                     Ok(other) => Err(format!("expected hello, got {other:?}")),
                     Err(e) => Err(format!("undecodable hello: {e}")),
                 };

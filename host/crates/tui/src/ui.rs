@@ -158,6 +158,7 @@ fn draw_header(app: &App, r: Rect, buf: &mut Buffer) {
     // a live backend's own account of the connection comes first
     let (label, style, note) = match &app.connection {
         _ if app.is_frozen() => ("FROZEN", t.accent(), None),
+        _ if app.replay.is_some() => ("REPLAY", t.accent(), app.replay.as_ref()),
         Some(ConnectionStatus::Failed(m)) => ("FAILED", t.error(), Some(m)),
         Some(ConnectionStatus::Waiting(m)) => ("WAITING", t.warn(), Some(m)),
         Some(ConnectionStatus::Detached(m)) => ("DETACHED", t.error(), Some(m)),

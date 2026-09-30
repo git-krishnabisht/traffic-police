@@ -16,6 +16,7 @@ pub mod normalize;
 pub mod phases;
 pub mod project;
 pub mod rows;
+pub mod session;
 pub mod store;
 
 pub use event::SessionEvent;

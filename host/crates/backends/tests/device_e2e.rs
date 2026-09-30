@@ -431,6 +431,7 @@ async fn sample_app_end_to_end() {
             event_tx.clone(),
             cmd_rx,
             status_tx,
+            None,
         )));
         quit.push(cmd_tx);
     }

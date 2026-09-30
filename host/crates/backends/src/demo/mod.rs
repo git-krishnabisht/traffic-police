@@ -20,7 +20,7 @@ use traffic_police_proto::msg::{
     Hello, Pattern, ReqBodyInfo, Rule, RuleAction, RuleMatch, RuleRef, RuleSet, RuntimeInfo, StackFrame, ThreadInfo,
     Tls,
 };
-use traffic_police_proto::{BodyChunk, BodyDir, Decoder, Headers, PROTOCOL_VERSION, frame};
+use traffic_police_proto::{BodyChunk, BodyDir, Decoder, Frame, Headers, PROTOCOL_VERSION, frame};
 
 use content::{Rng, gzip, h, http_date};
 
@@ -1392,6 +1392,8 @@ pub struct DemoSession {
     ids: SourceIds,
     current: Option<u32>,
     buf: BytesMut,
+    /// Keeps the generated stream, so a demo session can be saved like a real one.
+    pub log: Option<std::sync::Arc<traffic_police_core::session::SessionLog>>,
 }
 
 impl DemoSession {
@@ -1402,6 +1404,7 @@ impl DemoSession {
             normalizer: Normalizer::new(0),
             ids,
             current: None,
+            log: None,
             buf: BytesMut::new(),
         }
     }
@@ -1437,21 +1440,38 @@ impl DemoSession {
                     continue;
                 }
             };
+            // the hello goes into the log's source record; everything else as a device frame
+            let hello_json = match &frame {
+                Frame::Json(j) if j.starts_with(br#"{"t":"hello""#) => Some(j.clone()),
+                _ => None,
+            };
+            if hello_json.is_none()
+                && let (Some(log), Some(id)) = (&self.log, self.current)
+            {
+                log.frame(id, &frame);
+            }
             match self.normalizer.frame(frame, &mut out) {
                 Ok(Some(Control::Hello(hello))) => {
                     let id = self.ids.next();
                     self.current = Some(id);
                     self.normalizer = Normalizer::new(id);
                     let info = SourceInfo::from_hello(id, &hello, "Pixel 8 [demo]".into(), Some("demo".into()));
+                    if let (Some(log), Some(raw)) = (&self.log, &hello_json) {
+                        let device = traffic_police_core::session::DeviceRecord {
+                            label: "Pixel 8 [demo]".into(),
+                            serial: Some("demo".into()),
+                        };
+                        log.source(id, &device, raw, false);
+                    }
                     out.push(SessionEvent::SourceUp(Box::new(info)));
                 }
                 Ok(Some(Control::Bye(bye))) => {
                     if let Some(id) = self.current.take() {
-                        out.push(SessionEvent::SourceDown {
-                            source: id,
-                            at: self.device.now,
-                            reason: bye.message.unwrap_or(bye.reason),
-                        });
+                        let reason = bye.message.unwrap_or(bye.reason);
+                        if let Some(log) = &self.log {
+                            log.source_end(id, self.device.now, &reason);
+                        }
+                        out.push(SessionEvent::SourceDown { source: id, at: self.device.now, reason });
                     }
                 }
                 Ok(_) => {}

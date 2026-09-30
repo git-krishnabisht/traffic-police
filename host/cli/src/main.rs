@@ -1,7 +1,7 @@
 //! traffic-police: watch an Android app's HTTP traffic from the terminal.
 
 use std::io::{Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command as Process, Stdio};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -92,6 +92,11 @@ enum ThemeArg {
 enum Command {
     /// Show the inspector with simulated traffic from a pretend app (no device needed).
     Demo(DemoArgs),
+    /// Open a saved session (.trafficpolice) or a HAR file.
+    Open {
+        /// The file to open.
+        file: PathBuf,
+    },
     /// Internal: run one jq filter over stdin and print the result as JSON.
     #[command(name = "__jq", hide = true)]
     Jq {
@@ -124,6 +129,16 @@ fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Some(Command::Jq { filter }) => jq_child(&filter),
+        Some(Command::Open { ref file }) => {
+            let theme = theme(cli.theme);
+            let _log = init_logging(cli.log_file.as_deref())?;
+            traffic_police_core::fmt::set_local_offset_secs(traffic_police_tui::local_utc_offset_secs());
+            spill::remove_stale();
+            let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
+            let result = rt.block_on(run_open(file, theme, !cli.no_images));
+            spill::remove_all();
+            result
+        }
         Some(Command::Demo(ref args)) => {
             let theme = theme(cli.theme);
             if let Some(spec) = &args.dump_frame {
@@ -283,7 +298,9 @@ async fn run_device_mode(args: TargetArgs, theme: Theme, detect_images: bool) ->
     let (command_tx, command_rx) = mpsc::unbounded_channel();
     app.commands = Some(command_tx);
     let (status_tx, status_rx) = watch::channel(ConnectionStatus::Waiting("looking for the device…".into()));
-    let backend = tokio::spawn(run_device(adb, target, ids, event_tx, command_rx, status_tx));
+    let log = session_log();
+    app.session_log = log.clone();
+    let backend = tokio::spawn(run_device(adb, target, ids, event_tx, command_rx, status_tx, log));
     let result = terminal::run(app, event_rx, RunOptions { detect_images, status: Some(status_rx) }).await;
     // the UI dropped its command sender: the backend says goodbye and removes its forward
     let _ = tokio::time::timeout(Duration::from_secs(3), backend).await;
@@ -327,10 +344,49 @@ async fn run_demo(args: &DemoArgs, theme: Theme, detect_images: bool) -> anyhow:
     let (command_tx, command_rx) = mpsc::unbounded_channel();
     app.commands = Some(command_tx);
     app.jq_runner = jq_in_child;
-    let backend = tokio::spawn(traffic_police_backends::run_demo(cfg, args.speed, ids, event_tx, command_rx));
+    let log = session_log();
+    app.session_log = log.clone();
+    let backend = tokio::spawn(traffic_police_backends::run_demo(cfg, args.speed, ids, event_tx, command_rx, log));
     let result = terminal::run(app, event_rx, RunOptions { detect_images, status: None }).await;
     backend.abort();
     result
+}
+
+/// `open FILE`: a saved session, replayed into the UI.
+async fn run_open(file: &Path, theme: Theme, detect_images: bool) -> anyhow::Result<()> {
+    let mut app = App::new(SessionStore::new(), theme);
+    app.caps = Capabilities { pause: false, rules: false, live: false };
+    load_project(&mut app);
+    app.jq_runner = jq_in_child;
+    let name = file.file_name().map_or_else(|| file.display().to_string(), |n| n.to_string_lossy().into_owned());
+    if !traffic_police_core::session::is_session_file(file) {
+        bail!("{} is not a traffic-police session file (.trafficpolice)", file.display());
+    }
+    let opened = traffic_police_core::session::open(file, &app.store.source_ids())
+        .with_context(|| format!("cannot read {}", file.display()))?;
+    app.ingest(opened.events);
+    for key in opened.pins {
+        if let Some(i) = app.store.find(key) {
+            app.store.set_pinned(i, true);
+        }
+    }
+    app.replay = Some(if opened.truncated { format!("{name} (the recording was cut short)") } else { name });
+    // time stands still at the end of the recording
+    app.now_override = Some(app.store.latest());
+    let (_event_tx, event_rx) = mpsc::channel(1);
+    terminal::run(app, event_rx, RunOptions { detect_images, status: None }).await
+}
+
+/// A recording of the captured stream in a private temporary directory, so the session can be
+/// saved from the UI (`e`). Without one (no writable temp dir), saving a session is not offered.
+fn session_log() -> Option<std::sync::Arc<traffic_police_core::session::SessionLog>> {
+    match traffic_police_core::session::SessionLog::temporary() {
+        Ok(log) => Some(std::sync::Arc::new(log)),
+        Err(e) => {
+            tracing::warn!("no session recording: {e}");
+            None
+        }
+    }
 }
 
 /// `--dump-frame WxH@SECS`: run the demo in virtual time and print one frame.

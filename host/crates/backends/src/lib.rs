@@ -23,8 +23,10 @@ pub async fn run_demo(
     ids: SourceIds,
     events: mpsc::Sender<Vec<SessionEvent>>,
     mut commands: mpsc::UnboundedReceiver<BackendCommand>,
+    log: Option<std::sync::Arc<traffic_police_core::session::SessionLog>>,
 ) {
     let mut session = DemoSession::new(cfg, ids);
+    session.log = log;
     let start = Instant::now();
     let mut tick = tokio::time::interval(Duration::from_millis(25));
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);

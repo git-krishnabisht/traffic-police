@@ -29,12 +29,7 @@ impl SpillFile {
     }
 
     pub(crate) fn create_in(parent: &Path) -> io::Result<SpillFile> {
-        let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
-        let dir = parent.join(format!("{PREFIX}{}-{:x}", std::process::id(), nanos & 0xffff_ffff_ffff));
-        let mut builder = fs::DirBuilder::new();
-        #[cfg(unix)]
-        std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
-        builder.create(&dir)?;
+        let dir = private_dir_in(parent)?;
         let file = match OpenOptions::new().read(true).write(true).create_new(true).open(dir.join("bodies.bin")) {
             Ok(f) => f,
             Err(e) => {
@@ -42,7 +37,6 @@ impl SpillFile {
                 return Err(e);
             }
         };
-        DIRS.lock().unwrap_or_else(|e| e.into_inner()).push(dir.clone());
         tracing::info!("spilling bodies to {}", dir.display());
         Ok(SpillFile { dir, file: Mutex::new((file, 0)) })
     }
@@ -84,6 +78,25 @@ impl Drop for SpillFile {
     }
 }
 
+/// A new private directory for this run (`<temp>/traffic-police-<pid>-<suffix>/`, mode 0700 on
+/// Unix), removed by [`remove_all`] or found by [`remove_stale`] if this process dies.
+pub fn private_dir() -> io::Result<PathBuf> {
+    private_dir_in(&std::env::temp_dir())
+}
+
+fn private_dir_in(parent: &Path) -> io::Result<PathBuf> {
+    static COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
+    let n = COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let dir = parent.join(format!("{PREFIX}{}-{:x}{n:x}", std::process::id(), nanos & 0xffff_ffff_ffff));
+    let mut builder = fs::DirBuilder::new();
+    #[cfg(unix)]
+    std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+    builder.create(&dir)?;
+    DIRS.lock().unwrap_or_else(|e| e.into_inner()).push(dir.clone());
+    Ok(dir)
+}
+
 /// Removes every spill directory of this process (panic hook, SIGTERM, SIGHUP). Stores that are
 /// still alive lose their spilled bytes, so call this only on the way out.
 pub fn remove_all() {
@@ -111,7 +124,8 @@ pub(crate) fn remove_stale_in(parent: &Path) {
         else {
             continue;
         };
-        if pid != std::process::id() && !alive(pid) && e.path().join("bodies.bin").exists() {
+        let ours = ["bodies.bin", "stream.bin"].iter().any(|f| e.path().join(f).exists());
+        if pid != std::process::id() && !alive(pid) && ours {
             tracing::info!("removing a spill directory left by pid {pid}: {}", e.path().display());
             let _ = fs::remove_dir_all(e.path());
         }

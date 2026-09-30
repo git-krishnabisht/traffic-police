@@ -303,6 +303,10 @@ pub struct App {
     pub clipboard: crate::share::ClipboardMode,
     /// The last text copied (also kept when the clipboard is off).
     pub copied: Option<String>,
+    /// The file being replayed (`open FILE`), for the header.
+    pub replay: Option<String>,
+    /// The captured stream, for saving the session (`e`).
+    pub session_log: Option<Arc<traffic_police_core::session::SessionLog>>,
     pub search_input: Input,
     search_before: Option<String>,
     /// Where the text being typed stops parsing (the previous filter stays active meanwhile).
@@ -370,6 +374,8 @@ impl App {
             prompt: None,
             clipboard: crate::share::ClipboardMode::default(),
             copied: None,
+            session_log: None,
+            replay: None,
             search_input: Input::default(),
             search_before: None,
             filter_error: None,
@@ -1566,7 +1572,7 @@ impl App {
         {
             return true;
         }
-        if self.frozen.is_some() {
+        if self.frozen.is_some() || self.now_override.is_some() {
             return false;
         }
         self.graph.pinned_right.is_none() && self.store.sources().any(|s| s.ended.is_none())
