@@ -55,9 +55,8 @@ async fn about(adb: &Adb, id: TransportId) -> Option<String> {
 pub async fn pick(adb: Adb, theme: Theme) -> anyhow::Result<Option<Picked>> {
     terminal::install_panic_hook();
     let mut term = terminal::setup()?;
-    let result = run(&mut term, adb, theme).await;
-    terminal::restore_terminal();
-    result
+    // dropping `term` puts the terminal back
+    run(&mut term, adb, theme).await
 }
 
 async fn fetch_processes(adb: &Adb, id: TransportId) -> Result<Vec<ProcessRow>, String> {
@@ -99,6 +98,7 @@ async fn fetch_processes(adb: &Adb, id: TransportId) -> Result<Vec<ProcessRow>, 
 }
 
 async fn run(term: &mut terminal::Term, adb: Adb, theme: Theme) -> anyhow::Result<Option<Picked>> {
+    let mut stop = terminal::StopSignals::new()?;
     let (tx, mut rx) = mpsc::unbounded_channel::<Snapshot>();
     let (want_tx, mut want_rx) = mpsc::unbounded_channel::<Option<TransportId>>();
     // devices as adb reports them (pushed on every change)
@@ -196,6 +196,10 @@ async fn run(term: &mut terminal::Term, adb: Adb, theme: Theme) -> anyhow::Resul
                 }
                 None => break,
             },
+            signal = stop.recv() => {
+                tracing::info!(?signal, "stopping in the picker");
+                break;
+            }
             ev = input.next() => {
                 let Some(Ok(Event::Key(k))) = ev else { continue };
                 if k.kind == KeyEventKind::Release {

@@ -330,7 +330,7 @@ fn headless_run(
     spill::remove_stale();
     let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
     let result = rt.block_on(async {
-        headless::stop_on_ctrl_c();
+        headless::stop_on_signals();
         work.await
     });
     // the backend may still be saying goodbye; it has had its chance
@@ -361,7 +361,7 @@ async fn headless_source(
     };
     let rules = ProjectRules::find(project);
     if let Some(s) = rules.summary() {
-        eprintln!("traffic-police: {s}");
+        headless::note(s);
     }
     let target = DeviceTarget {
         serial: args.serial.clone().or_else(|| outer.serial.clone()),
@@ -577,10 +577,25 @@ async fn run_device_mode(
     app.session_log = log.clone();
     let sink = log.map(|l| l as std::sync::Arc<dyn traffic_police_core::session::StreamSink>);
     let backend = tokio::spawn(run_device(adb, target, ids, event_tx, command_rx, status_tx, sink));
-    let result = terminal::run(app, event_rx, RunOptions { detect_images, status: Some(status_rx) }).await;
-    // the UI dropped its command sender: the backend says goodbye and removes its forward
+    let ui = catch_unwind(terminal::run(app, event_rx, RunOptions { detect_images, status: Some(status_rx) })).await;
+    // the UI dropped its command sender (a panic too): the backend says goodbye and removes its
+    // forward
     let _ = tokio::time::timeout(Duration::from_secs(3), backend).await;
-    result
+    ui.unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+}
+
+/// Runs `f` to its end or to a panic, so that what has to follow (the backend's goodbye) still
+/// happens; the caller carries the panic on.
+async fn catch_unwind<F: Future>(f: F) -> std::thread::Result<F::Output> {
+    let mut f = std::pin::pin!(f);
+    std::future::poll_fn(move |cx| {
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f.as_mut().poll(cx))) {
+            Ok(std::task::Poll::Ready(v)) => std::task::Poll::Ready(Ok(v)),
+            Ok(std::task::Poll::Pending) => std::task::Poll::Pending,
+            Err(panic) => std::task::Poll::Ready(Err(panic)),
+        }
+    })
+    .await
 }
 
 /// `--launch`: start the app's launcher activity.
@@ -794,4 +809,23 @@ fn jq_in_child(filter: &str, input: &[u8]) -> JqResult {
         .unwrap_or_default();
     let truncated = reply.get("truncated").and_then(|t| t.as_bool()).unwrap_or(false);
     Ok((values, truncated))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn a_panic_in_the_ui_still_lets_the_backend_say_goodbye() {
+        let (commands, mut backend) = mpsc::unbounded_channel::<()>();
+        let ui = catch_unwind(async move {
+            let _commands = commands;
+            tokio::task::yield_now().await;
+            panic!("a bug in the UI");
+        })
+        .await;
+        assert!(ui.is_err());
+        // the command sender went with the UI, so the backend sees the end and says goodbye
+        assert!(backend.recv().await.is_none());
+    }
 }

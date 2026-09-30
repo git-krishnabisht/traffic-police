@@ -5,6 +5,8 @@
 //! live view about 4 times per second so the time axis keeps moving.
 
 use std::io::{self, Stdout};
+use std::mem::ManuallyDrop;
+use std::ops::{Deref, DerefMut};
 use std::path::Path;
 use std::sync::Once;
 use std::time::{Duration, Instant};
@@ -28,13 +30,54 @@ use crate::bodyview::BodyView;
 use crate::images::Images;
 use crate::ui;
 
-pub(crate) type Term = Terminal<CrosstermBackend<Stdout>>;
+/// The terminal while a UI owns it. Dropping it puts the terminal back ([`restore_terminal`],
+/// errors ignored) and never runs ratatui's own drop: that one shows the cursor again and reports
+/// a failure with `eprintln!`, which panics once the window is closed, and the panic would skip
+/// the goodbye that removes the adb forward.
+pub(crate) struct Term(ManuallyDrop<Terminal<CrosstermBackend<Stdout>>>);
+
+impl Term {
+    /// A fresh ratatui terminal in place of this one (after an editor used the screen).
+    fn replace(&mut self, fresh: Terminal<CrosstermBackend<Stdout>>) {
+        let mut old = std::mem::replace(&mut *self.0, fresh);
+        // with the cursor shown, ratatui's drop has nothing to report
+        if old.show_cursor().is_ok() {
+            drop(old);
+        } else {
+            std::mem::forget(old);
+        }
+    }
+}
+
+impl Deref for Term {
+    type Target = Terminal<CrosstermBackend<Stdout>>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for Term {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl Drop for Term {
+    fn drop(&mut self) {
+        restore_terminal();
+    }
+}
 
 /// Redraw pacing: up to 60 frames a second for input and arriving data, 30 while only the
 /// clock moves things (the live graph, growing bars), none when nothing changes.
 const INPUT_FRAME: Duration = Duration::from_millis(16);
 const DATA_FRAME: Duration = Duration::from_millis(16);
 const CLOCK_FRAME: Duration = Duration::from_millis(33);
+
+/// Ctrl+C typed in an editor reaches this process as well, possibly just after the editor has
+/// exited because of it; an interrupt this soon after the editor is the editor's.
+const EDITOR_INTERRUPT: Duration = Duration::from_secs(1);
 
 /// Put the terminal back: raw mode off, main screen, mouse and paste reporting off, cursor on.
 /// Safe to call more than once and from the panic hook.
@@ -63,7 +106,13 @@ pub(crate) fn setup() -> io::Result<Term> {
         restore_terminal();
         return Err(e);
     }
-    Terminal::new(CrosstermBackend::new(out))
+    match Terminal::new(CrosstermBackend::new(out)) {
+        Ok(t) => Ok(Term(ManuallyDrop::new(t))),
+        Err(e) => {
+            restore_terminal();
+            Err(e)
+        }
+    }
 }
 
 pub struct RunOptions {
@@ -83,9 +132,8 @@ pub async fn run(mut app: App, mut events: mpsc::Receiver<Vec<SessionEvent>>, op
     let mut term = setup()?;
     // The probe reads the terminal's answer from stdin, so it runs before the input stream exists.
     app.images = if opts.detect_images { Images::detect() } else { Images::halfblocks() };
-    let result = event_loop(&mut term, &mut app, &mut events, opts.status).await;
-    restore_terminal();
-    result
+    // dropping `term` puts the terminal back
+    event_loop(&mut term, &mut app, &mut events, opts.status).await
 }
 
 /// An editor started from the Call Stack tab; the loop keeps ingesting events while it runs.
@@ -118,6 +166,7 @@ async fn event_loop(
     // the editor for keystrokes.
     let mut input = Some(EventStream::new());
     let mut editor: Option<Editor> = None;
+    let mut editor_ended: Option<Instant> = None;
     let (jq_tx, mut jq_rx) = mpsc::unbounded_channel::<(JqJob, JqResult)>();
     let (body_tx, mut body_rx) = mpsc::unbounded_channel::<(BodyJob, BodyView)>();
     let (search_tx, mut search_rx) = mpsc::unbounded_channel::<(crate::app::SearchJob, bool)>();
@@ -153,6 +202,7 @@ async fn event_loop(
             },
             status = async { editor.as_mut().expect("guarded").child.wait().await }, if editor.is_some() => {
                 let Editor { path, .. } = editor.take().expect("guarded");
+                editor_ended = Some(Instant::now());
                 resume_terminal(term)?;
                 input = Some(EventStream::new());
                 match status {
@@ -199,8 +249,12 @@ async fn event_loop(
                 app.rules_reloaded(f);
                 input_dirty = true;
             }
-            _ = stop.recv() => {
-                // SIGTERM or SIGHUP: leave the loop so the terminal is restored
+            signal = stop.recv() => {
+                let near_editor = editor.is_some() || editor_ended.is_some_and(|t| t.elapsed() < EDITOR_INTERRUPT);
+                if signal == StopSignal::Interrupt && near_editor {
+                    continue;
+                }
+                tracing::info!(?signal, "stopping");
                 if let Some(Editor { mut child, .. }) = editor.take() {
                     let _ = child.kill().await;
                 }
@@ -329,43 +383,68 @@ fn resume_terminal(term: &mut Term) -> anyhow::Result<()> {
     // A fresh Terminal has empty buffers, so the next frame is drawn in full. (Terminal::clear
     // would ask the terminal for the cursor position first, and that query can fail right
     // after another program used the terminal.)
-    *term = Terminal::new(CrosstermBackend::new(io::stdout()))?;
+    term.replace(Terminal::new(CrosstermBackend::new(io::stdout()))?);
     Ok(())
 }
 
-/// SIGTERM and SIGHUP (Unix). Raw mode delivers Ctrl+C as a key, so SIGINT is not needed.
+/// What asked the UI to stop from outside. Each ends it the way `q` does: the app is told
+/// goodbye, which removes the adb forward.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum StopSignal {
+    /// SIGTERM.
+    Terminate,
+    /// SIGHUP, or the console window closed (Windows): the terminal is gone.
+    HangUp,
+    /// SIGINT or Ctrl+Break. Raw mode delivers Ctrl+C as a key, so this comes from kill, or
+    /// from Ctrl+C typed while an editor has the terminal (and is then the editor's).
+    Interrupt,
+}
+
 #[cfg(unix)]
-struct StopSignals {
+pub(crate) struct StopSignals {
     term: tokio::signal::unix::Signal,
     hup: tokio::signal::unix::Signal,
+    int: tokio::signal::unix::Signal,
 }
 
 #[cfg(unix)]
 impl StopSignals {
-    fn new() -> io::Result<Self> {
+    pub(crate) fn new() -> io::Result<Self> {
         use tokio::signal::unix::{SignalKind, signal};
-        Ok(StopSignals { term: signal(SignalKind::terminate())?, hup: signal(SignalKind::hangup())? })
+        Ok(StopSignals {
+            term: signal(SignalKind::terminate())?,
+            hup: signal(SignalKind::hangup())?,
+            int: signal(SignalKind::interrupt())?,
+        })
     }
 
-    async fn recv(&mut self) {
+    pub(crate) async fn recv(&mut self) -> StopSignal {
         tokio::select! {
-            _ = self.term.recv() => {}
-            _ = self.hup.recv() => {}
+            _ = self.term.recv() => StopSignal::Terminate,
+            _ = self.hup.recv() => StopSignal::HangUp,
+            _ = self.int.recv() => StopSignal::Interrupt,
         }
     }
 }
 
-/// Elsewhere (Windows) there is no terminal state to restore when the console goes away.
-#[cfg(not(unix))]
-struct StopSignals;
+/// When the console window closes, Windows ends the process as soon as the handler returns, or
+/// after about 5 seconds; tokio's handler waits, so the goodbye (at most 3 seconds) fits.
+#[cfg(windows)]
+pub(crate) struct StopSignals {
+    close: tokio::signal::windows::CtrlClose,
+    brk: tokio::signal::windows::CtrlBreak,
+}
 
-#[cfg(not(unix))]
+#[cfg(windows)]
 impl StopSignals {
-    fn new() -> io::Result<Self> {
-        Ok(StopSignals)
+    pub(crate) fn new() -> io::Result<Self> {
+        Ok(StopSignals { close: tokio::signal::windows::ctrl_close()?, brk: tokio::signal::windows::ctrl_break()? })
     }
 
-    async fn recv(&mut self) {
-        std::future::pending::<()>().await
+    pub(crate) async fn recv(&mut self) -> StopSignal {
+        tokio::select! {
+            _ = self.close.recv() => StopSignal::HangUp,
+            _ = self.brk.recv() => StopSignal::Interrupt,
+        }
     }
 }

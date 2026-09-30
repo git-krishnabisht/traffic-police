@@ -25,17 +25,43 @@ use traffic_police_core::session::{DeviceRecord, SessionLog, StreamSink};
 use traffic_police_core::store::SessionStore;
 use traffic_police_proto::frame::Frame;
 
-/// Ctrl+C, once [`stop_on_ctrl_c`] listens for it (a stored permit, so none is missed).
+/// Ctrl+C and the like, once [`stop_on_signals`] listens for them (a stored permit, so none is
+/// missed).
 static INTERRUPT: tokio::sync::Notify = tokio::sync::Notify::const_new();
 
-/// Makes Ctrl+C end the command properly (the app is told goodbye, files are finished) instead
-/// of killing it.
-pub fn stop_on_ctrl_c() {
+/// Makes Ctrl+C, SIGTERM and a closed terminal (SIGHUP; on Windows the console window) end the
+/// command properly (the app is told goodbye, which removes the adb forward, and files are
+/// finished) instead of killing it.
+pub fn stop_on_signals() {
     tokio::spawn(async {
         if tokio::signal::ctrl_c().await.is_ok() {
             INTERRUPT.notify_one();
         }
     });
+    #[cfg(unix)]
+    for kind in [tokio::signal::unix::SignalKind::terminate(), tokio::signal::unix::SignalKind::hangup()] {
+        if let Ok(mut signal) = tokio::signal::unix::signal(kind) {
+            tokio::spawn(async move {
+                if signal.recv().await.is_some() {
+                    INTERRUPT.notify_one();
+                }
+            });
+        }
+    }
+    #[cfg(windows)]
+    if let Ok(mut close) = tokio::signal::windows::ctrl_close() {
+        tokio::spawn(async move {
+            if close.recv().await.is_some() {
+                INTERRUPT.notify_one();
+            }
+        });
+    }
+}
+
+/// A status line on stderr. Unlike `eprintln!` it never panics: once the terminal is closed
+/// writing fails, and the command still has to say goodbye and finish its files.
+pub fn note(text: impl std::fmt::Display) {
+    let _ = writeln!(std::io::stderr(), "traffic-police: {text}");
 }
 
 /// `500ms`, `60s` (or `60`), `5m`, `1h`.
@@ -161,7 +187,7 @@ impl Capture {
                         // the backend's last word (the app exited, or the connection failed)
                         let text = status_text(&self.status.borrow());
                         if text != last {
-                            eprintln!("traffic-police: {text}");
+                            note(&text);
                         }
                         return Stop::Ended;
                     }
@@ -174,7 +200,7 @@ impl Capture {
                     }
                     let text = status_text(&self.status.borrow());
                     if text != last {
-                        eprintln!("traffic-police: {text}");
+                        note(&text);
                         last = text;
                     }
                 }
@@ -350,7 +376,7 @@ pub async fn record(
         .run(duration, |store| {
             if store.len() >= reported + 50 {
                 reported = store.len() / 50 * 50;
-                eprintln!("traffic-police: {} requests so far", store.len());
+                note(format_args!("{} requests so far", store.len()));
             }
             true
         })
@@ -359,7 +385,7 @@ pub async fn record(
     match &filter {
         None => {
             log.finish(&store).with_context(|| format!("cannot finish {}", out.display()))?;
-            eprintln!("traffic-police: {}; recorded {} requests to {}", stop.text(), store.len(), out.display());
+            note(format_args!("{}; recorded {} requests to {}", stop.text(), store.len(), out.display()));
         }
         Some(f) => {
             let now = store.latest();
@@ -368,13 +394,13 @@ pub async fn record(
                 .map(|i| store.txn(i).key)
                 .collect();
             let n = log.export(&store, out, Some(&keep)).with_context(|| format!("cannot write {}", out.display()))?;
-            eprintln!(
-                "traffic-police: {}; recorded {n} of {} requests (those matching {:?}) to {}",
+            note(format_args!(
+                "{}; recorded {n} of {} requests (those matching {:?}) to {}",
                 stop.text(),
                 store.len(),
                 f.source,
                 out.display()
-            );
+            ));
         }
     }
     Ok(())
@@ -396,7 +422,7 @@ pub async fn export_har(out: &Path, input: ExportInput<'_>, filter: Option<Filte
         ExportInput::Live(source, duration) => {
             let mut cap = Capture::start(source, None).await?;
             let stop = cap.run(Some(duration), |_| true).await;
-            eprintln!("traffic-police: {}", stop.text());
+            note(stop.text());
             cap.stop(|_| true).await
         }
     };
@@ -407,7 +433,7 @@ pub async fn export_har(out: &Path, input: ExportInput<'_>, filter: Option<Filte
     let doc = har(&store, &txns, now);
     let bytes = serde_json::to_vec_pretty(&doc)?;
     std::fs::write(out, bytes).with_context(|| format!("cannot write {}", out.display()))?;
-    eprintln!("traffic-police: wrote {} of {} requests to {}", txns.len(), store.len(), out.display());
+    note(format_args!("wrote {} of {} requests to {}", txns.len(), store.len(), out.display()));
     Ok(())
 }
 
@@ -417,7 +443,7 @@ fn open_file(path: &Path) -> anyhow::Result<SessionStore> {
     let opened = traffic_police_core::import::open(path, &store.source_ids())
         .map_err(|e| anyhow::anyhow!("cannot open {}: {e}", path.display()))?;
     for s in &opened.skipped {
-        eprintln!("traffic-police: {}: left out {s}", path.display());
+        note(format_args!("{}: left out {s}", path.display()));
     }
     store.apply_all(opened.events);
     for key in opened.pins {
@@ -426,7 +452,7 @@ fn open_file(path: &Path) -> anyhow::Result<SessionStore> {
         }
     }
     if opened.truncated {
-        eprintln!("traffic-police: {} was cut short; exporting what it holds", path.display());
+        note(format_args!("{} was cut short; exporting what it holds", path.display()));
     }
     Ok(store)
 }
