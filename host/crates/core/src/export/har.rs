@@ -172,7 +172,7 @@ fn entry(store: &SessionStore, t: &Transaction, now: Ts) -> Value {
     if let Some(f) = &t.failure {
         extra.insert(
             "failure".into(),
-            json!({ "class": f.class, "message": f.message, "phase": f.phase, "canceled": f.canceled }),
+            json!({ "class": f.class, "message": f.message, "phase": f.phase, "canceled": f.canceled, "simulated": f.simulated }),
         );
     }
     if !t.rules.is_empty() {

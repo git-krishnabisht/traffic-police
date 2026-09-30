@@ -393,7 +393,7 @@ fn entry_events(e: &Value, key: TxnKey, start: Ts, out: &mut Vec<SessionEvent>) 
             at: end,
             phase: failure["phase"].as_str().map(str::to_string),
             canceled: failure["canceled"] == Value::Bool(true),
-            simulated: false,
+            simulated: failure["simulated"] == Value::Bool(true),
             error: ErrorInfo {
                 class: class.to_string(),
                 message: failure["message"].as_str().map(str::to_string),

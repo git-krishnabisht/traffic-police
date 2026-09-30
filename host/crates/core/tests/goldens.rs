@@ -274,6 +274,7 @@ fn a_rule_changed_response_is_exported_as_the_app_got_it_with_the_original_kept(
     assert_eq!(e["response"]["status"], 200);
     assert_eq!(e["response"]["content"]["text"], "{\"verdict\":\"pass\",\"attempt\":3}");
     assert_eq!(e["_trafficPolice"]["original"]["status"], 202);
+    assert_eq!(doc["log"]["entries"][1]["_trafficPolice"]["failure"]["simulated"], true);
     let bytes = serde_json::to_vec(&doc).unwrap();
     let opened = traffic_police_core::import::har(&bytes, &Default::default()).unwrap();
     let mut back = SessionStore::new();
@@ -284,6 +285,7 @@ fn a_rule_changed_response_is_exported_as_the_app_got_it_with_the_original_kept(
     assert_eq!(t.rules[0].rules[0].id, "force-pass");
     let body = back.body_bytes(t.delivered_body.as_ref().expect("the delivered body"));
     assert_eq!(&body[..], b"{\"verdict\":\"pass\",\"attempt\":3}");
+    assert!(back.txn(1).failure.as_ref().expect("the failure").simulated, "a rule's failure stays a rule's");
     let again = har(&back, &[0], back.latest());
     assert_eq!(again["log"]["entries"][0]["response"]["status"], 200);
     assert_eq!(again["log"]["entries"][0]["_trafficPolice"]["original"]["status"], 202);
