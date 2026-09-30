@@ -14,11 +14,13 @@ import io.trafficpolice.capture.core.TestPlatform;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.net.ConnectException;
+import java.net.InetAddress;
 import java.net.ProtocolException;
 import java.net.SocketTimeoutException;
 import java.net.UnknownHostException;
 import java.nio.charset.Charset;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
@@ -364,6 +366,61 @@ public final class OkHttpRulesTest {
         }
         for (TestHost.Msg m : host.received()) {
             assertFalse("no rule event for an upgrade", "rule".equals(m.t()));
+        }
+    }
+
+    @Test
+    public void a_simulated_failure_is_retried_only_by_okhttp_3_9_to_3_12() throws Exception {
+        // OkHttp 4 and 5 retry only failures they saw on a connection, and a rule throws before the
+        // request reaches one; 3.14 does not retry it either. 3.9 to 3.12 retry the recoverable
+        // kinds when the call was on a pooled connection, or on a new one when the host has another
+        // address to try, and the rule fails each attempt again.
+        String v = OkHttpDetect.version();
+        boolean retries = v.startsWith("3.") && !v.startsWith("3.14.");
+        OkHttpClient retrying = client.newBuilder().retryOnConnectionFailure(true).build();
+        final InetAddress lo = InetAddress.getByName("127.0.0.1");
+        OkHttpClient twoAddresses = retrying.newBuilder().dns(host -> Arrays.asList(lo, lo)).build();
+        for (String kind : new String[] {"timeout", "protocol", "io", "connect", "unknown_host"}) {
+            boolean recoverable = !kind.equals("timeout") && !kind.equals("protocol");
+            for (String on : new String[] {"pooled", "two-addresses"}) {
+                String path = "/retry-" + kind + "-" + on;
+                rules("[" + rule("f", "{\"path\":{\"exact\":\"" + path + "\"}}",
+                        "[{\"type\":\"fail\",\"exception\":\"" + kind + "\"}]") + "]");
+                retrying.connectionPool().evictAll();
+                Request request;
+                OkHttpClient c;
+                if (on.equals("pooled")) {
+                    // a connection that has served a call
+                    server.enqueue(new MockResponse().setBody("warm"));
+                    try (Response r = retrying.newCall(new Request.Builder().url(url("/warm")).build()).execute()) {
+                        r.body().string();
+                    }
+                    c = retrying;
+                    request = new Request.Builder().url(url(path)).build();
+                } else {
+                    c = twoAddresses;
+                    request = new Request.Builder().url("http://tp-two.test:" + server.getPort() + path).build();
+                }
+                try {
+                    c.newCall(request).execute();
+                    fail("expected the rule's failure");
+                } catch (IOException expected) {
+                    // the rule's, after any retries
+                }
+                Thread.sleep(300);
+                int attempts = 0;
+                for (TestHost.Msg m : host.received()) {
+                    if ("req".equals(m.t()) && m.str("url").endsWith(path)) {
+                        attempts++;
+                    }
+                }
+                String what = kind + " on a " + on + " connection, OkHttp " + v;
+                if (retries && recoverable) {
+                    assertTrue(what + " is retried: " + attempts + " attempts", attempts > 1);
+                } else {
+                    assertEquals(what + " is not retried", 1, attempts);
+                }
+            }
         }
     }
 
