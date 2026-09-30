@@ -131,7 +131,9 @@ class Scenarios(private val context: Context, private val log: (String) -> Unit)
         client.newCall(Request.Builder().url(base.resolve("/api/feed?page=2")!!).build()).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) = cont.resumeWithException(e)
             override fun onResponse(call: Call, response: Response) {
-                response.use { cont.resume(Unit) }
+                val text = response.use { it.body.string() }
+                log("  feed: ${text.take(40)}…")
+                cont.resume(Unit)
             }
         })
     }
