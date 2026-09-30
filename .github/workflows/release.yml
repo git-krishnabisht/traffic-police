@@ -20,13 +20,11 @@ jobs:
         with:
           distribution: temurin
           java-version: "21"
-      # its default also asks for "tools", which the SDK repository no longer has
+      # its default also asks for "tools", which the SDK repository no longer has; the list is
+      # split on spaces only (one package per line reaches sdkmanager as a single name)
       - uses: android-actions/setup-android@v3
         with:
-          packages: |
-            platform-tools
-            ndk;28.2.13676358
-            cmake;3.22.1
+          packages: platform-tools ndk;28.2.13676358 cmake;3.22.1
       - uses: gradle/actions/setup-gradle@v4
       - run: ./gradlew --stacktrace :attach-agent:agentArtifacts
       - uses: actions/upload-artifact@v4
