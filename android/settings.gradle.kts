@@ -16,4 +16,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "traffic-police-android"
 
-include(":capture-core", ":capture", ":capture-noop", ":sample-app")
+include(":capture-core", ":capture", ":capture-noop", ":sample-app", ":attach-agent")

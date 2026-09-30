@@ -25,7 +25,10 @@ jobs:
       # its default also asks for "tools", which the SDK repository no longer has
       - uses: android-actions/setup-android@v3
         with:
-          packages: platform-tools
+          packages: |
+            platform-tools
+            ndk;28.2.13676358
+            cmake;3.22.1
       - uses: gradle/actions/setup-gradle@v4
       # JVM tests against eight OkHttp versions (protocol goldens included), every artifact, the
       # sample app in all three build types, and the published form of the libraries
@@ -33,6 +36,7 @@ jobs:
           ./gradlew --stacktrace
           :capture-core:check
           :capture:assembleRelease :capture-noop:assembleRelease
+          :attach-agent:agentArtifacts
           :sample-app:assembleDebug :sample-app:assembleRelease :sample-app:assembleNondebuggable
           :sample-app:assemblePlain
           publishAllPublicationsToBuildRepository

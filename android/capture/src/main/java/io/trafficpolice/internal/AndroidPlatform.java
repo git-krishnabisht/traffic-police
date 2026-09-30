@@ -22,7 +22,30 @@ final class AndroidPlatform implements Platform {
         ApplicationInfo info = context.getApplicationInfo();
         this.app = new AppInfo(context.getPackageName(), processName(), Process.myPid(), Process.myUid(),
                 (info.flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0);
-        this.device = new DeviceInfo(Build.VERSION.SDK_INT, Build.VERSION.RELEASE, Build.MANUFACTURER, Build.MODEL,
+        this.device = deviceInfo();
+    }
+
+    /**
+     * Attach agents may run before Application is constructed. ART only accepts an agent for a
+     * debuggable app on user builds; the host also checks the package flag before attaching.
+     */
+    AndroidPlatform() {
+        this((String) null);
+    }
+
+    AndroidPlatform(String packageNameOverride) {
+        String process = processName();
+        int colon = process.indexOf(':');
+        String packageName = packageNameOverride;
+        if (packageName == null || packageName.isEmpty()) {
+            packageName = colon < 0 ? process : process.substring(0, colon);
+        }
+        this.app = new AppInfo(packageName, process, Process.myPid(), Process.myUid(), true);
+        this.device = deviceInfo();
+    }
+
+    private static DeviceInfo deviceInfo() {
+        return new DeviceInfo(Build.VERSION.SDK_INT, Build.VERSION.RELEASE, Build.MANUFACTURER, Build.MODEL,
                 processAbi(), Build.SUPPORTED_ABIS);
     }
 
@@ -83,8 +106,15 @@ final class AndroidPlatform implements Platform {
 
     @Override
     public long[] trafficCounters() {
-        long rx = TrafficStats.getUidRxBytes(app.uid);
-        long tx = TrafficStats.getUidTxBytes(app.uid);
+        long rx;
+        long tx;
+        try {
+            rx = TrafficStats.getUidRxBytes(app.uid);
+            tx = TrafficStats.getUidTxBytes(app.uid);
+        } catch (IllegalStateException e) {
+            // an agent attached at launch runs before bindApplication has set TrafficStats up
+            return null;
+        }
         if (rx == TrafficStats.UNSUPPORTED || tx == TrafficStats.UNSUPPORTED) {
             return null;
         }
