@@ -113,6 +113,10 @@ impl Pacer {
     }
 }
 
+/// The most waiting input events taken in one turn of the loop, so that a flood of them still
+/// lets frames through.
+const WAITING_INPUT: usize = 256;
+
 /// Ctrl+C typed in an editor reaches this process as well, possibly just after the editor has
 /// exited because of it; an interrupt this soon after the editor is the editor's.
 const EDITOR_INTERRUPT: Duration = Duration::from_secs(1);
@@ -230,15 +234,11 @@ async fn event_loop(
         let pending = editor.is_none() && (dirty || app.is_time_dependent());
         let wake = pending.then(|| tokio::time::Instant::from_std(pacer.next()));
         tokio::select! {
-            ev = async { input.as_mut().expect("guarded").next().await }, if input.is_some() => match ev {
-                Some(Ok(Event::Mouse(m))) if m.kind == MouseEventKind::Moved => {}
-                Some(Ok(ev)) => {
-                    app.handle_event(ev);
-                    dirty = true;
+            ev = async { input.as_mut().expect("guarded").next().await }, if input.is_some() => {
+                if let Some(end) = on_input(app, ev, &mut dirty) {
+                    return end;
                 }
-                Some(Err(e)) => return Err(e.into()),
-                None => return Ok(()),
-            },
+            }
             status = async { editor.as_mut().expect("guarded").child.wait().await }, if editor.is_some() => {
                 let Editor { path, .. } = editor.take().expect("guarded");
                 editor_ended = Some(Instant::now());
@@ -255,10 +255,6 @@ async fn event_loop(
             batch = events.recv(), if backend_open => match batch {
                 Some(b) => {
                     app.ingest(b);
-                    // take whatever else is queued so one redraw covers it
-                    while let Ok(b) = events.try_recv() {
-                        app.ingest(b);
-                    }
                     dirty = true;
                 }
                 None => backend_open = false,
@@ -302,6 +298,19 @@ async fn event_loop(
             }
             _ = async { tokio::time::sleep_until(wake.expect("guarded")).await }, if wake.is_some() => {}
         }
+        // Whatever this turn woke for, the input and data waiting now go in before the next frame.
+        // When frames take longer than the frame time (a slow terminal, SSH), the frame timer is
+        // ready at every turn and wins most of them, and each turn draws a frame: keys taken only
+        // when their branch won would wait many frames each.
+        if let Some(stream) = input.as_mut()
+            && let Some(end) = take_waiting_input(stream, app, &mut dirty).await
+        {
+            return end;
+        }
+        while backend_open && let Ok(b) = events.try_recv() {
+            app.ingest(b);
+            dirty = true;
+        }
         if app.should_quit {
             return Ok(());
         }
@@ -340,6 +349,44 @@ async fn event_loop(
             // drawing refreshes the rows, which can ask for body searches
             dispatch_jobs(app, &body_tx, &jq_tx, &search_tx);
         }
+    }
+}
+
+/// Applies the input events already waiting, without waiting for more: at most
+/// [`WAITING_INPUT`], and none after one that quits or opens the editor (the editor gets the
+/// keys typed after it). `Some` ends the loop with that result, as [`on_input`].
+async fn take_waiting_input<S>(stream: &mut S, app: &mut App, dirty: &mut bool) -> Option<anyhow::Result<()>>
+where
+    S: tokio_stream::Stream<Item = io::Result<Event>> + Unpin,
+{
+    for _ in 0..WAITING_INPUT {
+        if app.should_quit || app.editor_request.is_some() {
+            break;
+        }
+        let ev = tokio::select! {
+            biased;
+            ev = stream.next() => ev,
+            () = std::future::ready(()) => break,
+        };
+        if let Some(end) = on_input(app, ev, dirty) {
+            return Some(end);
+        }
+    }
+    None
+}
+
+/// Applies one event from the terminal; `Some` ends the loop with that result (reading the
+/// terminal failed, or its input ended).
+fn on_input(app: &mut App, ev: Option<io::Result<Event>>, dirty: &mut bool) -> Option<anyhow::Result<()>> {
+    match ev {
+        Some(Ok(Event::Mouse(m))) if m.kind == MouseEventKind::Moved => None,
+        Some(Ok(ev)) => {
+            app.handle_event(ev);
+            *dirty = true;
+            None
+        }
+        Some(Err(e)) => Some(Err(e.into())),
+        None => Some(Ok(())),
     }
 }
 
@@ -486,9 +533,78 @@ impl StopSignals {
 
 #[cfg(test)]
 mod tests {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent};
+    use traffic_police_core::SessionStore;
+
     use super::*;
+    use crate::theme::Theme;
 
     const MS: Duration = Duration::from_millis(1);
+
+    fn key(c: char) -> io::Result<Event> {
+        Ok(Event::Key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE)))
+    }
+
+    /// Input with events waiting, then nothing more for now. (`tokio_stream::iter` is not
+    /// ready after every 32 items, so it cannot stand for input that is all there.)
+    struct Waiting(std::collections::VecDeque<io::Result<Event>>);
+
+    impl tokio_stream::Stream for Waiting {
+        type Item = io::Result<Event>;
+
+        fn poll_next(
+            mut self: std::pin::Pin<&mut Self>,
+            _: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Option<Self::Item>> {
+            self.0.pop_front().map_or(std::task::Poll::Pending, |ev| std::task::Poll::Ready(Some(ev)))
+        }
+    }
+
+    fn waiting(events: impl IntoIterator<Item = io::Result<Event>>) -> Waiting {
+        Waiting(events.into_iter().collect())
+    }
+
+    #[tokio::test]
+    async fn the_keys_waiting_all_go_in_before_the_next_frame() {
+        let mut app = App::new(SessionStore::new(), Theme::default());
+        let mut input = waiting([key(':'), key('f'), key('p'), key('s')]);
+        let mut dirty = false;
+        assert!(take_waiting_input(&mut input, &mut app, &mut dirty).await.is_none());
+        assert!(dirty);
+        assert_eq!(app.palette.as_ref().map(|p| p.input.value()), Some("fps"));
+    }
+
+    #[tokio::test]
+    async fn keys_after_quit_stay_waiting() {
+        let mut app = App::new(SessionStore::new(), Theme::default());
+        let mut input = waiting([key('q'), key('j'), key('j')]);
+        assert!(take_waiting_input(&mut input, &mut app, &mut false).await.is_none());
+        assert!(app.should_quit);
+        assert_eq!(input.0.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn a_flood_of_input_still_lets_a_frame_through() {
+        let mut app = App::new(SessionStore::new(), Theme::default());
+        let moved = || {
+            let m = MouseEvent { kind: MouseEventKind::Moved, column: 1, row: 1, modifiers: KeyModifiers::NONE };
+            Ok(Event::Mouse(m))
+        };
+        let mut input = waiting((0..WAITING_INPUT + 10).map(|_| moved()));
+        let mut dirty = false;
+        assert!(take_waiting_input(&mut input, &mut app, &mut dirty).await.is_none());
+        assert!(!dirty, "moving the mouse changes nothing");
+        assert_eq!(input.0.len(), 10);
+    }
+
+    #[tokio::test]
+    async fn input_that_ends_or_fails_ends_the_loop() {
+        let mut app = App::new(SessionStore::new(), Theme::default());
+        let mut ended = tokio_stream::iter(vec![key('j')]);
+        assert!(matches!(take_waiting_input(&mut ended, &mut app, &mut false).await, Some(Ok(()))));
+        let mut failed = waiting([Err(io::Error::other("the terminal went away"))]);
+        assert!(matches!(take_waiting_input(&mut failed, &mut app, &mut false).await, Some(Err(_))));
+    }
 
     #[test]
     fn the_first_frame_and_the_first_after_a_pause_are_drawn_at_once() {
