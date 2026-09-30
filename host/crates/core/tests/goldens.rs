@@ -21,12 +21,16 @@ fn ms(from: Ts, to: Ts) -> String {
 }
 
 fn body(store: &SessionStore, t: &Transaction, meta: &BodyMeta, request: bool) -> String {
+    let headers = if request { Some(&t.req_headers) } else { t.resp.as_ref().map(|r| &r.headers) };
+    body_with(store, meta, headers)
+}
+
+fn body_with(store: &SessionStore, meta: &BodyMeta, headers: Option<&Vec<(String, String)>>) -> String {
     let mut s = format!("{:?} {}/{} B", meta.state, meta.captured, meta.total);
     if meta.gap {
         s.push_str(" (gap)");
     }
     if meta.captured > 0 {
-        let headers = if request { Some(&t.req_headers) } else { t.resp.as_ref().map(|r| &r.headers) };
         let d = decode_body(store.body_bytes(meta), headers, 1 << 20);
         let _ = write!(s, ", decoded {} B {:?}", d.bytes.len(), d.kind);
         if d.bytes.len() <= 80 && d.bytes.iter().all(|b| b.is_ascii_graphic() || *b == b' ' || *b == b'\n') {
@@ -141,11 +145,47 @@ fn summarize(name: &str) -> String {
             let remote = c.remote.as_ref().map_or("?".into(), |a| format!("{}:{}", a.ip, a.port));
             let _ = writeln!(out, "  conn {:?} reused {:?} {:?} {remote}{tls}", c.id, c.reused, c.protocol);
         }
+        for hit in &t.rules {
+            let ids: Vec<&str> = hit.rules.iter().map(|r| r.id.as_str()).collect();
+            let changes: Vec<String> = hit
+                .changes
+                .iter()
+                .map(|c| {
+                    let mut s = c.op.clone();
+                    if let Some(n) = &c.name {
+                        let _ = write!(s, " {n}");
+                    }
+                    if let (Some(a), Some(b)) = (c.from, c.to) {
+                        let _ = write!(s, " {a}→{b}");
+                    }
+                    for (k, v) in [("matches", c.matches), ("bytes", c.bytes), ("ms", c.ms)] {
+                        if let Some(v) = v {
+                            let _ = write!(s, " {k} {v}");
+                        }
+                    }
+                    if let Some(e) = &c.exception {
+                        let _ = write!(s, " {e}");
+                    }
+                    if let Some(r) = &c.reason {
+                        let _ = write!(s, " ({r})");
+                    }
+                    s
+                })
+                .collect();
+            let _ = writeln!(out, "  rule {} at {}: {}", ids.join(","), ms(origin, hit.at), changes.join(" · "));
+        }
+        if let Some(d) = &t.delivered {
+            let _ = writeln!(out, "  delivered: {} {} · {}", d.status, d.message, headers(&d.headers));
+        }
+        if let Some(m) = &t.delivered_body {
+            let _ =
+                writeln!(out, "  delivered body: {}", body_with(&store, m, t.delivered.as_ref().map(|d| &d.headers)));
+        }
         if let Some(f) = &t.failure {
             let _ = writeln!(
                 out,
-                "  failed: {}: {:?} (phase {:?}, canceled {}), causes {:?}",
-                f.class, f.message, f.phase, f.canceled, f.causes
+                "  failed: {}: {:?} (phase {:?}, canceled {}, simulated {}), causes {:?}",
+                f.class, f.message, f.phase, f.canceled, f.simulated, f.causes
             );
         }
     }
@@ -188,4 +228,5 @@ golden!(
     unknown_fields_and_types,
     protocol_mismatch,
     takeover,
+    rule_rewrite,
 );

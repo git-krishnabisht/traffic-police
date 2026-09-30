@@ -1,5 +1,6 @@
 package io.trafficpolice.capture.core;
 
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -274,6 +275,50 @@ abstract class Event {
         @Override
         byte[] encode(long seq) {
             return Frames.json(start("mark", seq).kv("m", name).endObj());
+        }
+    }
+
+    /** {@code rule}: rules changed this transaction. */
+    static final class Rule extends Event {
+        final List<RuleSet.Rule> rules;
+        final List<RuleRun.Change> changes;
+        final RuleRun.Delivered delivered;
+
+        Rule(long ts, long txn, List<RuleSet.Rule> rules, List<RuleRun.Change> changes, RuleRun.Delivered delivered) {
+            super(ts, txn);
+            this.rules = rules;
+            this.changes = changes;
+            this.delivered = delivered;
+        }
+
+        @Override
+        int size() {
+            return 256 + (delivered == null ? 0 : stringsSize(delivered.headers));
+        }
+
+        @Override
+        byte[] encode(long seq) {
+            Json j = start("rule", seq);
+            j.key("rules").arr();
+            for (RuleSet.Rule r : rules) {
+                j.obj().kv("id", r.id);
+                if (r.name != null) {
+                    j.kv("name", r.name);
+                }
+                j.endObj();
+            }
+            j.endArr().key("changes").arr();
+            for (RuleRun.Change c : changes) {
+                c.write(j);
+            }
+            j.endArr();
+            if (delivered != null) {
+                j.key("delivered").obj().kv("status", delivered.code)
+                        .kv("message", delivered.message == null ? "" : delivered.message);
+                j.headers("headers", delivered.headers);
+                j.endObj();
+            }
+            return Frames.json(j.endObj());
         }
     }
 

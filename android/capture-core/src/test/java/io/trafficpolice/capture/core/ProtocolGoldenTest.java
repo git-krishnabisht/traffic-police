@@ -245,6 +245,47 @@ public class ProtocolGoldenTest {
     }
 
     @Test
+    public void ruleRewritesAResponse() throws Exception {
+        String rules = "{\"version\":\"r1\",\"rules\":["
+                + "{\"id\":\"force-pass\",\"name\":\"Force verdict pass\",\"match\":{\"path\":{\"exact\":\"/api/sdk/status\"}},"
+                + "\"actions\":[{\"type\":\"status\",\"code\":200},{\"type\":\"header\",\"op\":\"set\",\"name\":\"X-Debug\","
+                + "\"value\":\"1\"},{\"type\":\"replace\",\"find\":\"\\\"pending\\\"\",\"with\":\"\\\"pass\\\"\"}]},"
+                + "{\"id\":\"enroll-down\",\"match\":{\"methods\":[\"POST\"],\"path\":{\"glob\":\"/api/sdk/enroll\"}},"
+                + "\"actions\":[{\"type\":\"delay\",\"ms\":0},{\"type\":\"fail\",\"exception\":\"io\"}]}]}";
+        String ack = TestHost.helloAck(0, TestHost.DEFAULT_CONFIG).replace("{\"version\":\"none\",\"rules\":[]}", rules);
+        try (GoldenHost host = new GoldenHost(rt)) {
+            host.handshake(ack);
+            // a status line, a header and the decoded text change; the original stays recorded
+            String[] reqHeaders = headers("Host", "api.example.app", "Accept-Encoding", "gzip");
+            Txn t = rt.recorder().start(request(20, 0, "GET", "https://api.example.app/api/sdk/status?sessionId=s1", reqHeaders));
+            RuleRun run = RuleRun.find("GET", "https", "api.example.app", 443, "/api/sdk/status",
+                    RuleRun.parseQuery("sessionId=s1"));
+            run.beforeRequest(t, null);
+            t.request.end("none");
+            platform.advanceMillis(40);
+            String[] original = headers("content-type", "application/json", "content-encoding", "gzip",
+                    "cache-control", "max-age=30");
+            t.response(202, "Accepted", "h2", original, conn(true));
+            platform.advanceMillis(2);
+            writeAll(t.response, GZIPPED_VERDICT);
+            t.response.end("complete");
+            run.editResponse(202, "Accepted", original, GZIPPED_VERDICT, t);
+            t.done();
+            // a delay (of nothing here), then a failure instead of the request
+            Txn f = rt.recorder().start(request(21, 0, "POST", "https://api.example.app/api/sdk/enroll", reqHeaders));
+            RuleRun down = RuleRun.find("POST", "https", "api.example.app", 443, "/api/sdk/enroll", null);
+            try {
+                down.beforeRequest(f, null);
+                throw new AssertionError("expected the rule's failure");
+            } catch (IOException expected) {
+                assertEquals("simulated by traffic-police", expected.getMessage());
+            }
+            host.untilTxnEnds(f.id);
+            golden("rule_rewrite", host);
+        }
+    }
+
+    @Test
     public void droppedAndDiagnostics() throws Exception {
         try (GoldenHost host = new GoldenHost(rt)) {
             host.handshake(TestHost.helloAck(0, TestHost.DEFAULT_CONFIG));
@@ -452,6 +493,10 @@ public class ProtocolGoldenTest {
      */
     private static final byte[] GZIPPED_PROFILE = hex(
             "1f8b08000000000002ffab56ca4c51b232b13032d451ca4bcc4d55b252722cce4854084b2dca4d54d2512ac849cc038a1514e52bd50200049a122d2c000000");
+
+    /** {@code {"verdict":"pending","attempt":3}} gzipped once, as bytes (see above). */
+    private static final byte[] GZIPPED_VERDICT = hex(
+            "1f8b08000000000002ffab562a4b2d4ac94c2e51b2522a48cd4bc9cc4b57d2514a2c2949cd2d008a19d702003955faf921000000");
 
     private static byte[] hex(String s) {
         byte[] out = new byte[s.length() / 2];

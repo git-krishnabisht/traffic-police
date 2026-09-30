@@ -8,14 +8,25 @@ public final class Txn {
     public final Body request;
     public final Body response;
     final Recorder rec;
+    private final CaptureConfig config;
+    private Body delivered;
     private final AtomicBoolean finished = new AtomicBoolean();
     private volatile boolean responded;
 
     Txn(Recorder rec, long id, CaptureConfig config) {
         this.rec = rec;
         this.id = id;
+        this.config = config;
         this.request = new Body(this, Frames.DIR_REQUEST, config.captureRequestBodies, config.bodyCap);
         this.response = new Body(this, Frames.DIR_RESPONSE, config.captureResponseBodies, config.bodyCap);
+    }
+
+    /** The body a rule gave the app instead of the original ({@code dir = 2}). */
+    synchronized Body delivered() {
+        if (delivered == null) {
+            delivered = new Body(this, Frames.DIR_DELIVERED, config.captureResponseBodies, config.bodyCap);
+        }
+        return delivered;
     }
 
     public void response(int status, String message, String protocol, String[] headers, ConnInfo conn) {
@@ -48,6 +59,13 @@ public final class Txn {
     public void fail(String phase, boolean canceled, Throwable error, ConnInfo conn) {
         if (finished.compareAndSet(false, true)) {
             rec.emit(new Event.Fail(rec.now(), id, phase, canceled, false, error, conn));
+        }
+    }
+
+    /** Fails the transaction (once) with a failure a rule made. */
+    void failSimulated(String phase, Throwable error) {
+        if (finished.compareAndSet(false, true)) {
+            rec.emit(new Event.Fail(rec.now(), id, phase, false, true, error, null));
         }
     }
 

@@ -6,7 +6,6 @@ import java.io.EOFException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.util.List;
 import java.util.Map;
 
 /**
@@ -57,7 +56,9 @@ final class ClientSession implements Runnable {
                 return;
             }
             rt.setConfig(rt.config().with(JsonParser.obj(ack, "config")));
-            write(rulesAck(JsonParser.num(ack, "id", 0), JsonParser.obj(ack, "rules")));
+            RuleSet rules = RuleSet.compile(JsonParser.obj(ack, "rules"));
+            rt.setRules(this, rules);
+            write(rulesAck(JsonParser.num(ack, "id", 0), rules));
             flush();
             transport.setReadTimeout(0);
             rt.writer.attach(this, Math.max(0, JsonParser.num(ack, "resume_after_seq", 0)));
@@ -81,6 +82,7 @@ final class ClientSession implements Runnable {
         } catch (Throwable t) {
             rt.internalError("session", t);
         } finally {
+            rt.clearRules(this);
             if (attached) {
                 rt.writer.detach(this);
             } else {
@@ -98,7 +100,9 @@ final class ClientSession implements Runnable {
             rt.config().write(j);
             rt.writer.control(this, Frames.json(j.endObj()));
         } else if ("set_rules".equals(type)) {
-            rt.writer.control(this, rulesAck(id, JsonParser.obj(m, "rules")));
+            RuleSet rules = RuleSet.compile(JsonParser.obj(m, "rules"));
+            rt.setRules(this, rules);
+            rt.writer.control(this, rulesAck(id, rules));
         } else if ("ping".equals(type)) {
             Json j = new Json().obj().kv("t", "pong").kv("id", id);
             rt.writeClock(j);
@@ -109,28 +113,19 @@ final class ClientSession implements Runnable {
         // other types are ignored (PROTOCOL.md §1)
     }
 
-    /**
-     * This runtime does not apply rules yet (they arrive with rule support; the {@code rules}
-     * capability is not advertised), so every rule is reported as not active.
-     */
-    private static byte[] rulesAck(long id, Map<String, Object> ruleSet) {
+    /** The answer to a rule set: its version, how many rules are active, and each rule's error. */
+    private static byte[] rulesAck(long id, RuleSet rules) {
         Json j = new Json().obj().kv("t", "rules_ack").kv("id", id);
-        String version = ruleSet == null ? null : JsonParser.str(ruleSet, "version");
-        if (version != null) {
-            j.kv("version", version);
+        if (rules.version != null) {
+            j.kv("version", rules.version);
         }
-        j.kv("active", 0).key("errors").arr();
-        List<Object> rules = ruleSet == null ? null : JsonParser.list(ruleSet, "rules");
-        if (rules != null) {
-            for (Object r : rules) {
-                if (r instanceof Map) {
-                    @SuppressWarnings("unchecked")
-                    Map<String, Object> rule = (Map<String, Object>) r;
-                    String ruleId = JsonParser.str(rule, "id");
-                    j.obj().kv("rule", ruleId == null ? "" : ruleId)
-                            .kv("message", "this capture runtime does not apply rules yet").endObj();
-                }
+        j.kv("active", rules.rules.size()).key("errors").arr();
+        for (RuleSet.Error e : rules.errors) {
+            j.obj().kv("rule", e.rule);
+            if (e.field != null) {
+                j.kv("field", e.field);
             }
+            j.kv("message", e.message).endObj();
         }
         return Frames.json(j.endArr().endObj());
     }

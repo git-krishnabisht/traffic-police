@@ -47,6 +47,9 @@ public final class CaptureRuntime {
     private final List<String> capabilities = new ArrayList<>();
     private final Set<String> reported = Collections.synchronizedSet(new HashSet<String>());
     private volatile CaptureConfig config;
+    /** The connected host's rules; they apply only while that host is connected. */
+    private volatile RuleSet rules = RuleSet.EMPTY;
+    private Object rulesOwner;
 
     private CaptureRuntime(Platform platform, Options options) {
         this.platform = platform;
@@ -63,6 +66,7 @@ public final class CaptureRuntime {
             capabilities.add("okhttp_events");
         }
         capabilities.add("huc");
+        capabilities.add("rules");
         capabilities.add("pause");
         capabilities.add("resume");
         capabilities.add("prog");
@@ -134,6 +138,27 @@ public final class CaptureRuntime {
         return instance;
     }
 
+    RuleSet rules() {
+        return rules;
+    }
+
+    /** The rules of the host connection {@code owner}; a later connection's replace them. */
+    synchronized void setRules(Object owner, RuleSet set) {
+        rulesOwner = owner;
+        rules = set;
+    }
+
+    /**
+     * The connection {@code owner} ended: its rules stop applying, so closing traffic-police gives
+     * the app its normal behaviour back. A connection that took over keeps its own.
+     */
+    synchronized void clearRules(Object owner) {
+        if (rulesOwner == owner) {
+            rulesOwner = null;
+            rules = RuleSet.EMPTY;
+        }
+    }
+
     public Platform platform() {
         return platform;
     }
@@ -157,6 +182,13 @@ public final class CaptureRuntime {
     void diagOnce(String code, String level, String message) {
         if (reported.add(code)) {
             diag(level, code, message, null);
+        }
+    }
+
+    /** A diagnostic reported once per {@code key}. */
+    void diagOnceKeyed(String key, String level, String code, String message, Map<String, String> data) {
+        if (reported.add(key)) {
+            diag(level, code, message, data);
         }
     }
 

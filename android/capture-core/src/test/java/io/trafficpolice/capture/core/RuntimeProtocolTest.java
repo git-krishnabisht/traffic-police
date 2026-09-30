@@ -60,7 +60,7 @@ public final class RuntimeProtocolTest {
             assertEquals(4242, JsonParser.num(h.obj("app"), "pid", 0));
             assertTrue(h.list("capabilities").contains("okhttp"));
             assertTrue(h.list("capabilities").contains("huc"));
-            assertFalse("rules are not applied yet", h.list("capabilities").contains("rules"));
+            assertTrue(h.list("capabilities").contains("rules"));
             assertNotNull(h.obj("clock"));
             assertEquals(10485760, JsonParser.num(h.obj("config"), "body_cap", 0));
             assertEquals("rules_ack", host.rulesAck.t());
@@ -153,14 +153,19 @@ public final class RuntimeProtocolTest {
     }
 
     @Test
-    public void rulesAreAcknowledgedAsNotApplied() throws Exception {
+    public void rulesAreAcknowledgedWithTheirErrors() throws Exception {
         try (TestHost host = TestHost.connect(rt)) {
-            host.send("{\"t\":\"set_rules\",\"id\":3,\"rules\":{\"version\":\"v2\",\"rules\":[{\"id\":\"slow\"}]}}");
+            host.send("{\"t\":\"set_rules\",\"id\":3,\"rules\":{\"version\":\"v2\",\"rules\":[{\"id\":\"slow\"},"
+                    + "{\"id\":\"bad\",\"match\":{\"scheme\":\"ftp\"}},{\"name\":\"no id\"}]}}");
             TestHost.Msg ack = host.awaitType("rules_ack", 5000);
             assertEquals("v2", ack.str("version"));
-            assertEquals(0, ack.num("active"));
-            assertEquals(1, ack.list("errors").size());
+            assertEquals("a rule without actions is still active", 1, ack.num("active"));
+            assertEquals(2, ack.list("errors").size());
+            // rules end with the connection
+            assertEquals(1, rt.rules().rules.size());
         }
+        Thread.sleep(300);
+        assertEquals(0, rt.rules().rules.size());
     }
 
     @Test

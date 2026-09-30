@@ -3,6 +3,7 @@ package io.trafficpolice.capture.okhttp;
 import io.trafficpolice.capture.core.CaptureRuntime;
 import io.trafficpolice.capture.core.ConnInfo;
 import io.trafficpolice.capture.core.Recorder;
+import io.trafficpolice.capture.core.RuleRun;
 import io.trafficpolice.capture.core.ThreadStack;
 import io.trafficpolice.capture.core.Txn;
 import java.io.IOException;
@@ -46,8 +47,24 @@ public final class CaptureInterceptor implements Interceptor {
     public Response intercept(Chain chain) throws IOException {
         Request request = chain.request();
         CaptureRuntime rt = CaptureRuntime.current();
-        if (rt == null || !rt.recorder().recording()) {
+        if (rt == null) {
             return chain.proceed(request);
+        }
+        RuleRun rules = null;
+        try {
+            rules = OkHttpRules.find(request);
+        } catch (Throwable t) {
+            rt.internalError("okhttp.rules", t);
+        }
+        if (!rt.recorder().recording()) {
+            // paused: rules still apply (PROTOCOL.md §6); nothing is recorded
+            if (rules == null) {
+                return chain.proceed(request);
+            }
+            rules.beforeRequest(null, OkHttpRules.cancel(chain.call()));
+            Response response = chain.proceed(request);
+            return rules.editsResponse() ? OkHttpRules.apply(rules, request, response, null, chain.call(), false)
+                    : response;
         }
         CallState state = null;
         Txn txn = null;
@@ -71,6 +88,15 @@ public final class CaptureInterceptor implements Interceptor {
             wire = request;
         }
 
+        if (rules != null) {
+            try {
+                rules.beforeRequest(txn, OkHttpRules.cancel(chain.call()));
+            } catch (IOException e) {
+                // a simulated failure is recorded already; a delay cut short by a cancel is not
+                fail(rt, state, txn, chain, e);
+                throw e;
+            }
+        }
         Response response;
         try {
             response = chain.proceed(wire);
@@ -86,7 +112,16 @@ public final class CaptureInterceptor implements Interceptor {
         }
 
         try {
-            return capture(rt, state, txn, request, response, chain);
+            return capture(rt, state, txn, request, response, chain, rules);
+        } catch (IOException e) {
+            // reading the original body for a rule failed: the app sees it as the network's failure
+            try {
+                response.close();
+            } catch (Throwable ignored) {
+                // failing anyway
+            }
+            fail(rt, state, txn, chain, e);
+            throw e;
         } catch (Throwable t) {
             rt.internalError("okhttp.response", t);
             return response;
@@ -141,7 +176,7 @@ public final class CaptureInterceptor implements Interceptor {
     }
 
     private static Response capture(CaptureRuntime rt, CallState state, Txn txn, Request request, Response response,
-            Chain chain) {
+            Chain chain, RuleRun rules) throws IOException {
         txn.response(response.code(), response.message(), response.protocol().toString(),
                 OkHttpCompat.headers(response.headers()), null);
         RequestBody requestBody = request.body();
@@ -156,10 +191,14 @@ public final class CaptureInterceptor implements Interceptor {
                 || ("upgrade".equalsIgnoreCase(request.header("Connection"))
                         && "upgrade".equalsIgnoreCase(response.header("Connection")));
         if (upgrade) {
-            // never tee an upgraded connection: its body is the socket (OkHttp 5.2+ makes it unreadable)
+            // never tee (or rewrite) an upgraded connection: its body is the socket (OkHttp 5.2+
+            // makes it unreadable)
             txn.response.end("none");
             txn.done();
             return response;
+        }
+        if (rules != null && rules.editsResponse()) {
+            return OkHttpRules.apply(rules, request, response, txn, chain.call(), !state.hasListener);
         }
         if (body == null || !promisesBody(request, response) || body.contentLength() == 0) {
             txn.response.end("none");

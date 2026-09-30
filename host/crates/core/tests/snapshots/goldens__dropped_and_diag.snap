@@ -2,7 +2,7 @@
 source: crates/core/tests/goldens.rs
 expression: summarize(stringify! (dropped_and_diag))
 ---
-hello: io.trafficpolice.test pid 4242 on API 36, runtime 0.1.0 (library), protocol 1, capabilities ["okhttp", "okhttp_events", "huc", "pause", "resume", "prog"]
+hello: io.trafficpolice.test pid 4242 on API 36, runtime 0.1.0 (library), protocol 1, capabilities ["okhttp", "okhttp_events", "huc", "rules", "pause", "resume", "prog"]
 rules_ack 1: version Some("none"), active Some(0), 0 errors
 replay begin: seq Some(1)..Some(1), Some(1) events
 replay end: seq None..None, None events
@@ -13,7 +13,7 @@ txn 1 (call Some(12), hop 0): GET https://api.example.app/a
   state Failed · starts +0.000 ms · req +0.000 ms · ends +10.000 ms · lossy
   request body: None 0/0 B
   response body: Pending 0/0 B
-  failed: java.io.IOException: Some("lost") (phase Some("unknown"), canceled false), causes []
+  failed: java.io.IOException: Some("lost") (phase Some("unknown"), canceled false, simulated false), causes []
 
 txn 2 (call Some(13), hop 0): GET https://api.example.app/b
   OkHttp 4.12.0 · DefaultDispatcher-worker-3 #51 (Some("call")) · 4 frames (truncated), top com.example.app.api.StatusPoller.poll:Some(41)

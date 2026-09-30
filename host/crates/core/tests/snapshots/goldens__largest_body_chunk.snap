@@ -2,7 +2,7 @@
 source: crates/core/tests/goldens.rs
 expression: summarize(stringify! (largest_body_chunk))
 ---
-hello: io.trafficpolice.test pid 4242 on API 36, runtime 0.1.0 (library), protocol 1, capabilities ["okhttp", "okhttp_events", "huc", "pause", "resume", "prog"]
+hello: io.trafficpolice.test pid 4242 on API 36, runtime 0.1.0 (library), protocol 1, capabilities ["okhttp", "okhttp_events", "huc", "rules", "pause", "resume", "prog"]
 rules_ack 1: version Some("none"), active Some(0), 0 errors
 replay begin: seq Some(1)..Some(1), Some(1) events
 replay end: seq None..None, None events
