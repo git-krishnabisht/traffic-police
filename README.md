@@ -19,7 +19,7 @@ app hooks OkHttp and HttpURLConnection and streams events to the terminal over a
 
 **Download** the binary for your system from the
 [releases page](https://github.com/git-krishnabisht/traffic-police/releases): macOS on Apple
-silicon, Linux on x86_64 (glibc 2.35 or newer: Ubuntu 22.04, Debian 12, Fedora 36, RHEL 9 and
+silicon, Linux on x86_64 (glibc 2.34 or newer: RHEL 9, Ubuntu 22.04, Debian 12, Fedora 35 and
 later), or Windows on x86_64. It has the [attach mode](#watch-any-debuggable-app-attach-mode) agent
 built in. The binaries are not code-signed:
 
