@@ -3,7 +3,7 @@
 
 use std::collections::HashSet;
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -21,9 +21,11 @@ use traffic_police_core::export::tail::{finished, json_line, text_line};
 use traffic_police_core::filter::{BodySearch, Filter};
 use traffic_police_core::fmt::Ts;
 use traffic_police_core::model::{SourceId, TxnIdx, TxnKey};
+use traffic_police_core::rules::RulesFile;
 use traffic_police_core::session::{DeviceRecord, SessionLog, StreamSink};
 use traffic_police_core::store::SessionStore;
 use traffic_police_proto::frame::Frame;
+use traffic_police_proto::msg::{RuleSet, RulesAck};
 
 /// Ctrl+C and the like, once [`stop_on_signals`] listens for them (a stored permit, so none is
 /// missed).
@@ -59,9 +61,13 @@ pub fn stop_on_signals() {
 }
 
 /// A status line on stderr. Unlike `eprintln!` it never panics: once the terminal is closed
-/// writing fails, and the command still has to say goodbye and finish its files.
+/// writing fails, and the command still has to say goodbye and finish its files. (Tests use
+/// `eprintln!`, which the test harness captures.)
 pub fn note(text: impl std::fmt::Display) {
+    #[cfg(not(test))]
     let _ = writeln!(std::io::stderr(), "traffic-police: {text}");
+    #[cfg(test)]
+    eprintln!("traffic-police: {text}");
 }
 
 /// `500ms`, `60s` (or `60`), `5m`, `1h`.
@@ -102,7 +108,9 @@ fn passes(store: &SessionStore, i: TxnIdx, filter: Option<&Filter>, now: Ts) -> 
 
 /// Where a capture comes from.
 pub enum Source {
-    Device(DeviceTarget, Adb),
+    /// An app on a device. With the project's rules file, changes to it reach the app while the
+    /// capture runs, as in the UI.
+    Device(DeviceTarget, Adb, Option<PathBuf>),
     /// The pretend app of `traffic-police demo` (a hidden `--demo` flag, for trying the commands
     /// and for tests), at `speed`.
     Demo(DemoConfig, f64),
@@ -115,6 +123,39 @@ struct Capture {
     commands: Option<mpsc::UnboundedSender<BackendCommand>>,
     backend: tokio::task::JoinHandle<()>,
     status: watch::Receiver<ConnectionStatus>,
+    rules: Option<RulesWatch>,
+}
+
+/// The project's rules file while a capture runs (ARCHITECTURE.md §5.11).
+struct RulesWatch {
+    files: mpsc::UnboundedReceiver<RulesFile>,
+    task: tokio::task::JoinHandle<()>,
+    /// What the app was last sent.
+    active: RuleSet,
+    /// The app's last answer, once reported.
+    ack: Option<RulesAck>,
+}
+
+impl RulesWatch {
+    fn start(path: PathBuf, active: RuleSet) -> RulesWatch {
+        let (tx, files) = mpsc::unbounded_channel();
+        let task = tokio::spawn(traffic_police_tui::rules::watch(path, tx));
+        RulesWatch { files, task, active, ack: None }
+    }
+}
+
+impl Drop for RulesWatch {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
+}
+
+/// The file read again, or never when nothing is watched.
+async fn next_rules(watch: &mut Option<RulesWatch>) -> Option<RulesFile> {
+    match watch {
+        Some(w) => w.files.recv().await,
+        None => std::future::pending().await,
+    }
 }
 
 /// What ended a capture.
@@ -146,9 +187,11 @@ impl Capture {
         let (event_tx, events) = mpsc::channel(256);
         let (command_tx, command_rx) = mpsc::unbounded_channel();
         let (status_tx, status) = watch::channel(ConnectionStatus::Waiting("looking for the device…".into()));
+        let mut rules = None;
         let backend = match source {
-            Source::Device(target, adb) => {
+            Source::Device(target, adb, rules_file) => {
                 adb.ensure_server().await.context("traffic-police talks to devices through the adb server")?;
+                rules = rules_file.map(|path| RulesWatch::start(path, target.rules.clone()));
                 tokio::spawn(run_device(adb, target, ids, event_tx, command_rx, status_tx, sink))
             }
             Source::Demo(cfg, speed) => {
@@ -159,7 +202,7 @@ impl Capture {
                 })
             }
         };
-        Ok(Capture { store, events, commands: Some(command_tx), backend, status })
+        Ok(Capture { store, events, commands: Some(command_tx), backend, status, rules })
     }
 
     /// Runs until Ctrl+C, the duration, the backend's end, or `each` returning false; `each`
@@ -179,6 +222,7 @@ impl Capture {
                 batch = self.events.recv() => match batch {
                     Some(b) => {
                         self.store.apply_all(b);
+                        self.report_rules_ack();
                         if !each(&self.store) {
                             return Stop::Done;
                         }
@@ -204,9 +248,47 @@ impl Capture {
                         last = text;
                     }
                 }
+                Some(f) = next_rules(&mut self.rules) => self.rules_changed(f),
                 () = INTERRUPT.notified() => return Stop::Interrupted,
                 () = sleep_until(deadline) => return Stop::Elapsed,
             }
+        }
+    }
+
+    /// The rules file was read again: a valid change goes to the app; an invalid file is
+    /// reported and the rules that were active stay active.
+    fn rules_changed(&mut self, f: RulesFile) {
+        let Some(w) = self.rules.as_mut() else { return };
+        if !f.is_valid() {
+            let list: Vec<String> = f.problems.iter().map(ToString::to_string).collect();
+            note(format_args!(
+                "{} has problems; the rules that were active stay active:\n  {}",
+                f.path.display(),
+                list.join("\n  ")
+            ));
+            return;
+        }
+        if f.set == w.active {
+            return;
+        }
+        w.active = f.set.clone();
+        if let Some(tx) = &self.commands {
+            let _ = tx.send(BackendCommand::SetRules(f.set.clone()));
+        }
+        let on = f.set.rules.iter().filter(|r| r.enabled).count();
+        note(format_args!("rules read again: {on} of {} on, from {}", f.entries.len(), f.path.display()));
+    }
+
+    /// Rules the app refused (it says so in each `rules_ack`), once per answer.
+    fn report_rules_ack(&mut self) {
+        let Some(w) = self.rules.as_mut() else { return };
+        let Some(ack) = self.store.rules_ack() else { return };
+        if w.ack.as_ref() == Some(ack) {
+            return;
+        }
+        w.ack = Some(ack.clone());
+        for e in &ack.errors {
+            note(format_args!("the app refused rule {}: {}", e.rule, e.message));
         }
     }
 
@@ -409,7 +491,7 @@ pub async fn record(
 /// Where `export` takes requests from.
 pub enum ExportInput<'a> {
     File(&'a Path),
-    Live(Source, Duration),
+    Live(Box<Source>, Duration),
 }
 
 /// `export --har`: the requests of a saved session, or of a live capture, as a HAR file.
@@ -420,7 +502,7 @@ pub async fn export_har(out: &Path, input: ExportInput<'_>, filter: Option<Filte
     let store = match input {
         ExportInput::File(path) => open_file(path)?,
         ExportInput::Live(source, duration) => {
-            let mut cap = Capture::start(source, None).await?;
+            let mut cap = Capture::start(*source, None).await?;
             let stop = cap.run(Some(duration), |_| true).await;
             note(stop.text());
             cap.stop(|_| true).await
@@ -554,6 +636,61 @@ mod tests {
             d["log"]["entries"].as_array().unwrap().iter().map(|e| e["request"]["url"].clone()).collect::<Vec<_>>()
         };
         assert_eq!(urls(&doc2), urls(&doc));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_changed_rules_file_reaches_the_app_while_a_capture_runs() {
+        let dir = scratch("rules");
+        let path = dir.join("rules.toml");
+        let file = |on: &str| {
+            format!(
+                "version = 1\n[[rule]]\nid = \"slow\"\nenabled = {on}\n  [[rule.action]]\n  type = \"delay\"\n  ms = 5\n"
+            )
+        };
+        std::fs::write(&path, file("false")).unwrap();
+        let first = traffic_police_core::rules::load(&path).set;
+        // a backend that keeps every rule set it is sent, and wakes the capture after each
+        let (event_tx, events) = mpsc::channel(8);
+        let (command_tx, mut commands) = mpsc::unbounded_channel();
+        let (_status_tx, status) = watch::channel(ConnectionStatus::Live("the test app".into()));
+        let sent = Arc::new(Mutex::new(Vec::new()));
+        let seen = sent.clone();
+        let backend = tokio::spawn(async move {
+            while let Some(c) = commands.recv().await {
+                if let BackendCommand::SetRules(set) = c {
+                    seen.lock().unwrap().push(set);
+                    let _ = event_tx.send(Vec::new()).await;
+                }
+            }
+        });
+        let mut cap = Capture {
+            store: SessionStore::new(),
+            events,
+            commands: Some(command_tx),
+            backend,
+            status,
+            rules: Some(RulesWatch::start(path.clone(), first.clone())),
+        };
+        // a file with a mistake is not sent, and the same rules are not sent again
+        let bad = dir.join("bad.toml");
+        std::fs::write(&bad, "version = 2\n").unwrap();
+        cap.rules_changed(traffic_police_core::rules::load(&bad));
+        cap.rules_changed(traffic_police_core::rules::load(&path));
+        assert!(sent.lock().unwrap().is_empty());
+        // a saved change is, while the capture runs
+        let edit = path.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(600)).await;
+            std::fs::write(&edit, file("true")).unwrap();
+        });
+        let stop = cap.run(Some(Duration::from_secs(5)), |_| sent.lock().unwrap().is_empty()).await;
+        assert_eq!(stop, Stop::Done, "the change arrived before the time was up");
+        let sets = sent.lock().unwrap().clone();
+        assert_eq!(sets.len(), 1);
+        assert_ne!(sets[0], first);
+        assert!(sets[0].rules[0].enabled);
+        drop(cap);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

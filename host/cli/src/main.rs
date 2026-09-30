@@ -261,8 +261,17 @@ fn main() -> anyhow::Result<()> {
                     headless::ExportInput::File(file)
                 }
                 (None, Some(d)) => headless::ExportInput::Live(
-                    headless_source(&args.target, &cli.target, args.demo, "export", &settings, cli.project.as_deref())
+                    Box::new(
+                        headless_source(
+                            &args.target,
+                            &cli.target,
+                            args.demo,
+                            "export",
+                            &settings,
+                            cli.project.as_deref(),
+                        )
                         .await?,
+                    ),
                     d,
                 ),
                 (None, None) => bail!("give --input FILE, or capture live with --package and --duration (like 60s)"),
@@ -378,7 +387,7 @@ async fn headless_source(
         launch_app(&adb, target.serial.as_deref(), &target.package).await?;
     }
     tracing::info!(command, package = %target.package, serial = ?target.serial, follow = target.follow, "headless session");
-    Ok(headless::Source::Device(target, adb))
+    Ok(headless::Source::Device(target, adb, rules.path()))
 }
 
 fn theme(arg: ThemeArg) -> Theme {
@@ -449,8 +458,8 @@ fn demo_app(theme: Theme) -> App {
     app
 }
 
-/// Apply `.traffic-police/project.toml` (nearest one at or above the working directory).
-/// The project's rules (`.traffic-police/rules.toml`), read at start.
+/// The project's rules (`.traffic-police/rules.toml`), read at start; the UI and the commands
+/// without it then watch the file.
 struct ProjectRules {
     dir: Option<PathBuf>,
     file: Option<traffic_police_core::rules::RulesFile>,
@@ -464,6 +473,11 @@ impl ProjectRules {
         };
         let file = dir.as_ref().map(|d| traffic_police_core::rules::load(&d.join(traffic_police_core::rules::FILE)));
         ProjectRules { dir, file }
+    }
+
+    /// The file to watch, when the project has a `.traffic-police` directory.
+    fn path(&self) -> Option<PathBuf> {
+        self.dir.as_ref().map(|d| d.join(traffic_police_core::rules::FILE))
     }
 
     /// What the app gets: the file's rules when they are valid, else none.
@@ -496,6 +510,7 @@ impl ProjectRules {
     }
 }
 
+/// Apply `.traffic-police/project.toml` (nearest one at or above the working directory).
 fn load_project(app: &mut App, project: Option<&Path>) {
     let start = match project {
         Some(p) => p.to_path_buf(),
