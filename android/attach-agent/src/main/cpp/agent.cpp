@@ -23,6 +23,8 @@
 namespace {
 
 constexpr char kLogTag[] = "TrafficPoliceAgent";
+// Trampoline.VERSION in the boot dex this agent is built with
+constexpr char kVersion[] = "0.1.0";
 constexpr char kTrampolineClass[] = "io/trafficpolice/boot/Trampoline";
 constexpr char kNativeBridgeClass[] = "io/trafficpolice/boot/NativeBridge";
 constexpr char kTrampolineDescriptor[] = "Lio/trafficpolice/boot/Trampoline;";
@@ -648,7 +650,10 @@ std::string NormalizeOptions(const char* options, std::string* package_name,
 }
 
 jint Attach(JavaVM* vm, char* options) {
-  if (g_initialized.exchange(true, std::memory_order_acq_rel)) return JNI_OK;
+  if (g_initialized.exchange(true, std::memory_order_acq_rel)) {
+    Log(ANDROID_LOG_WARN, "attached again; the agent that loaded first stays in charge until the app restarts");
+    return JNI_OK;
+  }
   g_vm = vm;
   g_runtime_dir = NormalizeOptions(options, &g_package_name, &g_startup_agent);
   // A startup agent stays in code_cache/startup_agents until it is deleted (a host that crashed
@@ -671,6 +676,32 @@ jint Attach(JavaVM* vm, char* options) {
     Log(ANDROID_LOG_ERROR, "ART did not provide JNI 1.6 on the attach thread");
     return JNI_OK;
   }
+
+  // Another copy of the agent (another path: a startup agent, then a runtime attach; or another
+  // traffic-police version) already put the boot dex in place and started a runtime. Boot classes
+  // cannot be replaced, so this copy leaves the process to it.
+  jclass attached = env->FindClass(kTrampolineClass);
+  if (attached != nullptr) {
+    std::string version = "unknown";
+    jfieldID field = env->GetStaticFieldID(attached, "VERSION", "Ljava/lang/String;");
+    jstring text = field != nullptr ? static_cast<jstring>(env->GetStaticObjectField(attached, field)) : nullptr;
+    if (text != nullptr) {
+      const char* chars = env->GetStringUTFChars(text, nullptr);
+      if (chars != nullptr) {
+        version = chars;
+        env->ReleaseStringUTFChars(text, chars);
+      }
+      env->DeleteLocalRef(text);
+    }
+    if (env->ExceptionCheck()) env->ExceptionClear();
+    env->DeleteLocalRef(attached);
+    Log(ANDROID_LOG_WARN, version == kVersion
+                              ? "already attached in this process; this copy stays inactive"
+                              : "agent " + version + " is already attached in this process; this " +
+                                    kVersion + " copy stays inactive (restart the app to use it)");
+    return JNI_OK;
+  }
+  if (env->ExceptionCheck()) env->ExceptionClear();
 
   g_api_level = ApiLevel(env);
   const std::string boot_dex = g_runtime_dir + "/traffic-police-boot.dex";

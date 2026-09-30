@@ -5,6 +5,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 /** Small bootstrap-visible dispatch point inserted into boot and app dex methods. */
 public final class Trampoline {
+    /** Read by the agent (kVersion in agent.cpp): a second agent finds it and stays inactive. */
     public static final String VERSION = "0.1.0";
 
     private static volatile ExitHandler handler;

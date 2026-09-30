@@ -15,7 +15,7 @@ import java.io.IOException;
 
 /** The runtime's view of Android: public SDK APIs only (no hidden APIs). */
 final class AndroidPlatform implements Platform {
-    private final AppInfo app;
+    private volatile AppInfo app;
     private final DeviceInfo device;
 
     AndroidPlatform(Context context) {
@@ -123,7 +123,17 @@ final class AndroidPlatform implements Platform {
 
     @Override
     public AppInfo app() {
-        return app;
+        AppInfo current = app;
+        // an agent loaded at launch can start before bindApplication names the process (it is
+        // "<pre-initialized>" until then); by the time a host connects, it has its name
+        if (current.processName.startsWith("<")) {
+            String name = processName();
+            if (!name.startsWith("<")) {
+                current = new AppInfo(current.packageName, name, current.pid, current.uid, current.debuggable);
+                app = current;
+            }
+        }
+        return current;
     }
 
     @Override
