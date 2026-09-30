@@ -5,6 +5,7 @@
 //! snapshot cheaply.
 
 pub mod body;
+pub mod spill;
 pub mod traffic;
 
 use std::collections::{BTreeMap, HashMap};
@@ -21,7 +22,7 @@ use crate::model::{
     Transaction, TxnIdx, TxnKey, TxnState, Url,
 };
 
-pub use body::BodyStore;
+pub use body::{BodyStore, DEFAULT_MEMORY_BUDGET};
 pub use traffic::{Buckets, GraphSource, TrafficSeries};
 
 /// Hands out source ids; clone it into every backend.

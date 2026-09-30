@@ -2635,6 +2635,7 @@ dependencies = [
  "jaq-core",
  "jaq-json",
  "jaq-std",
+ "libc",
  "percent-encoding",
  "proptest",
  "ruzstd",
@@ -2642,6 +2643,7 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.21",
  "toml",
+ "tracing",
  "traffic-police-proto",
 ]
 

@@ -14,6 +14,7 @@ use traffic_police_backends::{DeviceTarget, run_device};
 use traffic_police_core::backend::{Capabilities, ConnectionStatus};
 use traffic_police_core::fmt::{NS_PER_MS, NS_PER_SEC};
 use traffic_police_core::store::SessionStore;
+use traffic_police_core::store::spill;
 use traffic_police_tui::app::{App, JqResult};
 use traffic_police_tui::terminal::{self, RunOptions};
 use traffic_police_tui::theme::{Depth, Palette, Theme};
@@ -130,8 +131,11 @@ fn main() -> anyhow::Result<()> {
             }
             let _log = init_logging(cli.log_file.as_deref())?;
             traffic_police_core::fmt::set_local_offset_secs(traffic_police_tui::local_utc_offset_secs());
+            spill::remove_stale();
             let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
-            rt.block_on(run_demo(args, theme, !cli.no_images))
+            let result = rt.block_on(run_demo(args, theme, !cli.no_images));
+            spill::remove_all();
+            result
         }
         None => {
             if cli.target.mode == Mode::Attach {
@@ -143,8 +147,11 @@ fn main() -> anyhow::Result<()> {
             let theme = theme(cli.theme);
             let _log = init_logging(cli.log_file.as_deref())?;
             traffic_police_core::fmt::set_local_offset_secs(traffic_police_tui::local_utc_offset_secs());
+            spill::remove_stale();
             let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
-            rt.block_on(run_device_mode(cli.target, theme, !cli.no_images))
+            let result = rt.block_on(run_device_mode(cli.target, theme, !cli.no_images));
+            spill::remove_all();
+            result
         }
     }
 }

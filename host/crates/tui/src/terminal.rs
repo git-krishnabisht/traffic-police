@@ -49,6 +49,7 @@ pub fn install_panic_hook() {
         let previous = std::panic::take_hook();
         std::panic::set_hook(Box::new(move |info| {
             restore_terminal();
+            traffic_police_core::store::spill::remove_all();
             previous(info);
         }));
     });
@@ -170,6 +171,7 @@ async fn event_loop(
                 if let Some(Editor { mut child, .. }) = editor.take() {
                     let _ = child.kill().await;
                 }
+                traffic_police_core::store::spill::remove_all();
                 return Ok(());
             }
             _ = ticker.tick() => {}
