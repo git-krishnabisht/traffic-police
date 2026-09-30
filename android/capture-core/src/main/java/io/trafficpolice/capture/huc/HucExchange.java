@@ -3,15 +3,23 @@ package io.trafficpolice.capture.huc;
 import io.trafficpolice.capture.core.CaptureRuntime;
 import io.trafficpolice.capture.core.ConnInfo;
 import io.trafficpolice.capture.core.Recorder;
+import io.trafficpolice.capture.core.RuleRun;
 import io.trafficpolice.capture.core.ThreadStack;
 import io.trafficpolice.capture.core.Txn;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.io.SequenceInputStream;
 import java.net.HttpURLConnection;
+import java.net.URL;
 import java.security.cert.Certificate;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import javax.net.ssl.HttpsURLConnection;
@@ -33,6 +41,17 @@ final class HucExchange {
     private TeeOutputStream wrappedOut;
     private InputStream rawIn;
     private TeeInputStream wrappedIn;
+    // rules (PROTOCOL.md §8.4): found when the exchange starts, applied around the delegate
+    private RuleRun rules;
+    private boolean gated;
+    private IOException ruleFailure;
+    private RuleRun.Delivered delivered;
+    private int originalCode;
+    private String statusLinePrefix = "HTTP/1.1";
+    /** The original body when a rule read it in full (a replace that found nothing keeps it). */
+    private byte[] originalBody;
+    /** The original body when it was too large to rewrite: what was read, then the rest. */
+    private InputStream oversize;
 
     HucExchange(HttpURLConnection delegate) {
         this.delegate = delegate;
@@ -53,8 +72,12 @@ final class HucExchange {
         startTried = true;
         try {
             CaptureRuntime rt = CaptureRuntime.current();
-            if (rt == null || !rt.recorder().recording()) {
+            if (rt == null) {
                 return;
+            }
+            rules = findRules();
+            if (!rt.recorder().recording()) {
+                return; // paused: rules still apply, nothing is recorded
             }
             Recorder rec = rt.recorder();
             Recorder.RequestInfo r = new Recorder.RequestInfo();
@@ -76,6 +99,53 @@ final class HucExchange {
         } catch (Throwable t) {
             internal("start", t);
         }
+    }
+
+    private RuleRun findRules() {
+        URL url = delegate.getURL();
+        String method = delegate.getRequestMethod();
+        if ("GET".equals(method) && delegate.getDoOutput()) {
+            method = "POST";
+        }
+        int port = url.getPort() != -1 ? url.getPort() : url.getDefaultPort();
+        String path = url.getPath() == null || url.getPath().isEmpty() ? "/" : url.getPath();
+        return RuleRun.find(method, url.getProtocol(), url.getHost(), port, path, RuleRun.parseQuery(url.getQuery()));
+    }
+
+    /**
+     * The rules' delays, then their failure, once, before the first call that connects. Returns
+     * the failure (again on later calls: the connection failed), or null.
+     */
+    synchronized IOException gate() {
+        if (!gated) {
+            gated = true;
+            if (rules != null) {
+                try {
+                    rules.beforeRequest(txn, null);
+                } catch (IOException e) {
+                    ruleFailure = e;
+                }
+            }
+        }
+        return ruleFailure;
+    }
+
+    /** {@link #gate()} for calls that throw. */
+    void gateOrThrow() throws IOException {
+        IOException e = gate();
+        if (e != null) {
+            throw e;
+        }
+    }
+
+    /** A rule failed the connection before it was made (getters then answer as for a failure). */
+    synchronized boolean ruleFailed() {
+        return ruleFailure != null;
+    }
+
+    /** The app sees the rules' response (or failure), not the delegate's. */
+    synchronized boolean ruled() {
+        return ruleFailure != null || delivered != null;
     }
 
     private String[] requestHeaders() {
@@ -112,7 +182,7 @@ final class HucExchange {
 
     /** Before a call that needs the response: the request is over by then. */
     synchronized void beforeResponse() {
-        if (txn == null || responded) {
+        if (txn == null || responded || ruleFailure != null) {
             return;
         }
         try {
@@ -127,9 +197,9 @@ final class HucExchange {
         }
     }
 
-    /** After the delegate produced the status line: records it (once). */
+    /** After the delegate produced the status line: records it, and applies the rules (once). */
     synchronized void responseReady() {
-        if (txn == null || responded) {
+        if (responded || ruleFailure != null || (txn == null && rules == null)) {
             return;
         }
         responded = true;
@@ -145,6 +215,9 @@ final class HucExchange {
                     break;
                 }
                 if (name == null) {
+                    if (value != null && value.startsWith("HTTP/") && value.indexOf(' ') > 0) {
+                        statusLinePrefix = value.substring(0, value.indexOf(' '));
+                    }
                     continue; // the status line
                 }
                 headers.add(name);
@@ -153,9 +226,17 @@ final class HucExchange {
                     protocol = value;
                 }
             }
-            txn.response(code, message, protocol, headers.toArray(new String[0]), connInfo(protocol));
-            txn.mark("resp_headers_end");
-            if (!hasBody(code)) {
+            String[] pairs = headers.toArray(new String[0]);
+            boolean body = hasBody(code);
+            if (txn != null) {
+                txn.response(code, message, protocol, pairs, connInfo(protocol));
+                txn.mark("resp_headers_end");
+            }
+            if (rules != null && rules.editsResponse()) {
+                applyRules(code, message, pairs, body);
+                return;
+            }
+            if (txn != null && !body) {
                 txn.response.end("none");
                 txn.done();
             }
@@ -165,6 +246,174 @@ final class HucExchange {
             internal("response", t);
         }
     }
+
+    /** Status, header and body actions: the app then reads {@link #delivered}. */
+    private void applyRules(int code, String message, String[] headers, boolean hasBody) throws IOException {
+        originalCode = code;
+        byte[] original = null;
+        boolean read = false;
+        if (rules.editsBody()) {
+            if (!hasBody) {
+                original = new byte[0];
+            } else {
+                InputStream in = code >= 400 ? delegate.getErrorStream() : delegate.getInputStream();
+                if (in == null) {
+                    original = new byte[0];
+                } else {
+                    byte[] head = readUpTo(in, RuleRun.BODY_LIMIT + 1);
+                    if (head.length <= RuleRun.BODY_LIMIT) {
+                        original = head;
+                        read = true;
+                        in.close();
+                    } else {
+                        // too large to rewrite: body actions are skipped, the original streams on
+                        oversize = new SequenceInputStream(new ByteArrayInputStream(head), in);
+                    }
+                }
+            }
+        }
+        if (txn != null && original != null && read) {
+            txn.response.write(original, 0, original.length);
+            txn.response.end("complete");
+        }
+        delivered = rules.editResponse(code, message, headers, original, txn);
+        if (delivered == null) {
+            // nothing changed after all (a replace that found nothing): the original, as it came
+            delivered = RuleRun.Delivered.unchanged(code, message, headers);
+        }
+        originalBody = read ? original : null;
+        if (txn != null && (original != null || !hasBody)) {
+            if (!read) {
+                txn.response.end("none");
+            }
+            txn.done();
+        }
+    }
+
+    /** Up to {@code max} bytes, or fewer at the end of the stream. */
+    private static byte[] readUpTo(InputStream in, int max) throws IOException {
+        ByteArrayOutputStream out = new ByteArrayOutputStream(Math.min(max, 64 * 1024));
+        byte[] buf = new byte[16 * 1024];
+        int n;
+        while (out.size() < max && (n = in.read(buf, 0, Math.min(buf.length, max - out.size()))) != -1) {
+            out.write(buf, 0, n);
+        }
+        return out.toByteArray();
+    }
+
+    // --- what the app sees when rules changed the response -----------------------------------
+
+    synchronized int ruledCode() throws IOException {
+        if (ruleFailure != null) {
+            throw ruleFailure;
+        }
+        return delivered.code;
+    }
+
+    synchronized String ruledMessage() throws IOException {
+        if (ruleFailure != null) {
+            throw ruleFailure;
+        }
+        return delivered.message;
+    }
+
+    /** {@code getHeaderField(name)}: the last value, as HttpURLConnection answers. */
+    synchronized String ruledHeader(String name) {
+        if (delivered == null || name == null) {
+            return null;
+        }
+        String found = null;
+        for (int i = 0; i + 1 < delivered.headers.length; i += 2) {
+            if (delivered.headers[i].equalsIgnoreCase(name)) {
+                found = delivered.headers[i + 1];
+            }
+        }
+        return found;
+    }
+
+    /** {@code getHeaderFieldKey(n)}: null for the status line (0). */
+    synchronized String ruledHeaderKey(int n) {
+        if (delivered == null || n <= 0 || 2 * (n - 1) >= delivered.headers.length) {
+            return null;
+        }
+        return delivered.headers[2 * (n - 1)];
+    }
+
+    /** {@code getHeaderField(n)}: the status line for 0. */
+    synchronized String ruledHeaderAt(int n) {
+        if (delivered == null || n < 0) {
+            return null;
+        }
+        if (n == 0) {
+            return statusLinePrefix + " " + delivered.code + (delivered.message == null ? "" : " " + delivered.message);
+        }
+        return 2 * (n - 1) + 1 < delivered.headers.length ? delivered.headers[2 * (n - 1) + 1] : null;
+    }
+
+    synchronized Map<String, List<String>> ruledHeaders() {
+        if (delivered == null) {
+            return Collections.emptyMap();
+        }
+        Map<String, List<String>> out = new LinkedHashMap<>();
+        out.put(null, Collections.singletonList(ruledHeaderAt(0)));
+        for (int i = 0; i + 1 < delivered.headers.length; i += 2) {
+            List<String> values = out.get(delivered.headers[i]);
+            if (values == null) {
+                values = new ArrayList<>(1);
+                out.put(delivered.headers[i], values);
+            }
+            values.add(delivered.headers[i + 1]);
+        }
+        for (Map.Entry<String, List<String>> e : out.entrySet()) {
+            e.setValue(Collections.unmodifiableList(e.getValue()));
+        }
+        return Collections.unmodifiableMap(out);
+    }
+
+    /** {@code getInputStream()} by the delivered status: an error status throws, as the platform does. */
+    synchronized InputStream ruledInputStream() throws IOException {
+        int code = ruledCode();
+        if (code >= 400) {
+            String url = delegate.getURL().toString();
+            if (ON_ANDROID || code == 404 || code == 410) {
+                throw new FileNotFoundException(url);
+            }
+            throw new IOException("Server returned HTTP response code: " + code + " for URL: " + url);
+        }
+        return ruledBody();
+    }
+
+    /** {@code getErrorStream()}: the body for an error status, else null. */
+    synchronized InputStream ruledErrorStream() {
+        if (ruleFailure != null || delivered == null || delivered.code < 400) {
+            return null;
+        }
+        try {
+            return ruledBody();
+        } catch (IOException e) {
+            return null;
+        }
+    }
+
+    private InputStream ruledBody() throws IOException {
+        if (delivered.body != null) {
+            return new ByteArrayInputStream(delivered.body);
+        }
+        if (originalBody != null) {
+            return new ByteArrayInputStream(originalBody);
+        }
+        if (oversize != null) {
+            InputStream o = oversize;
+            oversize = null;
+            return wrapResponseBody(o);
+        }
+        // the original body, from where the delegate keeps it for its own status
+        InputStream in = originalCode >= 400 ? delegate.getErrorStream() : delegate.getInputStream();
+        return in == null ? new ByteArrayInputStream(new byte[0]) : wrapResponseBody(in);
+    }
+
+    /** Android answers every error status with FileNotFoundException; the JDK only 404 and 410. */
+    private static final boolean ON_ANDROID = "The Android Project".equals(System.getProperty("java.vendor"));
 
     private boolean hasBody(int code) {
         if ("HEAD".equals(delegate.getRequestMethod())) {

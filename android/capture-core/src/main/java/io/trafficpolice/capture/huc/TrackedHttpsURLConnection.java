@@ -69,113 +69,155 @@ public final class TrackedHttpsURLConnection extends HttpsURLConnection {
     @Override
     public int getContentLength() {
         HucCalls.beforeGetter(exchange);
+        if (exchange.ruleFailed()) {
+            return super.getContentLength();
+        }
         int value = delegate.getContentLength();
         HucCalls.afterGetter(exchange);
-        return value;
+        return exchange.ruled() ? super.getContentLength() : value;
     }
 
     @Override
     public long getContentLengthLong() {
         HucCalls.beforeGetter(exchange);
+        if (exchange.ruleFailed()) {
+            return super.getContentLengthLong();
+        }
         long value = delegate.getContentLengthLong();
         HucCalls.afterGetter(exchange);
-        return value;
+        return exchange.ruled() ? super.getContentLengthLong() : value;
     }
 
     @Override
     public String getContentType() {
         HucCalls.beforeGetter(exchange);
+        if (exchange.ruleFailed()) {
+            return super.getContentType();
+        }
         String value = delegate.getContentType();
         HucCalls.afterGetter(exchange);
-        return value;
+        return exchange.ruled() ? super.getContentType() : value;
     }
 
     @Override
     public String getContentEncoding() {
         HucCalls.beforeGetter(exchange);
+        if (exchange.ruleFailed()) {
+            return super.getContentEncoding();
+        }
         String value = delegate.getContentEncoding();
         HucCalls.afterGetter(exchange);
-        return value;
+        return exchange.ruled() ? super.getContentEncoding() : value;
     }
 
     @Override
     public long getExpiration() {
         HucCalls.beforeGetter(exchange);
+        if (exchange.ruleFailed()) {
+            return super.getExpiration();
+        }
         long value = delegate.getExpiration();
         HucCalls.afterGetter(exchange);
-        return value;
+        return exchange.ruled() ? super.getExpiration() : value;
     }
 
     @Override
     public long getDate() {
         HucCalls.beforeGetter(exchange);
+        if (exchange.ruleFailed()) {
+            return super.getDate();
+        }
         long value = delegate.getDate();
         HucCalls.afterGetter(exchange);
-        return value;
+        return exchange.ruled() ? super.getDate() : value;
     }
 
     @Override
     public long getLastModified() {
         HucCalls.beforeGetter(exchange);
+        if (exchange.ruleFailed()) {
+            return super.getLastModified();
+        }
         long value = delegate.getLastModified();
         HucCalls.afterGetter(exchange);
-        return value;
+        return exchange.ruled() ? super.getLastModified() : value;
     }
 
     @Override
     public String getHeaderField(String name) {
         HucCalls.beforeGetter(exchange);
+        if (exchange.ruleFailed()) {
+            return exchange.ruledHeader(name);
+        }
         String value = delegate.getHeaderField(name);
         HucCalls.afterGetter(exchange);
-        return value;
+        return exchange.ruled() ? exchange.ruledHeader(name) : value;
     }
 
     @Override
     public Map<String, List<String>> getHeaderFields() {
         HucCalls.beforeGetter(exchange);
+        if (exchange.ruleFailed()) {
+            return exchange.ruledHeaders();
+        }
         Map<String, List<String>> value = delegate.getHeaderFields();
         HucCalls.afterGetter(exchange);
-        return value;
+        return exchange.ruled() ? exchange.ruledHeaders() : value;
     }
 
     @Override
     public int getHeaderFieldInt(String name, int defaultValue) {
         HucCalls.beforeGetter(exchange);
+        if (exchange.ruleFailed()) {
+            return super.getHeaderFieldInt(name, defaultValue);
+        }
         int value = delegate.getHeaderFieldInt(name, defaultValue);
         HucCalls.afterGetter(exchange);
-        return value;
+        return exchange.ruled() ? super.getHeaderFieldInt(name, defaultValue) : value;
     }
 
     @Override
     public long getHeaderFieldLong(String name, long defaultValue) {
         HucCalls.beforeGetter(exchange);
+        if (exchange.ruleFailed()) {
+            return super.getHeaderFieldLong(name, defaultValue);
+        }
         long value = delegate.getHeaderFieldLong(name, defaultValue);
         HucCalls.afterGetter(exchange);
-        return value;
+        return exchange.ruled() ? super.getHeaderFieldLong(name, defaultValue) : value;
     }
 
     @Override
     public long getHeaderFieldDate(String name, long defaultValue) {
         HucCalls.beforeGetter(exchange);
+        if (exchange.ruleFailed()) {
+            return super.getHeaderFieldDate(name, defaultValue);
+        }
         long value = delegate.getHeaderFieldDate(name, defaultValue);
         HucCalls.afterGetter(exchange);
-        return value;
+        return exchange.ruled() ? super.getHeaderFieldDate(name, defaultValue) : value;
     }
 
     @Override
     public String getHeaderFieldKey(int n) {
         HucCalls.beforeGetter(exchange);
+        if (exchange.ruleFailed()) {
+            return exchange.ruledHeaderKey(n);
+        }
         String value = delegate.getHeaderFieldKey(n);
         HucCalls.afterGetter(exchange);
-        return value;
+        return exchange.ruled() ? exchange.ruledHeaderKey(n) : value;
     }
 
     @Override
     public String getHeaderField(int n) {
         HucCalls.beforeGetter(exchange);
+        if (exchange.ruleFailed()) {
+            return exchange.ruledHeaderAt(n);
+        }
         String value = delegate.getHeaderField(n);
         HucCalls.afterGetter(exchange);
-        return value;
+        return exchange.ruled() ? exchange.ruledHeaderAt(n) : value;
     }
 
     @Override

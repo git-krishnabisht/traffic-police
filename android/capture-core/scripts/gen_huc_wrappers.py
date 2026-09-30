@@ -8,7 +8,10 @@ import sys
 out_dir = sys.argv[1]
 
 # (return type, name, params [(type, name)], throws, kind)
-# kind: plain | getter | getter_throws | special:<expr>
+# kind: plain | derived | view:<exchange method> | getter_throws | special:<expr>
+#   derived: a getter URLConnection computes from getHeaderField, so when rules changed the
+#            response it is answered by super (from the views below)
+#   view:    a primary header getter, answered by the exchange when rules changed the response
 M = [
  ("void","connect",[],"IOException","special:HucCalls.connect(delegate, exchange);"),
  ("void","setConnectTimeout",[("int","timeout")],None,"plain"),
@@ -16,20 +19,20 @@ M = [
  ("void","setReadTimeout",[("int","timeout")],None,"plain"),
  ("int","getReadTimeout",[],None,"plain"),
  ("URL","getURL",[],None,"plain"),
- ("int","getContentLength",[],None,"getter"),
- ("long","getContentLengthLong",[],None,"getter"),
- ("String","getContentType",[],None,"getter"),
- ("String","getContentEncoding",[],None,"getter"),
- ("long","getExpiration",[],None,"getter"),
- ("long","getDate",[],None,"getter"),
- ("long","getLastModified",[],None,"getter"),
- ("String","getHeaderField",[("String","name")],None,"getter"),
- ("Map<String, List<String>>","getHeaderFields",[],None,"getter"),
- ("int","getHeaderFieldInt",[("String","name"),("int","defaultValue")],None,"getter"),
- ("long","getHeaderFieldLong",[("String","name"),("long","defaultValue")],None,"getter"),
- ("long","getHeaderFieldDate",[("String","name"),("long","defaultValue")],None,"getter"),
- ("String","getHeaderFieldKey",[("int","n")],None,"getter"),
- ("String","getHeaderField",[("int","n")],None,"getter"),
+ ("int","getContentLength",[],None,"derived"),
+ ("long","getContentLengthLong",[],None,"derived"),
+ ("String","getContentType",[],None,"derived"),
+ ("String","getContentEncoding",[],None,"derived"),
+ ("long","getExpiration",[],None,"derived"),
+ ("long","getDate",[],None,"derived"),
+ ("long","getLastModified",[],None,"derived"),
+ ("String","getHeaderField",[("String","name")],None,"view:ruledHeader"),
+ ("Map<String, List<String>>","getHeaderFields",[],None,"view:ruledHeaders"),
+ ("int","getHeaderFieldInt",[("String","name"),("int","defaultValue")],None,"derived"),
+ ("long","getHeaderFieldLong",[("String","name"),("long","defaultValue")],None,"derived"),
+ ("long","getHeaderFieldDate",[("String","name"),("long","defaultValue")],None,"derived"),
+ ("String","getHeaderFieldKey",[("int","n")],None,"view:ruledHeaderKey"),
+ ("String","getHeaderField",[("int","n")],None,"view:ruledHeaderAt"),
  ("Object","getContent",[],"IOException","getter_throws"),
  ("Object","getContent",[("Class[]","classes")],"IOException","getter_throws_raw"),
  ("Permission","getPermission",[],"IOException","plain"),
@@ -89,8 +92,12 @@ def method(ret, name, params, throws, kind, dtype):
     call = f"delegate.{name}({args})"
     if kind == "plain":
         body = f"        {'return ' if ret != 'void' else ''}{call};\n"
-    elif kind == "getter":
-        body = f"        HucCalls.beforeGetter(exchange);\n        {ret} value = {call};\n        HucCalls.afterGetter(exchange);\n        return value;\n"
+    elif kind == "derived" or kind.startswith("view:"):
+        ruled = f"super.{name}({args})" if kind == "derived" else f"exchange.{kind[5:]}({args})"
+        body = (f"        HucCalls.beforeGetter(exchange);\n"
+                f"        if (exchange.ruleFailed()) {{\n            return {ruled};\n        }}\n"
+                f"        {ret} value = {call};\n        HucCalls.afterGetter(exchange);\n"
+                f"        return exchange.ruled() ? {ruled} : value;\n")
     elif kind.startswith("getter_throws"):
         body = (f"        HucCalls.responseCode(delegate, exchange);\n        return {call};\n")
     elif kind.startswith("special:"):

@@ -57,6 +57,11 @@ public final class RuleRun {
             this.body = body;
             this.headerOps = headerOps;
         }
+
+        /** The response as it came (a rule matched but changed nothing). */
+        public static Delivered unchanged(int code, String message, String[] headers) {
+            return new Delivered(code, message, headers, null, java.util.Collections.<String[]>emptyList());
+        }
     }
 
     /** One change, as the {@code rule} event reports it (PROTOCOL.md §7). */
