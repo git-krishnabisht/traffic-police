@@ -15,7 +15,7 @@ use tokio::net::TcpStream;
 
 pub use apps::AppProcess;
 pub use devices::{Device, TransportId};
-pub use sockets::{RuntimeSocket, socket_name};
+pub use sockets::{PREFIX, RuntimeSocket, socket_name};
 
 #[derive(Debug, thiserror::Error)]
 pub enum AdbError {

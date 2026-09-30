@@ -33,6 +33,29 @@ pub struct DeviceTarget {
     pub follow: bool,
 }
 
+/// Removes forwards to capture sockets that no longer exist on the device: a traffic-police that
+/// was killed (or crashed) could not remove its own. Forwards to live sockets, and anything that
+/// is not a traffic-police socket, are left alone.
+async fn sweep_stale_forwards(adb: &Adb, device: &Device) {
+    let (Ok(forwards), Ok(sockets)) = (adb.list_forwards().await, adb.runtime_sockets(device.transport_id).await)
+    else {
+        return;
+    };
+    for (serial, local, remote) in forwards {
+        let Some(name) = remote.strip_prefix("localabstract:") else { continue };
+        if serial != device.serial
+            || !name.starts_with(traffic_police_adb::PREFIX)
+            || sockets.iter().any(|s| s.name == name)
+        {
+            continue;
+        }
+        if let Some(port) = local.strip_prefix("tcp:").and_then(|p| p.parse().ok()) {
+            tracing::info!("removing a stale forward tcp:{port} to @{name} (its process is gone)");
+            let _ = adb.kill_forward(device.transport_id, port).await;
+        }
+    }
+}
+
 /// Whether Android's cached-apps freezer holds the process (it then runs no code at all).
 async fn is_frozen(adb: &Adb, device: &Device, pid: u32) -> bool {
     adb.frozen_pids(device.transport_id, &[pid]).await.is_ok_and(|f| f.contains(&pid))
@@ -103,6 +126,7 @@ pub async fn run_device(
     let mut config = CaptureConfig::default();
     // with --follow, the process that exited (its socket may linger for a moment)
     let mut followed_away_from: Option<u32> = None;
+    let mut swept = std::collections::HashSet::new();
     loop {
         // a quit while waiting ends the backend
         while let Ok(cmd) = commands.try_recv() {
@@ -130,6 +154,9 @@ pub async fn run_device(
                 continue;
             }
         };
+        if swept.insert(device.transport_id) {
+            sweep_stale_forwards(&adb, &device).await;
+        }
         let socket = match find_socket(&adb, &device, &target, resume.as_ref(), followed_away_from).await {
             Ok(Some(s)) => s,
             Ok(None) => {

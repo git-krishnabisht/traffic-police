@@ -11,9 +11,13 @@ import mockwebserver3.RecordedRequest
 import mockwebserver3.SocketEffect
 import okhttp3.tls.HandshakeCertificates
 import okhttp3.tls.HeldCertificate
+import okhttp3.HttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okio.Buffer
 import java.io.ByteArrayOutputStream
+import java.io.IOException
 import java.net.InetAddress
+import java.net.Socket
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
@@ -27,7 +31,7 @@ import kotlin.random.Random
 object Backend {
     lateinit var http: MockWebServer
         private set
-    lateinit var https: MockWebServer
+    lateinit var https: TlsServer
         private set
 
     /** Certificates a client needs to trust the HTTPS server. */
@@ -51,10 +55,54 @@ object Backend {
             .addSubjectAlternativeName("127.0.0.1")
             .build()
         trust = HandshakeCertificates.Builder().addTrustedCertificate(cert.certificate).build()
-        https = MockWebServer().apply {
-            dispatcher = Routes
-            useHttps(HandshakeCertificates.Builder().heldCertificate(cert).build().sslSocketFactory())
-            start(loopback, 0)
+        https = TlsServer(HandshakeCertificates.Builder().heldCertificate(cert).build(), loopback).apply { start() }
+    }
+
+    /**
+     * A minimal HTTPS server that answers every request with `{"tls":true}`. MockWebServer's own
+     * TLS path fails on Android 8: it reads the SNI names, which that Conscrypt reports as null
+     * when the client sends none (it sends none for "localhost").
+     */
+    class TlsServer(certificates: HandshakeCertificates, address: InetAddress) {
+        private val server = certificates.sslContext().serverSocketFactory.createServerSocket(0, 50, address)
+        val port: Int get() = server.localPort
+
+        fun url(path: String): HttpUrl = "https://localhost:$port$path".toHttpUrl()
+
+        fun start() {
+            Thread({
+                while (true) {
+                    val socket = try {
+                        server.accept()
+                    } catch (e: IOException) {
+                        return@Thread
+                    }
+                    Thread({ serve(socket) }, "sample-https").apply { isDaemon = true }.start()
+                }
+            }, "sample-https-accept").apply { isDaemon = true }.start()
+        }
+
+        private fun serve(socket: Socket) {
+            try {
+                socket.use {
+                    val input = it.getInputStream().bufferedReader(Charsets.ISO_8859_1)
+                    input.readLine() ?: return
+                    while (input.readLine()?.isNotEmpty() == true) {
+                        // headers: the requests carry no body
+                    }
+                    val body = """{"tls":true}"""
+                    it.getOutputStream().apply {
+                        write(
+                            ("HTTP/1.1 200 OK\r\nContent-Type: application/json; charset=utf-8\r\n" +
+                                "Content-Length: ${body.length}\r\nServer: sample-backend\r\nConnection: close\r\n\r\n$body")
+                                .toByteArray()
+                        )
+                        flush()
+                    }
+                }
+            } catch (e: IOException) {
+                // a client that went away
+            }
         }
     }
 
@@ -135,7 +183,6 @@ object Backend {
                 "/metrics" -> MockResponse.Builder()
                     .addHeader("Content-Type", "application/x-protobuf")
                     .body(Buffer().write(protobufAck))
-                "/secure" -> json(200, """{"tls":true}""")
                 "/worker/ping" -> json(200, """{"from":"worker"}""")
                 "/done" -> MockResponse.Builder().code(204)
                 else -> json(404, """{"ok":false,"path":"${url.encodedPath}"}""")

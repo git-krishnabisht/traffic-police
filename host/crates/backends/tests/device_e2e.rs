@@ -56,8 +56,14 @@ impl Session {
                         self.store.apply(e);
                     }
                 }
-                Ok(None) => panic!("the backends stopped while waiting for {what}"),
-                Err(_) => panic!("timed out after {limit:?} waiting for {what}"),
+                Ok(None) => {
+                    summary(&self.store);
+                    panic!("the backends stopped while waiting for {what}");
+                }
+                Err(_) => {
+                    summary(&self.store);
+                    panic!("timed out after {limit:?} waiting for {what}");
+                }
             }
         }
     }
@@ -483,12 +489,15 @@ async fn sample_app_end_to_end() {
     for t in tasks {
         tokio::time::timeout(Duration::from_secs(5), t).await.expect("backend did not stop").unwrap();
     }
+    let ours: Vec<String> = session.store.sources().map(|s| format!("_{}", s.pid)).collect();
     let left: Vec<_> = adb
         .list_forwards()
         .await
         .unwrap()
         .into_iter()
-        .filter(|(s, _, remote)| *s == serial && remote.contains("traffic-police_"))
+        .filter(|(s, _, remote)| {
+            *s == serial && remote.contains("traffic-police_") && ours.iter().any(|p| remote.ends_with(p))
+        })
         .collect();
     report.check(left.is_empty(), || format!("forwards left behind: {left:?}"));
 
