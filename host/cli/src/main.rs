@@ -4,6 +4,11 @@ mod config;
 mod doctor;
 mod headless;
 
+/// The attach-mode agent, when the build embedded it (`TRAFFIC_POLICE_EMBED_AGENT`, see build.rs).
+mod embedded {
+    include!(concat!(env!("OUT_DIR"), "/embedded_agent.rs"));
+}
+
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command as Process, Stdio};
@@ -13,9 +18,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use anyhow::{Context, bail};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use tokio::sync::{mpsc, watch};
-use traffic_police_adb::Adb;
 use traffic_police_backends::demo::{DemoConfig, DemoSession, demo_rules};
-use traffic_police_backends::{AgentKit, DeviceTarget, run_device};
+use traffic_police_backends::{AgentKit, DeviceTarget, Launch, run_device};
 use traffic_police_core::backend::{Capabilities, ConnectionStatus};
 use traffic_police_core::fmt::{NS_PER_MS, NS_PER_SEC};
 use traffic_police_core::store::SessionStore;
@@ -72,15 +76,17 @@ struct TargetArgs {
     /// A process id.
     #[arg(long)]
     pid: Option<u32>,
-    /// How capture gets into the app: the traffic-police library in its debug build, or attach
-    /// (no library needed; works with any debuggable app).
-    #[arg(long, value_enum, default_value_t = Mode::Library)]
-    mode: Mode,
-    /// Where to find the agent artifacts (the .so, boot dex and runtime dex). By default
-    /// found from TRAFFIC_POLICE_AGENT_DIR, or the Android build output in the source tree.
+    /// How capture gets into the app: the traffic-police library in its debug build (the
+    /// default with --package), or attach (any debuggable app, no library needed). Without
+    /// --package, the picker attaches to a process that has no library.
+    #[arg(long, value_enum)]
+    mode: Option<Mode>,
+    /// Attach mode: the directory with the agent (./gradlew :attach-agent:agentArtifacts). By
+    /// default the one built into this binary, else the build output in the source tree.
     #[arg(long, value_name = "DIR", env = "TRAFFIC_POLICE_AGENT_DIR")]
     agent_dir: Option<PathBuf>,
-    /// Start the app first.
+    /// Start the app first. In attach mode it is restarted if it runs, and the agent loads as
+    /// it starts (Android 8.1 and newer), so its start-up requests are captured.
     #[arg(long)]
     launch: bool,
     /// Keep watching when the app restarts; each run appears as a new segment.
@@ -284,13 +290,15 @@ fn main() -> anyhow::Result<()> {
             headless::export_har(&args.har, input, filter).await
         }),
         Some(Command::Doctor { ref target }) => {
+            let attach = target.mode.or(cli.target.mode) == Some(Mode::Attach);
             let t = doctor::Target {
                 project: cli.project.clone(),
                 serial: target.serial.clone().or_else(|| cli.target.serial.clone()),
                 package: target.package.clone().or_else(|| cli.target.package.clone()),
                 process: target.process.clone().or_else(|| cli.target.process.clone()),
                 pid: target.pid.or(cli.target.pid),
-                attach: target.mode == Mode::Attach || cli.target.mode == Mode::Attach,
+                attach,
+                agent: attach.then(|| load_agent_kit(target.agent_dir.as_deref().or(cli.target.agent_dir.as_deref()))),
             };
             let adb = settings.adb();
             let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
@@ -366,8 +374,7 @@ async fn headless_source(
     if let Some(s) = rules.summary() {
         headless::note(s);
     }
-    let attach_mode = args.mode == Mode::Attach || outer.mode == Mode::Attach;
-    let agent_kit = if attach_mode {
+    let agent_kit = if args.mode.or(outer.mode) == Some(Mode::Attach) {
         Some(load_agent_kit(args.agent_dir.as_deref().or(outer.agent_dir.as_deref()))?)
     } else {
         None
@@ -381,14 +388,11 @@ async fn headless_source(
         capture: settings.capture(),
         rules: rules.active(),
         attach: agent_kit,
+        launch: (args.launch || outer.launch).then(Launch::default),
     };
     let adb = settings.adb();
-    if args.launch || outer.launch {
-        adb.ensure_server().await.context("traffic-police talks to devices through the adb server")?;
-        launch_app(&adb, target.serial.as_deref(), &target.package).await?;
-    }
-    tracing::info!(command, package = %target.package, serial = ?target.serial, follow = target.follow, "headless session");
-    Ok(headless::Source::Device(target, adb, rules.path()))
+    tracing::info!(command, package = %target.package, serial = ?target.serial, follow = target.follow, attach = target.attach.is_some(), "headless session");
+    Ok(headless::Source::Device(Box::new(target), adb, rules.path()))
 }
 
 fn theme(arg: ThemeArg) -> Theme {
@@ -511,42 +515,34 @@ impl ProjectRules {
     }
 }
 
-/// Loads the agent artifacts for attach mode. Looks in `--agent-dir`, then
-/// `TRAFFIC_POLICE_AGENT_DIR`, then the Android build output relative to the repo root.
+/// The agent for attach mode: from `--agent-dir` (or `TRAFFIC_POLICE_AGENT_DIR`), else the one
+/// built into this binary (release builds), else the Android build output of the source tree
+/// this binary was built from, or under the working directory.
 fn load_agent_kit(dir: Option<&Path>) -> anyhow::Result<Arc<AgentKit>> {
     if let Some(d) = dir {
-        return AgentKit::from_dir(d)
-            .map(Arc::new)
-            .with_context(|| format!("loading agent artifacts from {}", d.display()));
+        return AgentKit::from_dir(d).map(Arc::new).with_context(|| format!("the agent in {}", d.display()));
     }
-    // Try the Android build output directory: walk up from the binary to find the repo root
-    let candidates: Vec<PathBuf> = [
-        // relative to cwd (common in development)
-        Some(PathBuf::from("android/attach-agent/build/outputs/agent")),
-        // relative to the binary
-        std::env::current_exe().ok().and_then(|p| {
-            // binary is in host/target/{profile}/traffic-police
-            p.ancestors().nth(4).map(|root| root.join("android/attach-agent/build/outputs/agent"))
-        }),
-    ]
-    .into_iter()
-    .flatten()
-    .filter(|p| p.is_dir())
-    .collect();
-
-    for d in &candidates {
-        match AgentKit::from_dir(d) {
+    if let Some([arm64, arm, x86_64, boot, runtime]) = embedded::AGENT {
+        return Ok(Arc::new(AgentKit::embedded(boot, runtime, [arm64, arm, x86_64])));
+    }
+    const OUTPUT: &str = "android/attach-agent/build/outputs/agent";
+    let candidates = [
+        // host/cli → the repository root
+        Some(Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").join(OUTPUT)),
+        std::env::current_dir().ok().map(|d| d.join(OUTPUT)),
+    ];
+    for d in candidates.into_iter().flatten().filter_map(|d| d.canonicalize().ok()) {
+        match AgentKit::from_dir(&d) {
             Ok(kit) => {
-                tracing::info!(dir = %d.display(), "loaded agent artifacts");
+                tracing::info!(dir = %d.display(), "the agent for attach mode");
                 return Ok(Arc::new(kit));
             }
-            Err(e) => tracing::debug!(dir = %d.display(), "skipping agent dir: {e}"),
+            Err(e) => tracing::debug!(dir = %d.display(), "not a complete agent directory: {e}"),
         }
     }
     bail!(
-        "cannot find the agent artifacts for attach mode.\n\
-         Build them: cd android && ./gradlew :attach-agent:agentArtifacts\n\
-         Or set --agent-dir or TRAFFIC_POLICE_AGENT_DIR to the directory with the .so and .dex files."
+        "attach mode needs the agent, and this build has none: build it with \
+         `cd android && ./gradlew :attach-agent:agentArtifacts`, or give --agent-dir"
     )
 }
 
@@ -588,8 +584,8 @@ async fn run_device_mode(
 ) -> anyhow::Result<()> {
     let adb = settings.adb();
     adb.ensure_server().await.context("traffic-police talks to devices through the adb server")?;
-    let agent_kit = if args.mode == Mode::Attach { Some(load_agent_kit(args.agent_dir.as_deref())?) } else { None };
     let rules = ProjectRules::find(project);
+    let launch = args.launch.then(Launch::default);
     let target = match args.package.clone() {
         Some(package) => DeviceTarget {
             serial: args.serial.clone(),
@@ -599,26 +595,45 @@ async fn run_device_mode(
             follow: args.follow,
             capture: settings.capture(),
             rules: rules.active(),
-            attach: agent_kit.clone(),
-        },
-        None => match traffic_police_tui::picker::pick(adb.clone(), theme.clone()).await? {
-            Some(p) => DeviceTarget {
-                serial: Some(p.serial),
-                package: p.package,
-                process: Some(p.process),
-                pid: None,
-                follow: args.follow,
-                capture: settings.capture(),
-                rules: rules.active(),
-                attach: agent_kit.clone(),
+            attach: match args.mode {
+                Some(Mode::Attach) => Some(load_agent_kit(args.agent_dir.as_deref())?),
+                _ => None,
             },
-            None => return Ok(()),
+            launch,
         },
+        None => {
+            // without --mode, a process with no library can be picked when the agent is there
+            let agent_kit = match (args.mode, &args.agent_dir) {
+                (Some(Mode::Library), _) => Err(
+                    "Add it to the app's debug build (see the README), or start traffic-police without --mode library to attach the agent instead."
+                        .to_string(),
+                ),
+                (Some(Mode::Attach), _) | (None, Some(_)) => Ok(load_agent_kit(args.agent_dir.as_deref())?),
+                (None, None) => load_agent_kit(None).map_err(|_| {
+                    "Add it to the app's debug build (see the README), or build the agent to attach to it: cd android && ./gradlew :attach-agent:agentArtifacts."
+                        .to_string()
+                }),
+            };
+            let offer = agent_kit.as_ref().map(|_| ()).map_err(Clone::clone);
+            match traffic_police_tui::picker::pick(adb.clone(), theme.clone(), offer).await? {
+                Some(p) => DeviceTarget {
+                    serial: Some(p.serial),
+                    package: p.package,
+                    process: Some(p.process),
+                    pid: None,
+                    follow: args.follow,
+                    capture: settings.capture(),
+                    rules: rules.active(),
+                    // a process that runs capture already is watched as it is, unless attach
+                    // mode was asked for (then --follow attaches to its restarts)
+                    attach: agent_kit.ok().filter(|_| !p.capturing || args.mode == Some(Mode::Attach)),
+                    launch,
+                },
+                None => return Ok(()),
+            }
+        }
     };
-    if args.launch {
-        launch_app(&adb, target.serial.as_deref(), &target.package).await?;
-    }
-    tracing::info!(package = %target.package, serial = ?target.serial, follow = target.follow, "device session");
+    tracing::info!(package = %target.package, serial = ?target.serial, follow = target.follow, attach = target.attach.is_some(), "device session");
 
     let mut app = App::new(SessionStore::new(), theme);
     app.caps = Capabilities { pause: true, rules: true, live: true };
@@ -654,33 +669,6 @@ async fn catch_unwind<F: Future>(f: F) -> std::thread::Result<F::Output> {
         }
     })
     .await
-}
-
-/// `--launch`: start the app's launcher activity.
-async fn launch_app(adb: &Adb, serial: Option<&str>, package: &str) -> anyhow::Result<()> {
-    let devices = adb.devices().await?;
-    let device = devices
-        .iter()
-        .filter(|d| d.is_online())
-        .find(|d| serial.is_none_or(|s| d.serial == s))
-        .context("no online device to launch the app on")?;
-    let q = traffic_police_adb::quote(package);
-    let resolved = adb
-        .shell(
-            device.transport_id,
-            &format!("cmd package resolve-activity --brief -c android.intent.category.LAUNCHER {q}"),
-        )
-        .await?;
-    let component = resolved.stdout_text().lines().last().unwrap_or("").trim().to_string();
-    if !component.contains('/') {
-        bail!("{package} has no launcher activity on {} (is it installed?)", device.label());
-    }
-    let started =
-        adb.shell(device.transport_id, &format!("am start -n {}", traffic_police_adb::quote(&component))).await?;
-    if started.exit != 0 {
-        bail!("could not start {component}: {}", String::from_utf8_lossy(&started.stderr).trim());
-    }
-    Ok(())
 }
 
 async fn run_demo(

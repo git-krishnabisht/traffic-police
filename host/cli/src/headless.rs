@@ -110,7 +110,7 @@ fn passes(store: &SessionStore, i: TxnIdx, filter: Option<&Filter>, now: Ts) -> 
 pub enum Source {
     /// An app on a device. With the project's rules file, changes to it reach the app while the
     /// capture runs, as in the UI.
-    Device(DeviceTarget, Adb, Option<PathBuf>),
+    Device(Box<DeviceTarget>, Adb, Option<PathBuf>),
     /// The pretend app of `traffic-police demo` (a hidden `--demo` flag, for trying the commands
     /// and for tests), at `speed`.
     Demo(DemoConfig, f64),
@@ -192,7 +192,7 @@ impl Capture {
             Source::Device(target, adb, rules_file) => {
                 adb.ensure_server().await.context("traffic-police talks to devices through the adb server")?;
                 rules = rules_file.map(|path| RulesWatch::start(path, target.rules.clone()));
-                tokio::spawn(run_device(adb, target, ids, event_tx, command_rx, status_tx, sink))
+                tokio::spawn(run_device(adb, *target, ids, event_tx, command_rx, status_tx, sink))
             }
             Source::Demo(cfg, speed) => {
                 let _ = status_tx.send(ConnectionStatus::Live("the demo app".into()));
@@ -253,6 +253,12 @@ impl Capture {
                 () = sleep_until(deadline) => return Stop::Elapsed,
             }
         }
+    }
+
+    /// Whether the backend gave up (a protocol mismatch, an attach that cannot work); it said
+    /// why on stderr already.
+    fn failed(&self) -> bool {
+        matches!(*self.status.borrow(), ConnectionStatus::Failed(_))
     }
 
     /// The rules file was read again: a valid change goes to the app; an invalid file is
@@ -407,7 +413,11 @@ pub async fn tail(
         let sink = Arc::new(EventLines { lines: lines.clone(), bodies });
         let mut cap = Capture::start(source, Some(sink)).await?;
         cap.run(duration, |_| !lines.is_closed()).await;
+        let failed = cap.failed();
         cap.stop(|_| true).await;
+        if failed {
+            bail!("the capture failed");
+        }
         return Ok(());
     }
     let mut cap = Capture::start(source, None).await?;
@@ -433,7 +443,11 @@ pub async fn tail(
         !lines.is_closed()
     };
     cap.run(duration, &mut print).await;
+    let failed = cap.failed();
     cap.stop(&mut print).await;
+    if failed {
+        bail!("the capture failed");
+    }
     Ok(())
 }
 
@@ -463,6 +477,7 @@ pub async fn record(
             true
         })
         .await;
+    let failed = cap.failed();
     let store = cap.stop(|_| true).await;
     match &filter {
         None => {
@@ -485,6 +500,9 @@ pub async fn record(
             ));
         }
     }
+    if failed {
+        bail!("the capture failed");
+    }
     Ok(())
 }
 
@@ -504,6 +522,10 @@ pub async fn export_har(out: &Path, input: ExportInput<'_>, filter: Option<Filte
         ExportInput::Live(source, duration) => {
             let mut cap = Capture::start(*source, None).await?;
             let stop = cap.run(Some(duration), |_| true).await;
+            if cap.failed() {
+                cap.stop(|_| true).await;
+                bail!("the capture failed; no HAR file was written");
+            }
             note(stop.text());
             cap.stop(|_| true).await
         }

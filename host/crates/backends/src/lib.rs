@@ -1,6 +1,5 @@
-//! Event sources for traffic-police. Phase 0 has the demo device; device connections, session
-//! files and HAR import follow in later phases, all producing the same
-//! [`traffic_police_core::SessionEvent`] batches.
+//! Event sources for traffic-police: the demo device and live devices over adb (library and
+//! attach mode), all producing the same [`traffic_police_core::SessionEvent`] batches.
 
 pub mod attach;
 pub mod demo;
@@ -15,7 +14,7 @@ use traffic_police_core::store::SourceIds;
 
 pub use attach::AgentKit;
 pub use demo::{DemoConfig, DemoSession};
-pub use device::{DeviceTarget, run_device};
+pub use device::{DeviceTarget, Launch, peek_hello, run_device};
 
 /// Run the demo device in real time (scaled by `speed`) until the event receiver is dropped or
 /// `Shutdown` arrives.

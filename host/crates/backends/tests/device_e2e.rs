@@ -3,19 +3,27 @@
 //! request is checked for what the capture promises: method, URL, status, headers, bodies,
 //! timings, thread, call stack, and failures.
 //!
-//! Ignored by default. It force-stops and starts `io.trafficpolice.sample` on the device named
-//! by `TP_E2E_SERIAL` (install the sample's debug build first):
+//! The attach-mode test does the same with the sample's plain build, which has no
+//! traffic-police code: the agent is attached to it while it runs (its OkHttp client was built
+//! before), follows a restart, and is loaded at start with `--launch`.
+//!
+//! Ignored by default. They force-stop and start `io.trafficpolice.sample` (and `.plain`) on the
+//! device named by `TP_E2E_SERIAL` (install the sample's debug and plain builds first; the attach
+//! test also needs the agent, built by `./gradlew :attach-agent:agentArtifacts`, or in
+//! `TP_E2E_AGENT_DIR`):
 //!
 //! ```text
 //! TP_E2E_SERIAL=emulator-5554 cargo test -p traffic-police-backends --test device_e2e -- --ignored --nocapture
 //! ```
 
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::sync::{mpsc, watch};
 use tokio::time::Instant;
-use traffic_police_adb::Adb;
-use traffic_police_backends::{DeviceTarget, run_device};
+use traffic_police_adb::{Adb, TransportId};
+use traffic_police_backends::{AgentKit, DeviceTarget, Launch, run_device};
 use traffic_police_core::SessionEvent;
 use traffic_police_core::backend::ConnectionStatus;
 use traffic_police_core::decode::decode_body;
@@ -426,6 +434,7 @@ async fn sample_app_end_to_end() {
             capture: Default::default(),
             rules: Default::default(),
             attach: None,
+            launch: None,
         };
         tasks.push(tokio::spawn(run_device(
             adb.clone(),
@@ -523,4 +532,194 @@ async fn sample_app_end_to_end() {
     assert!(report.problems.is_empty(), "{} problems:\n  {}", report.problems.len(), report.problems.join("\n  "));
     // leave the app stopped
     let _ = adb.shell(id, &format!("am force-stop {PACKAGE}")).await;
+}
+
+const PLAIN: &str = "io.trafficpolice.sample.plain";
+const PLAIN_WORKER: &str = "io.trafficpolice.sample.plain:worker";
+const PLAIN_ACTIVITY: &str = "io.trafficpolice.sample.plain/io.trafficpolice.sample.MainActivity";
+
+/// The agent: `TP_E2E_AGENT_DIR`, else the build output in this source tree.
+fn agent_kit() -> Arc<AgentKit> {
+    let dir = std::env::var_os("TP_E2E_AGENT_DIR").map(PathBuf::from).unwrap_or_else(|| {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../android/attach-agent/build/outputs/agent")
+    });
+    Arc::new(AgentKit::from_dir(&dir).unwrap_or_else(|e| {
+        panic!("{e:#}: build the agent (cd android && ./gradlew :attach-agent:agentArtifacts) or set TP_E2E_AGENT_DIR")
+    }))
+}
+
+/// Our file in the plain app's `code_cache/startup_agents`, if it is there.
+async fn startup_agent(adb: &Adb, id: TransportId) -> bool {
+    let out = adb.shell(id, &format!("run-as {PLAIN} ls code_cache/startup_agents")).await.unwrap();
+    out.stdout_text().contains("libtrafficpolice_agent.so")
+}
+
+/// Forwards to our sockets that `serial` still has.
+async fn our_forwards(adb: &Adb, serial: &str) -> Vec<(String, String, String)> {
+    adb.list_forwards()
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|(s, _, remote)| s == serial && remote.contains("traffic-police_"))
+        .collect()
+}
+
+fn attach_target(
+    serial: &str,
+    process: &str,
+    kit: &Arc<AgentKit>,
+    follow: bool,
+    launch: Option<Launch>,
+) -> DeviceTarget {
+    DeviceTarget {
+        serial: Some(serial.to_string()),
+        package: PLAIN.into(),
+        process: Some(process.into()),
+        pid: None,
+        follow,
+        capture: Default::default(),
+        rules: Default::default(),
+        attach: Some(kit.clone()),
+        launch,
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "attaches to the sample's plain build on a device: set TP_E2E_SERIAL"]
+async fn plain_app_attach_end_to_end() {
+    let serial = std::env::var("TP_E2E_SERIAL").expect("set TP_E2E_SERIAL to the device's serial");
+    let kit = agent_kit();
+    let adb = Adb::from_env();
+    let device = adb
+        .devices()
+        .await
+        .expect("adb server")
+        .into_iter()
+        .find(|d| d.serial == serial && d.is_online())
+        .unwrap_or_else(|| panic!("{serial} is not online"));
+    let id = device.transport_id;
+    let installed = adb.shell(id, &format!("pm path {PLAIN}")).await.unwrap();
+    assert!(installed.stdout_text().contains("base.apk"), "install the sample's plain build on {serial} first");
+    let api: u32 = adb.shell(id, "getprop ro.build.version.sdk").await.unwrap().stdout_text().trim().parse().unwrap();
+    // from Android 11 a startup agent loads the agent as a process starts; before, a runtime
+    // attach comes a moment after, and a process's first requests may be missed
+    let from_start = api >= 30;
+
+    // the app runs before anything is attached, so its OkHttp client exists before the agent
+    adb.shell(id, &format!("am force-stop {PLAIN}")).await.unwrap();
+    let started = adb.shell(id, &format!("am start -n {PLAIN_ACTIVITY}")).await.unwrap();
+    assert_eq!(started.exit, 0, "am start failed: {}", started.stdout_text());
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while adb.shell(id, &format!("pidof {PLAIN}")).await.unwrap().stdout_text().trim().is_empty() {
+        assert!(Instant::now() < deadline, "the plain app did not start");
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    let store = SessionStore::new();
+    let (event_tx, events) = mpsc::channel(1024);
+    let mut quit = Vec::new();
+    let mut tasks = Vec::new();
+    for process in [PLAIN, PLAIN_WORKER] {
+        let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
+        let (status_tx, _status_rx) = watch::channel(ConnectionStatus::Waiting(String::new()));
+        let target = attach_target(&serial, process, &kit, true, None);
+        tasks.push(tokio::spawn(run_device(
+            adb.clone(),
+            target,
+            store.source_ids(),
+            event_tx.clone(),
+            cmd_rx,
+            status_tx,
+            None,
+        )));
+        quit.push(cmd_tx);
+    }
+    let mut session = Session { store, events };
+    let mut report = Report::default();
+    session.until("the agent in the running app", Duration::from_secs(30), |s| source_of(s, PLAIN, 0).is_some()).await;
+    let main1 = source_of(&session.store, PLAIN, 0).unwrap();
+    let source = session.store.source(main1).unwrap();
+    report.check(source.mode == "attach", || format!("attach run 1: mode {:?}", source.mode));
+    for h in &source.hooks {
+        report.check(h.status == "installed", || format!("attach run 1: hook {} is {}", h.id, h.status));
+    }
+    report.check(source.hooks.len() == 4, || format!("attach run 1: {} hooks", source.hooks.len()));
+
+    // run 1: the scenarios in the attached process (the intent reaches the running activity)
+    let run = adb.shell(id, &format!("am start -n {PLAIN_ACTIVITY} --es run all")).await.unwrap();
+    assert_eq!(run.exit, 0);
+    session.until("attach run 1 to finish", Duration::from_secs(120), |s| has_done(s, source_of(s, PLAIN, 0))).await;
+    check_main_run(&mut report, &session.store, main1, "attach run 1");
+    if from_start {
+        // the worker process started during the run: the startup agent was in it from its start
+        session
+            .until("the worker's request", Duration::from_secs(30), |s| {
+                source_of(s, PLAIN_WORKER, 0)
+                    .is_some_and(|w| txns(s, w).iter().any(|t| t.url.path == "/worker/ping" && !t.state.is_open()))
+            })
+            .await;
+        check_worker(
+            &mut report,
+            &session.store,
+            source_of(&session.store, PLAIN_WORKER, 0).unwrap(),
+            "attach run 1 worker",
+        );
+        report.check(startup_agent(&adb, id).await, || "--follow on API 30+: no startup agent in the app".into());
+    }
+
+    // run 2: a restart is followed; with a startup agent its requests are captured from its start
+    adb.shell(id, &format!("am force-stop {PLAIN}")).await.unwrap();
+    session
+        .until("run 1 to end", Duration::from_secs(30), |s| s.source(main1).is_some_and(|x| x.ended.is_some()))
+        .await;
+    let run = adb.shell(id, &format!("am start -n {PLAIN_ACTIVITY} --es run all")).await.unwrap();
+    assert_eq!(run.exit, 0);
+    session.until("attach run 2 to finish", Duration::from_secs(120), |s| has_done(s, source_of(s, PLAIN, 1))).await;
+    let main2 = source_of(&session.store, PLAIN, 1).unwrap();
+    if from_start {
+        check_main_run(&mut report, &session.store, main2, "attach run 2 (from its start)");
+    }
+    check_main_run(&mut report, &session.store, main1, "attach run 1 after the restart");
+
+    drop(quit);
+    for t in tasks {
+        tokio::time::timeout(Duration::from_secs(5), t).await.expect("backend did not stop").unwrap();
+    }
+    report.check(!startup_agent(&adb, id).await, || "the startup agent stayed after the session".into());
+    let left = our_forwards(&adb, &serial).await;
+    report.check(left.is_empty(), || format!("forwards left behind: {left:?}"));
+
+    // run 3: --launch restarts the app with the agent loading at its start (API 27+)
+    let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
+    let (status_tx, _status_rx) = watch::channel(ConnectionStatus::Waiting(String::new()));
+    let launch = Launch { extras: vec!["--es".into(), "run".into(), "all".into()] };
+    let target = attach_target(&serial, PLAIN, &kit, false, Some(launch));
+    let task = tokio::spawn(run_device(
+        adb.clone(),
+        target,
+        session.store.source_ids(),
+        event_tx.clone(),
+        cmd_rx,
+        status_tx,
+        None,
+    ));
+    drop(event_tx);
+    session
+        .until("the launched run to finish", Duration::from_secs(120), |s| has_done(s, source_of(s, PLAIN, 2)))
+        .await;
+    let main3 = source_of(&session.store, PLAIN, 2).unwrap();
+    if from_start {
+        check_main_run(&mut report, &session.store, main3, "attach run 3 (--launch)");
+    }
+    // without --follow the startup agent went once the launched process connected
+    report.check(!startup_agent(&adb, id).await, || "--launch: the startup agent stayed after the connection".into());
+    drop(cmd_tx);
+    tokio::time::timeout(Duration::from_secs(5), task).await.expect("backend did not stop").unwrap();
+    let left = our_forwards(&adb, &serial).await;
+    report.check(left.is_empty(), || format!("forwards left behind: {left:?}"));
+
+    summary(&session.store);
+    assert!(report.problems.is_empty(), "{} problems:\n  {}", report.problems.len(), report.problems.join("\n  "));
+    let _ = adb.shell(id, &format!("am force-stop {PLAIN}")).await;
 }

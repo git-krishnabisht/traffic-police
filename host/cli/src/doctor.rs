@@ -4,8 +4,11 @@
 
 use std::fmt::Write as _;
 use std::path::Path;
+use std::sync::Arc;
 
-use traffic_police_adb::{Adb, AdbError, Device, quote};
+use traffic_police_adb::{Adb, AdbError, AppProcess, Device, RuntimeSocket, quote};
+use traffic_police_backends::AgentKit;
+use traffic_police_backends::attach::{self, ABIS};
 use traffic_police_tui::share::describe;
 use traffic_police_tui::theme::Depth;
 
@@ -20,6 +23,8 @@ pub struct Target {
     pub process: Option<String>,
     pub pid: Option<u32>,
     pub attach: bool,
+    /// In attach mode: the agent it would use, or why there is none.
+    pub agent: Option<anyhow::Result<Arc<AgentKit>>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -205,6 +210,16 @@ pub async fn run(t: &Target, settings: &config::Loaded, adb: &Adb) -> Report {
             r.check(Mark::Warn, format!("clipboard: {e}"), Some("install one, or set [ui] clipboard = \"osc52\""))
         }
     }
+    if let Some(agent) = &t.agent {
+        match agent {
+            Ok(kit) => r.check(Mark::Ok, format!("agent for attach mode: {} ({})", kit.origin, ABIS.join(", ")), None),
+            Err(e) => r.check(
+                Mark::Fail,
+                format!("agent for attach mode: {e:#}"),
+                Some("build it (cd android && ./gradlew :attach-agent:agentArtifacts) or give --agent-dir; release binaries have it built in"),
+            ),
+        }
+    }
 
     r.section("Devices");
     if server.is_err() {
@@ -273,7 +288,7 @@ pub async fn run(t: &Target, settings: &config::Loaded, adb: &Adb) -> Report {
         r.summary();
         return r;
     };
-    let (device, _api) = match checked.as_slice() {
+    let (device, api) = match checked.as_slice() {
         [one] => *one,
         [] => {
             r.summary();
@@ -291,7 +306,12 @@ pub async fn run(t: &Target, settings: &config::Loaded, adb: &Adb) -> Report {
     let q = quote(package);
     let path = adb.shell(id, &format!("pm path {q}")).await.map(|o| o.stdout_text()).unwrap_or_default();
     if !path.contains("package:") {
-        r.check(Mark::Fail, "not installed", Some("install a debug build of the app with the traffic-police library"));
+        let fix = if t.attach {
+            "install a debug build of the app"
+        } else {
+            "install a debug build of the app with the traffic-police library"
+        };
+        r.check(Mark::Fail, "not installed", Some(fix));
         r.summary();
         return r;
     }
@@ -309,11 +329,19 @@ pub async fn run(t: &Target, settings: &config::Loaded, adb: &Adb) -> Report {
                 .map(|o| o.stdout_text())
                 .unwrap_or_default();
             if disabled && flags.contains("DEBUGGABLE") {
-                r.check(
-                    Mark::Warn,
-                    "debuggable, but run-as is disabled on this device (ro.boot.disable_runas)",
-                    Some("library mode works without run-as; attach mode (Phase 4) will need another device"),
-                );
+                if t.attach {
+                    r.check(
+                        Mark::Fail,
+                        "debuggable, but run-as is disabled on this device (ro.boot.disable_runas)",
+                        Some("attach mode copies the agent into the app with run-as: use another device, or library mode"),
+                    );
+                } else {
+                    r.check(
+                        Mark::Warn,
+                        "debuggable, but run-as is disabled on this device (ro.boot.disable_runas)",
+                        Some("library mode works without run-as; attach mode needs another device"),
+                    );
+                }
             } else {
                 r.check(
                     Mark::Fail,
@@ -341,22 +369,14 @@ pub async fn run(t: &Target, settings: &config::Loaded, adb: &Adb) -> Report {
     let mine: Vec<u32> = sockets.iter().filter(|s| s.is_for(package)).map(|s| s.pid).collect();
     let features = adb.device_features(id).await.unwrap_or_default();
     let procs = adb.app_processes(id, &features).await.unwrap_or_default();
-    let of_package: Vec<_> = procs
-        .iter()
-        .filter(|p| {
-            p.package_names.iter().any(|n| n == package)
-                || p.process_name.as_deref().is_some_and(|n| n == package || n.starts_with(&format!("{package}:")))
-        })
-        .collect();
+    let of_package: Vec<&AppProcess> = procs.iter().filter(|p| attach::of_package(p, package)).collect();
     let name_of = |pid: u32| {
         of_package.iter().find(|p| p.pid == pid).and_then(|p| p.process_name.clone()).unwrap_or_else(|| "?".into())
     };
     if t.attach {
-        r.check(
-            Mark::Note,
-            "attach checks (ABI, page size, code_cache, agents) arrive with attach mode in Phase 4",
-            None,
-        );
+        let run_as_works = run_as.as_ref().is_ok_and(|o| o.exit == 0);
+        let running: Vec<&RuntimeSocket> = sockets.iter().filter(|s| s.is_for(package)).collect();
+        attach_checks(&mut r, adb, device, api, package, t, &of_package, &running, run_as_works).await;
     } else if mine.is_empty() {
         let fix = if of_package.is_empty() {
             "start the app (or use --launch); its debug build needs the traffic-police library (README: Library mode)"
@@ -410,6 +430,180 @@ pub async fn run(t: &Target, settings: &config::Loaded, adb: &Adb) -> Report {
     }
     r.summary();
     r
+}
+
+/// Attach mode's checks on the device (ARCHITECTURE.md §5.12): the process's ABI, the page size,
+/// `code_cache` through `run-as`, how capture from launch works here, startup agents left
+/// behind, and the hooks of an agent that runs.
+#[allow(clippy::too_many_arguments)]
+async fn attach_checks(
+    r: &mut Report,
+    adb: &Adb,
+    device: &Device,
+    api: u32,
+    package: &str,
+    t: &Target,
+    of_package: &[&AppProcess],
+    running: &[&RuntimeSocket],
+    run_as_works: bool,
+) {
+    let id = device.transport_id;
+    let q = quote(package);
+    // the Host section reported where the agent comes from
+    let kit = t.agent.as_ref().and_then(|a| a.as_ref().ok());
+    // the process's ABI (or the one the app will start with) needs its own agent
+    let target = attach::pick_process(
+        &of_package.iter().map(|p| (*p).clone()).collect::<Vec<_>>(),
+        package,
+        t.process.as_deref(),
+        t.pid,
+    )
+    .cloned();
+    let abi = attach::process_abi(adb, device, package, target.as_ref().and_then(|p| p.architecture.as_deref())).await;
+    let who = match &target {
+        Some(p) => format!("{} (pid {}) runs as {abi}", p.process_name.as_deref().unwrap_or(package), p.pid),
+        None => format!("the app starts as {abi}"),
+    };
+    match kit.map(|k| k.agent_for_abi(&abi).is_some()) {
+        Some(true) | None if ABIS.contains(&abi.as_str()) => {
+            r.check(Mark::Ok, format!("{who}: the agent is built for it"), None)
+        }
+        _ => r.check(
+            Mark::Fail,
+            format!("{who}: the agent is built for {} only", ABIS.join(", ")),
+            Some("use a device or emulator image with one of those ABIs, or library mode"),
+        ),
+    }
+    let page = adb
+        .shell(id, "getconf PAGE_SIZE 2>/dev/null")
+        .await
+        .ok()
+        .and_then(|o| o.stdout_text().trim().parse::<u32>().ok())
+        .unwrap_or(4096);
+    r.check(Mark::Ok, format!("memory pages of {} KB: the agent is aligned for 4 and 16 KB pages", page / 1024), None);
+    if run_as_works {
+        let cache = adb.shell(id, &format!("run-as {q} sh -c 'test -d code_cache && test -w code_cache'")).await;
+        match cache {
+            Ok(o) if o.exit == 0 => r.check(Mark::Ok, "code_cache is writable through run-as", None),
+            Ok(_) => r.check(
+                Mark::Fail,
+                "code_cache is not writable through run-as",
+                Some("the agent goes into the app's code_cache: reinstall the app, or clear its data"),
+            ),
+            Err(e) => r.check(Mark::Warn, format!("code_cache did not check: {e}"), None),
+        }
+    }
+    let launch = match api {
+        30.. => "--launch and --follow load the agent as the app starts (a startup agent)",
+        27..30 => {
+            "--launch starts the app with the agent (best effort on Android 8.1 and 9); --follow attaches to restarts once they run"
+        }
+        _ => {
+            "Android 8.0 cannot load an agent as the app starts: --launch attaches right after, so the first requests may be missed"
+        }
+    };
+    r.check(Mark::Note, launch, None);
+    if run_as_works {
+        let listing = adb
+            .shell(
+                id,
+                &format!(
+                    "run-as {q} sh -c 'ls code_cache/startup_agents 2>/dev/null; echo ---; cat code_cache/traffic-police/agent.conf 2>/dev/null; echo ---; date +%s'"
+                ),
+            )
+            .await
+            .map(|o| o.stdout_text())
+            .unwrap_or_default();
+        let mut parts = listing.split("---\n");
+        let agents: Vec<&str> = parts.next().unwrap_or("").lines().map(str::trim).filter(|l| !l.is_empty()).collect();
+        let conf = parts.next().unwrap_or("");
+        let now_ms = parts.next().and_then(|n| n.trim().parse::<i64>().ok()).map(|s| s * 1000);
+        let expires =
+            conf.lines().find_map(|l| l.strip_prefix("expires_at_ms=")).and_then(|v| v.trim().parse::<i64>().ok());
+        let others: Vec<&str> = agents.iter().copied().filter(|a| *a != attach::AGENT_LIB).collect();
+        if agents.contains(&attach::AGENT_LIB) {
+            match (expires, now_ms) {
+                (Some(e), Some(now)) if e > now => r.check(
+                    Mark::Note,
+                    format!(
+                        "a startup agent is in the app for {} more minutes: a traffic-police with --launch or --follow runs (or ended moments ago)",
+                        (e - now) / 60_000 + 1
+                    ),
+                    None,
+                ),
+                _ => r.check(
+                    Mark::Warn,
+                    "a startup agent is left in the app from a traffic-police that did not finish; it has expired and does nothing",
+                    Some(&format!("adb -s {} shell run-as {package} rm code_cache/startup_agents/{}", device.serial, attach::AGENT_LIB)),
+                ),
+            }
+        }
+        if !others.is_empty() {
+            r.check(Mark::Note, format!("other startup agents in the app (left alone): {}", others.join(", ")), None);
+        }
+    }
+    if running.is_empty() {
+        let what = if of_package.is_empty() {
+            "the app is not running; start it (or use --launch) and traffic-police attaches the agent"
+        } else {
+            "no capture runs in the app yet; traffic-police attaches the agent when it starts"
+        };
+        r.check(Mark::Note, what, None);
+        return;
+    }
+    let pids: Vec<u32> = running.iter().map(|s| s.pid).collect();
+    let frozen = adb.frozen_pids(id, &pids).await.unwrap_or_default();
+    for socket in running {
+        if frozen.contains(&socket.pid) {
+            r.check(
+                Mark::Note,
+                format!(
+                    "capture runs in pid {}, which Android froze (cached): its hooks read once it runs",
+                    socket.pid
+                ),
+                None,
+            );
+            continue;
+        }
+        match traffic_police_backends::peek_hello(adb, device, socket).await {
+            Ok(hello) => {
+                r.check(
+                    Mark::Ok,
+                    format!(
+                        "capture runs in {} (pid {}): {} mode, runtime {}",
+                        hello.app.process, hello.app.pid, hello.runtime.mode, hello.runtime.version
+                    ),
+                    None,
+                );
+                for h in &hello.hooks {
+                    let hits = h.hits.unwrap_or(0);
+                    let what = format!(
+                        "hook {}: {}{}{}",
+                        h.target.as_deref().unwrap_or(&h.id),
+                        h.status.replace('_', " "),
+                        if hits > 0 { format!(" · {hits} call{}", plural(hits as usize)) } else { String::new() },
+                        h.detail.as_deref().map_or(String::new(), |d| format!(" ({d})")),
+                    );
+                    let mark = match h.status.as_str() {
+                        "installed" => Mark::Ok,
+                        "pending" => Mark::Note,
+                        _ => Mark::Warn,
+                    };
+                    let fix = match h.status.as_str() {
+                        "method_not_found" | "class_not_found" => Some(
+                            "a minified (R8) build renames OkHttp; keep okhttp3.** in the debug build, or use library mode",
+                        ),
+                        "other_loader" => Some("a second OkHttp copy in another class loader is not captured"),
+                        _ => None,
+                    };
+                    r.check(mark, what, fix);
+                }
+            }
+            Err(e) => {
+                r.check(Mark::Warn, format!("the capture socket in pid {} did not answer: {e}", socket.pid), None)
+            }
+        }
+    }
 }
 
 fn depth_label(d: Depth) -> &'static str {
