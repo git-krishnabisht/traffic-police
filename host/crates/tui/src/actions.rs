@@ -119,7 +119,14 @@ pub const ACTIONS: &[Info] = &[
     info!(Bottom, "bottom", Move, "bottom", "Go to the bottom", ["G", "end"]),
     info!(PageUp, "page-up", Move, "page up", "Page up", ["pgup"]),
     info!(PageDown, "page-down", Move, "page down", "Page down", ["pgdn"]),
-    info!(Activate, "open", Move, "open", "Open the request; fold or unfold; expand", ["enter"]),
+    info!(
+        Activate,
+        "open",
+        Move,
+        "open/decode",
+        "Open the request; fold or unfold; on a header or value, copy, decode or filter by it",
+        ["enter"]
+    ),
     info!(Back, "back", Move, "back", "Close, cancel or clear, one step back", ["esc"]),
     info!(FocusNext, "focus-next", Move, "next panel", "Focus the next panel", ["tab"]),
     info!(FocusPrev, "focus-previous", Move, "previous panel", "Focus the previous panel", ["backtab"]),

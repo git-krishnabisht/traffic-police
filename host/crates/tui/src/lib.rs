@@ -13,6 +13,7 @@ pub mod share;
 pub mod terminal;
 pub mod theme;
 pub mod ui;
+pub mod values;
 
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;

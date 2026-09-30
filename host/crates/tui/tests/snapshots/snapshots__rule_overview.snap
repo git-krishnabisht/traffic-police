@@ -31,12 +31,12 @@ expression: "detail(40.0, LARGE, modified(), \"G\")"
 │ status?sessionId=session_15bce3a5a9…     263 B json      200          326 ms                              ▐││    "enrollmentSim": null                                                               │
 │ threshold                                                failed       10.0 s █████████▊                   ▐││  }                                                                                     │
 │ events                                    17 B json      200          970 ms █▏                           ▐││ ───────────────────────────────────────────────────────────────────────────────────────│
-│ status?sessionId=session_15bce3a5a9…     263 B json      200          174 ms  ▏                           ▐││ Method            GET                                                                  │
-│ fonts.json                                               canceled     380 ms  ▏                           ▐││ Status            200 OK                                                               │
-│ monitor                                  302 B json      200          1.44 s  ▐▉                          ▐││ URL               https://deepid.example.app/api/sdk/sim-binding/status/?sessionId=sess│
-│ face-liveness-v3.tflite                 5.0 MB binary    200          6.38 s   ██████▍                    ▐││ Request type      —                                                                    │
-│ status?sessionId=session_15bce3a5a9…     263 B json      200          284 ms   █                          ▐││ Response type     application/json; charset=utf-8                                      │
-│ monitor                                  302 B json      200          1.56 s    ▐▉                        ▐││ Response size     264 B                                                                │
+│ status?sessionId=session_15bce3a5a9…     263 B json      200          174 ms  ▏                           ▐││ Status            200 OK                                                               │
+│ fonts.json                                               canceled     380 ms  ▏                           ▐││ URL               https://deepid.example.app/api/sdk/sim-binding/status/?sessionId=sess│
+│ monitor                                  302 B json      200          1.44 s  ▐▉                          ▐││ Request type      —                                                                    │
+│ face-liveness-v3.tflite                 5.0 MB binary    200          6.38 s   ██████▍                    ▐││ Response type     application/json; charset=utf-8                                      │
+│ status?sessionId=session_15bce3a5a9…     263 B json      200          284 ms   █                          ▐││ Response size     264 B                                                                │
+│ monitor                                  302 B json      200          1.56 s    ▐▉                        ▐││ Token             JWT HS256 · expires 06:10:00.000 (in 59 min) · sub user_4821 · iss ht│
 │ ! events                                  17 B json      200          971 ms     ▉                        ▐││ Initiating thread DefaultDispatcher-worker-3  id 60 · call site                        │
 │ status?sessionId=session_15bce3a5a9…     263 B json      200          358 ms     ▍                        ▐││ Client            OkHttp 4.12.0                                                        │
 │ monitor                                  302 B json      200          1.72 s      ▐█                      ▐││ Protocol          h2                                                                   │

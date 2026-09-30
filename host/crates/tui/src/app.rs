@@ -84,6 +84,8 @@ pub enum Overlay {
     Prompt,
     /// Two requests compared: `App::diff`.
     Diff,
+    /// A decoded value (JWT, base64, URL encoding): `App::decoded`.
+    Decoded,
 }
 
 /// A search match in the detail pane: a row, and display columns in it.
@@ -310,6 +312,7 @@ pub struct App {
     /// The request marked for comparison (`d`).
     pub diff_mark: Option<traffic_police_core::model::TxnKey>,
     pub diff: Option<crate::diffview::DiffView>,
+    pub decoded: Option<crate::values::Decoded>,
     /// The captured stream, for saving the session (`e`).
     pub session_log: Option<Arc<traffic_police_core::session::SessionLog>>,
     pub search_input: Input,
@@ -383,6 +386,7 @@ impl App {
             replay: None,
             diff_mark: None,
             diff: None,
+            decoded: None,
             search_input: Input::default(),
             search_before: None,
             filter_error: None,
@@ -447,6 +451,14 @@ impl App {
 
     pub fn view_rows(&self) -> &RowModel {
         self.frozen.as_ref().map_or(&self.rows, |f| &f.rows)
+    }
+
+    /// The wall clock at [`App::now`]: the device's time while live, the end of a recording in a
+    /// replay (the system clock when the session has no clock).
+    pub fn wall_now_ms(&self) -> i64 {
+        self.view_store().wall_ms(self.now()).unwrap_or_else(|| {
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64)
+        })
     }
 
     /// Current device time for live displays.
@@ -829,6 +841,10 @@ impl App {
             }
             Overlay::Diff => {
                 self.diff_key(k);
+                return;
+            }
+            Overlay::Decoded => {
+                self.decoded_key(k);
                 return;
             }
             Overlay::ConfirmClear => {
@@ -1455,12 +1471,21 @@ impl App {
             }
             Action::Activate => match doc.row(cur) {
                 Some(DocRow::Body(i)) => {
-                    if let Some(dir) = doc.body_dir
-                        && self.detail.parsed
-                        && let Some(v) = self.body_view(txn, dir)
-                        && v.jq.is_none()
-                    {
-                        v.toggle_fold(i);
+                    let folded = doc.body_dir.is_some_and(|dir| {
+                        self.detail.parsed
+                            && self.body_view(txn, dir).is_some_and(|v| v.jq.is_none() && v.toggle_fold(i))
+                    });
+                    // a value (not a container): the value menu
+                    if !folded {
+                        self.open_value_menu(txn);
+                    }
+                }
+                Some(DocRow::Line(_)) => {
+                    if let Some((_, token)) = doc.tokens.iter().find(|(row, _)| *row == cur) {
+                        let token = token.clone();
+                        self.run_value_action(&crate::share::MenuAction::DecodeJwt(token));
+                    } else {
+                        self.open_value_menu(txn);
                     }
                 }
                 Some(DocRow::FrameRun { run }) => {
@@ -1627,6 +1652,18 @@ impl App {
                     match m.kind {
                         MouseEventKind::ScrollDown => v.scroll = (v.scroll + 3).min(v.max_scroll()),
                         MouseEventKind::ScrollUp => v.scroll = v.scroll.saturating_sub(3),
+                        _ => {}
+                    }
+                }
+                return;
+            }
+            Overlay::Decoded => {
+                if let Some(d) = &mut self.decoded {
+                    let max = d.lines.len().saturating_sub(d.page.max(1));
+                    match m.kind {
+                        MouseEventKind::ScrollDown => d.scroll = (d.scroll + 3).min(max),
+                        MouseEventKind::ScrollUp => d.scroll = d.scroll.saturating_sub(3),
+                        MouseEventKind::Down(_) => self.overlay = Overlay::None,
                         _ => {}
                     }
                 }

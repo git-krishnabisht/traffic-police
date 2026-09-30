@@ -15,6 +15,7 @@
 //! | `time>500ms`, `time<2s` | duration (us, ms, s, m) |
 //! | `rule:modified`, `rule:<id>` | changed by any rule, or by one rule |
 //! | `is:pinned` | pinned requests |
+//! | `header:x-request-id`, `header:"x-request-id=abc"` | a request or response header by name, or whose value contains the text |
 //! | `body:"needle"` | a request or response body contains the text (searched in the background) |
 
 use std::ops::Range;
@@ -66,6 +67,8 @@ enum Test {
     RuleModified,
     Rule(String),
     Pinned,
+    /// A header by name (lower-cased), and a part of its value (lower-cased).
+    Header(String, Option<String>),
     /// Index into [`Filter::needles`].
     Body(usize),
 }
@@ -259,7 +262,10 @@ impl Filter {
                 let re = RegexBuilder::new(pattern).case_insensitive(insensitive).size_limit(1 << 20).build();
                 Test::Url(re.map_err(|e| err(format!("bad regular expression: {e}")))?)
             } else if let Some((key, value)) = body.split_once(':').filter(|(k, _)| {
-                matches!(*k, "method" | "status" | "host" | "path" | "type" | "thread" | "rule" | "is" | "body")
+                matches!(
+                    *k,
+                    "method" | "status" | "host" | "path" | "type" | "thread" | "rule" | "is" | "header" | "body"
+                )
             }) {
                 if value.is_empty() && key != "body" {
                     return Err(err(format!("{key}: needs a value")));
@@ -290,6 +296,10 @@ impl Filter {
                     "rule" => Test::Rule(value.to_string()),
                     "is" if value == "pinned" => Test::Pinned,
                     "is" => return Err(err(format!("is:{value} is not known; is:pinned is"))),
+                    "header" => match value.split_once('=') {
+                        Some((name, part)) => Test::Header(name.trim().to_ascii_lowercase(), Some(part.to_lowercase())),
+                        None => Test::Header(value.trim().to_ascii_lowercase(), None),
+                    },
                     _ => {
                         if value.is_empty() {
                             return Err(err("body: needs the text to look for, like body:\"sessionId\"".into()));
@@ -343,6 +353,12 @@ impl Filter {
                 Test::RuleModified => t.rule_modified(),
                 Test::Rule(id) => t.rules.iter().any(|h| h.rules.iter().any(|r| r.id == *id)),
                 Test::Pinned => t.pinned,
+                Test::Header(name, part) => {
+                    let resp = t.resp.as_ref().map(|r| r.headers.as_slice()).unwrap_or_default();
+                    t.req_headers.iter().chain(resp).any(|(n, v)| {
+                        n.eq_ignore_ascii_case(name) && part.as_ref().is_none_or(|p| v.to_lowercase().contains(p))
+                    })
+                }
                 Test::Body(i) => match body(*i) {
                     Some(hit) => hit,
                     None => return false,
@@ -438,6 +454,17 @@ mod tests {
         assert!(check("status:>=200 status:<300 type:json time<1s time>=250ms", &t));
         assert!(!check("status:4xx", &t));
         assert!(check("\"example.app/api\"", &t));
+    }
+
+    #[test]
+    fn headers_by_name_or_value() {
+        let mut t = txn("GET", "https://api.example.app/", Some(200));
+        t.req_headers = vec![("X-Request-Id".into(), "Abc-123".into())];
+        assert!(check("header:x-request-id", &t));
+        assert!(check("header:\"x-request-id=abc\"", &t));
+        assert!(check("header:Content-Type=JSON", &t), "response headers too");
+        assert!(!check("header:x-request-id=zzz", &t));
+        assert!(check("-header:authorization", &t));
     }
 
     #[test]

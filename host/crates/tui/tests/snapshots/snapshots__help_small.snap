@@ -10,8 +10,8 @@ expression: "frame(12.0, SMALL, \"?\")"
 │ 8.0 KB/s                                                      ┊        ┃┃           ┏┓           │
 │   ╭ keys ────────────────────────────────────────────────────────────────────────────────────╮┓  │
 │   │ Move     ↑/k up · ↓/j down · ←/h left · →/l right · g/Home top · G/End bottom            │┗━ │
-│   │          PgUp page up · PgDn page down · Enter open · Esc back · Tab next panel          │┛  │
-│   │          Shift+Tab previous panel                                                        │   │
+│   │          PgUp page up · PgDn page down · Enter open/decode · Esc back                    │┛  │
+│   │          Tab next panel · Shift+Tab previous panel                                       │   │
 ╰───│ Views    1 connections · 2 threads · 3 rules                                             │───╯
 ╭─ R│ List     c collapse · s sort · S reverse · C columns · / filter · m pin · d diff         │───╮
 │ Na│ Detail   n next match · N previous match · p parsed/source · o original · | jq           │   │

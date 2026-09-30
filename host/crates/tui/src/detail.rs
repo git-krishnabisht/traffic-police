@@ -42,6 +42,8 @@ pub struct Doc {
     pub body_len: usize,
     pub body_dir: Option<BodyDir>,
     pub tail: Vec<DocRow>,
+    /// Rows of `head` that show a JWT (Enter decodes it), with the token.
+    pub tokens: Vec<(usize, String)>,
 }
 
 impl Doc {
@@ -222,7 +224,7 @@ pub fn build_doc(app: &mut App) -> Doc {
     let tab = app.detail.tab;
     let mut doc = Doc::default();
     match tab {
-        Tab::Overview => overview_rows(app, txn, &mut doc.head),
+        Tab::Overview => overview_rows(app, txn, &mut doc.head, &mut doc.tokens),
         Tab::Response => {
             let (status_line, rule_note, headers, has_resp) = {
                 let t = app.view_store().txn(txn);
@@ -399,7 +401,43 @@ fn redirect_note(store: &traffic_police_core::SessionStore, txn: TxnIdx) -> Opti
     }
 }
 
-fn overview_rows(app: &mut App, txn: TxnIdx, rows: &mut Vec<DocRow>) {
+/// JWTs of a request, and where each was: headers (either direction), then small bodies.
+fn jwts(app: &mut App, txn: TxnIdx, t: &Transaction) -> Vec<(String, String)> {
+    use traffic_police_core::values::find_jwt;
+    let mut out: Vec<(String, String)> = Vec::new();
+    let mut add = |place: String, text: &str| {
+        if let Some(r) = find_jwt(text) {
+            let token = text[r].to_string();
+            if !out.iter().any(|(_, t)| *t == token) {
+                out.push((place, token));
+            }
+        }
+    };
+    for (n, v) in &t.req_headers {
+        add(format!("request header {n}"), v);
+    }
+    for (n, v) in t.resp.iter().flat_map(|r| &r.headers) {
+        add(format!("response header {n}"), v);
+    }
+    for (dir, what) in [(BodyDir::Request, "the request body"), (app.response_dir(txn), "the response body")] {
+        let small = |m: &BodyMeta| m.captured > 0 && m.captured <= 256 << 10;
+        let meta = match dir {
+            BodyDir::Request => Some(&t.req_body),
+            BodyDir::Response => Some(&t.resp_body),
+            BodyDir::Delivered => t.delivered_body.as_ref(),
+        };
+        if meta.is_some_and(small)
+            && let Some(v) = app.body_view(txn, dir)
+            && let Ok(text) = std::str::from_utf8(&v.decoded.bytes)
+        {
+            let text = text.to_string();
+            add(what.to_string(), &text);
+        }
+    }
+    out
+}
+
+fn overview_rows(app: &mut App, txn: TxnIdx, rows: &mut Vec<DocRow>, tokens: &mut Vec<(usize, String)>) {
     let theme = app.theme.clone();
     let now = app.now();
     let origin = app.view_store().origin();
@@ -450,6 +488,19 @@ fn overview_rows(app: &mut App, txn: TxnIdx, rows: &mut Vec<DocRow>) {
     rows.push(label_row(&theme, "Response size", plain(&theme, size)));
     if t.req_body.total > 0 {
         rows.push(label_row(&theme, "Request size", plain(&theme, fmt::bytes(t.req_body.total))));
+    }
+    for (place, token) in jwts(app, txn, &t) {
+        let Some(jwt) = traffic_police_core::values::jwt(&token) else { continue };
+        let now_ms = app.wall_now_ms();
+        tokens.push((rows.len(), token));
+        rows.push(label_row(
+            &theme,
+            "Token",
+            vec![
+                Span::styled(jwt.summary(now_ms), theme.text()),
+                Span::styled(format!("  in {place} · Enter decodes"), theme.dim()),
+            ],
+        ));
     }
     if let Some(th) = &t.thread {
         let origin = match th.origin.as_deref() {

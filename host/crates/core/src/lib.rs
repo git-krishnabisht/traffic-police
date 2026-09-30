@@ -20,6 +20,7 @@ pub mod project;
 pub mod rows;
 pub mod session;
 pub mod store;
+pub mod values;
 
 pub use event::SessionEvent;
 pub use fmt::Ts;

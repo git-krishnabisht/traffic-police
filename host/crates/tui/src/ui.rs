@@ -57,6 +57,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         Overlay::Menu => draw_menu(app, area, f.buffer_mut()),
         Overlay::Prompt => draw_prompt(f, app, footer),
         Overlay::Diff => crate::diffview::draw(app, area, f.buffer_mut()),
+        Overlay::Decoded => crate::values::draw(app, area, f.buffer_mut()),
         Overlay::None => {}
     }
 }
@@ -1194,7 +1195,7 @@ fn draw_menu(app: &App, area: Rect, buf: &mut Buffer) {
         .unwrap_or(20)
         .clamp(44, area.width.saturating_sub(8));
     let r = centered(area, w, menu.items.len() as u16 + 4);
-    draw_box(buf, r, menu.title, t);
+    draw_box(buf, r, &menu.title, t);
     for (i, item) in menu.items.iter().enumerate() {
         let y = r.y + 1 + i as u16;
         let style = if i == menu.cursor { t.selected() } else { Style::default() };
@@ -1290,6 +1291,7 @@ fn hints(app: &App) -> Vec<(&'static [Action], &'static str)> {
         }
         (Overlay::ConfirmClear | Overlay::Filter | Overlay::Jq | Overlay::Search | Overlay::Prompt, ..) => vec![],
         (Overlay::Menu, ..) => vec![(&[A::Up, A::Down], "move"), (&[A::Activate], "choose"), (&[A::Back], "close")],
+        (Overlay::Decoded, ..) => vec![(&[A::Up, A::Down], "scroll"), (&[A::Copy], "copy"), (&[A::Back], "close")],
         (Overlay::Diff, ..) => vec![
             (&[A::Up, A::Down], "scroll"),
             (&[A::FindNext, A::FindPrev], "next/previous change"),
@@ -1390,7 +1392,7 @@ fn draw_footer(app: &App, r: Rect, buf: &mut Buffer) {
     right_text(buf, r, r.y, right);
 }
 
-fn centered(area: Rect, w: u16, h: u16) -> Rect {
+pub(crate) fn centered(area: Rect, w: u16, h: u16) -> Rect {
     let w = w.min(area.width.saturating_sub(4));
     let h = h.min(area.height.saturating_sub(2));
     Rect { x: area.x + (area.width - w) / 2, y: area.y + (area.height - h) / 2, width: w, height: h }

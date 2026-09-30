@@ -467,6 +467,41 @@ fn d_on_two_requests_compares_them() {
 }
 
 #[test]
+fn enter_on_a_value_decodes_it_or_filters_by_it() {
+    let mut app = app_at(40.0);
+    let to = goto(&mut app, MEDIUM, path_is("/api/sdk/init"));
+    press(&mut app, MEDIUM, &format!("{to}<Enter>"));
+    let init = app.selected.expect("selected");
+    // the Overview shows the bearer token; Enter on its row decodes it
+    let doc = traffic_police_tui::detail::build_doc(&mut app);
+    let row = doc.tokens.first().expect("a token row").0;
+    let text = press(&mut app, MEDIUM, &format!("{}<Enter>", "j".repeat(row)));
+    assert_eq!(app.overlay, Overlay::Decoded);
+    assert!(text.contains("signature not verified") && text.contains("Claims"), "{text}");
+    press(&mut app, MEDIUM, "<Esc>");
+    assert_eq!(app.overlay, Overlay::None);
+
+    // Request tab: Enter on the Authorization header opens the value menu
+    press(&mut app, MEDIUM, "<Right><Right>g");
+    let doc = traffic_police_tui::detail::build_doc(&mut app);
+    let row = (0..doc.len())
+        .find(|&i| {
+            traffic_police_tui::detail::row_text(&mut app, &doc, i, init)
+                .is_some_and(|t| t.starts_with("Authorization: "))
+        })
+        .expect("the Authorization header");
+    let text = press(&mut app, MEDIUM, &format!("{}<Enter>", "j".repeat(row)));
+    assert_eq!(app.overlay, Overlay::Menu);
+    assert!(text.contains("header Authorization") && text.contains("decode JWT"), "{text}");
+    press(&mut app, MEDIUM, "f");
+    assert!(app.filter_input.value().starts_with("header:\"authorization=Bearer ey"), "{}", app.filter_input.value());
+    let store = app.view_store();
+    let rows = app.view_rows().rows();
+    assert!(!rows.is_empty());
+    assert!(rows.iter().all(|r| store.txn(r.txn()).req_headers.iter().any(|(n, _)| n == "Authorization")));
+}
+
+#[test]
 fn body_filters_fill_in_from_the_background() {
     let mut app = app_at(40.0);
     press(&mut app, MEDIUM, "/body:\"simBinding\"<Enter>");

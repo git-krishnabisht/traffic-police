@@ -120,6 +120,12 @@ pub enum MenuAction {
     CopyValue(String),
     ExportHar(Scope),
     ExportSession(Scope),
+    /// The value menu (Enter on a header or JSON value): copy this text, decode it, filter by it.
+    CopyText(String),
+    DecodeJwt(String),
+    DecodeBase64(String),
+    DecodeUrl(String),
+    FilterBy(String),
 }
 
 /// Which requests an export covers.
@@ -139,7 +145,7 @@ pub struct MenuItem {
 
 #[derive(Debug, Clone)]
 pub struct Menu {
-    pub title: &'static str,
+    pub title: String,
     pub items: Vec<MenuItem>,
     pub cursor: usize,
 }
@@ -229,7 +235,7 @@ impl App {
     }
 
     /// The header on the detail cursor's row, when the cursor is on one.
-    fn header_at_cursor(&mut self, txn: TxnIdx) -> Option<(String, String)> {
+    pub(crate) fn header_at_cursor(&mut self, txn: TxnIdx) -> Option<(String, String)> {
         if !self.detail_open || !matches!(self.detail.tab, Tab::Request | Tab::Response) {
             return None;
         }
@@ -241,7 +247,7 @@ impl App {
     }
 
     /// The JSON path of the detail cursor's body line, when it has one.
-    fn path_at_cursor(&mut self, txn: TxnIdx) -> Option<String> {
+    pub(crate) fn path_at_cursor(&mut self, txn: TxnIdx) -> Option<String> {
         if !self.detail_open || !matches!(self.detail.tab, Tab::Request | Tab::Response) {
             return None;
         }
@@ -298,7 +304,7 @@ impl App {
         if let Some(path) = self.path_at_cursor(txn) {
             items.push(MenuItem { key: 'v', label: format!("value at {path}"), action: MenuAction::CopyValue(path) });
         }
-        self.menu = Some(Menu { title: "copy", items, cursor: 0 });
+        self.menu = Some(Menu { title: "copy".into(), items, cursor: 0 });
         self.overlay = Overlay::Menu;
     }
 
@@ -338,7 +344,7 @@ impl App {
                 });
             }
         }
-        self.menu = Some(Menu { title: "export", items, cursor: 0 });
+        self.menu = Some(Menu { title: "export".into(), items, cursor: 0 });
         self.overlay = Overlay::Menu;
     }
 
@@ -377,6 +383,9 @@ impl App {
     pub fn run_menu(&mut self, action: MenuAction) {
         self.overlay = Overlay::None;
         self.menu = None;
+        if self.run_value_action(&action) {
+            return;
+        }
         match action {
             MenuAction::ExportHar(scope) => {
                 let txns = self.scope_txns(scope);
@@ -401,7 +410,13 @@ impl App {
         }
         let Some(txn) = self.selected else { return };
         let text = match action {
-            MenuAction::ExportHar(_) | MenuAction::ExportSession(_) => return,
+            MenuAction::ExportHar(_)
+            | MenuAction::ExportSession(_)
+            | MenuAction::CopyText(_)
+            | MenuAction::DecodeJwt(_)
+            | MenuAction::DecodeBase64(_)
+            | MenuAction::DecodeUrl(_)
+            | MenuAction::FilterBy(_) => return,
             MenuAction::CopyUrl => self.view_store().txn(txn).url.raw.clone(),
             MenuAction::CopyRequestHeaders => {
                 self.view_store().txn(txn).req_headers.iter().map(|(n, v)| format!("{n}: {v}\n")).collect()
@@ -474,7 +489,7 @@ impl App {
     }
 
     /// The JSON value at a path like `$.config.items[2].id`, as JSON text.
-    fn json_value(&self, txn: TxnIdx, path: &str) -> Option<String> {
+    pub(crate) fn json_value(&self, txn: TxnIdx, path: &str) -> Option<String> {
         let dir = if self.detail.tab == Tab::Request { BodyDir::Request } else { self.response_dir(txn) };
         let text = self.body_text(txn, dir).ok()?;
         let mut v: serde_json::Value = serde_json::from_str(&text).ok()?;

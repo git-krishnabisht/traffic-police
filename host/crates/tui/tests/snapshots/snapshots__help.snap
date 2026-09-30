@@ -16,7 +16,7 @@ expression: "frame(12.0, MEDIUM, \"?\")"
 │                                                                                      00:00.000            00:05.000            00:10.000 │
 ╰──────────╭ keys ──────────────────────────────────────────────────────────────────────────────────────────────────────────────╮──────────╯
 ╭─ Requests│ Move     ↑/k up · ↓/j down · ←/h left · →/l right · g/Home top · G/End bottom · PgUp page up · PgDn page down      │──────────╮
-│ Name     │          Enter open · Esc back · Tab next panel · Shift+Tab previous panel                                         │          │
+│ Name     │          Enter open/decode · Esc back · Tab next panel · Shift+Tab previous panel                                  │          │
 │ events   │ Views    1 connections · 2 threads · 3 rules                                                                       │          │
 │ u_4821.pn│ List     c collapse · s sort · S reverse · C columns · / filter · m pin · d diff                                   │          │
 │ monitor  │ Detail   n next match · N previous match · p parsed/source · o original · | jq · < scroll left · > scroll right    │         ▐│
