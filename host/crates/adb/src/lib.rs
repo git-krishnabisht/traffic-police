@@ -539,6 +539,11 @@ mod tests {
                     assert_eq!(String::from_utf8(req).unwrap(), expect);
                     s.write_all(&reply).await.unwrap();
                 }
+                // Read until the client hangs up (a shell sends its stdin close after the
+                // service opens): closing with unread bytes resets the connection on Windows,
+                // and the client would lose the reply.
+                let mut rest = Vec::new();
+                let _ = s.read_to_end(&mut rest).await;
             }
         });
         Adb::at("127.0.0.1", port).with_timeout(Duration::from_secs(2))
