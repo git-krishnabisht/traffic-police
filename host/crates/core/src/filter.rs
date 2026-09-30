@@ -26,6 +26,7 @@ use crate::decode::decode_body;
 use crate::fmt::{NS_PER_MS, NS_PER_SEC, Ts};
 use crate::model::{Headers, Transaction, TxnState, header};
 use crate::rows::is_pending;
+use crate::store::SessionStore;
 
 /// Where a filter stops making sense, for highlighting in place.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -365,6 +366,16 @@ pub struct BodySearch {
 }
 
 impl BodySearch {
+    /// A search of `t`'s request, response and delivered bodies for `needle` (lower-cased).
+    pub fn new(store: &SessionStore, t: &Transaction, needle: String) -> BodySearch {
+        let mut bodies = vec![(store.body_bytes(&t.req_body), Some(t.req_headers.clone()))];
+        bodies.push((store.body_bytes(&t.resp_body), t.resp.as_ref().map(|r| r.headers.clone())));
+        if let Some(d) = &t.delivered_body {
+            bodies.push((store.body_bytes(d), t.delivered.as_ref().map(|x| x.headers.clone())));
+        }
+        BodySearch { bodies, needle }
+    }
+
     /// Whether any body contains the needle, after Content-Encoding decoding; text is compared
     /// without regard to case, other bytes exactly.
     pub fn run(&self) -> bool {

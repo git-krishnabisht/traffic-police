@@ -1,5 +1,7 @@
 //! traffic-police: watch an Android app's HTTP traffic from the terminal.
 
+mod headless;
+
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command as Process, Stdio};
@@ -97,12 +99,86 @@ enum Command {
         /// The file to open.
         file: PathBuf,
     },
+    /// Print each finished request as a line of JSON (PROTOCOL.md Appendix B), until Ctrl+C.
+    #[command(after_help = "Example: traffic-police tail -p com.example.app status:4xx,5xx | jq .url")]
+    Tail(TailArgs),
+    /// Record a session file (.trafficpolice) without the UI, until Ctrl+C or --duration.
+    #[command(after_help = "Example: traffic-police record -p com.example.app --out login.trafficpolice --duration 2m")]
+    Record(RecordArgs),
+    /// Write requests as a HAR file: from a saved session, or captured live for --duration.
+    #[command(
+        after_help = "Examples:\n  traffic-police export --har out.har --input login.trafficpolice host:api.example.com\n  traffic-police export --har out.har -p com.example.app --duration 60s"
+    )]
+    Export(ExportArgs),
     /// Internal: run one jq filter over stdin and print the result as JSON.
     #[command(name = "__jq", hide = true)]
     Jq {
         #[arg(allow_hyphen_values = true)]
         filter: String,
     },
+}
+
+#[derive(Args)]
+struct TailArgs {
+    #[command(flatten)]
+    target: TargetArgs,
+    /// One JSON object per line (PROTOCOL.md Appendix B) instead of text.
+    #[arg(long)]
+    json: bool,
+    /// Print every captured message as the app sent it (JSON), instead of a line per request.
+    #[arg(long, conflicts_with = "filter")]
+    events: bool,
+    /// With --json: include bodies (text, or base64). With --events: include body bytes (base64).
+    #[arg(long)]
+    bodies: bool,
+    /// Stop after this long (like 90s, 5m or 1h); otherwise Ctrl+C stops.
+    #[arg(long, value_name = "TIME", value_parser = headless::parse_duration)]
+    duration: Option<Duration>,
+    /// Watch the pretend app of `demo` instead of a device.
+    #[arg(long, hide = true)]
+    demo: bool,
+    /// Only requests that match, in the filter bar's language (e.g. host:api.example.com status:5xx).
+    #[arg(value_name = "FILTER", trailing_var_arg = true, allow_hyphen_values = true)]
+    filter: Vec<String>,
+}
+
+#[derive(Args)]
+struct RecordArgs {
+    #[command(flatten)]
+    target: TargetArgs,
+    /// The session file to write.
+    #[arg(long, short = 'o', value_name = "FILE")]
+    out: PathBuf,
+    /// Stop after this long (like 90s, 5m or 1h); otherwise Ctrl+C stops.
+    #[arg(long, value_name = "TIME", value_parser = headless::parse_duration)]
+    duration: Option<Duration>,
+    /// Keep only requests that match, in the filter bar's language (quote it: --filter "host:api.* status:5xx").
+    #[arg(long, value_name = "FILTER")]
+    filter: Option<String>,
+    /// Record the pretend app of `demo` instead of a device.
+    #[arg(long, hide = true)]
+    demo: bool,
+}
+
+#[derive(Args)]
+struct ExportArgs {
+    #[command(flatten)]
+    target: TargetArgs,
+    /// The HAR file to write.
+    #[arg(long, value_name = "FILE")]
+    har: PathBuf,
+    /// A saved session to read, instead of capturing live.
+    #[arg(long, short = 'i', value_name = "FILE")]
+    input: Option<PathBuf>,
+    /// With a live capture: how long to capture (like 60s).
+    #[arg(long, value_name = "TIME", value_parser = headless::parse_duration, conflicts_with = "input")]
+    duration: Option<Duration>,
+    /// Keep only requests that match, in the filter bar's language (quote it: --filter "host:api.* status:5xx").
+    #[arg(long, value_name = "FILTER")]
+    filter: Option<String>,
+    /// Capture the pretend app of `demo` instead of a device.
+    #[arg(long, hide = true, conflicts_with = "input")]
+    demo: bool,
 }
 
 #[derive(Args)]
@@ -139,6 +215,40 @@ fn main() -> anyhow::Result<()> {
             spill::remove_all();
             result
         }
+        Some(Command::Tail(args)) => headless_run(cli.log_file.as_deref(), async move {
+            let filter = headless::parse_filter(&args.filter.join(" "))?;
+            let source = headless_source(&args.target, &cli.target, args.demo, "tail").await?;
+            let format = match (args.events, args.json) {
+                (true, _) => headless::TailFormat::Events { bodies: args.bodies },
+                (false, true) => headless::TailFormat::Json { bodies: args.bodies },
+                (false, false) if args.bodies => bail!("--bodies needs --json (or --events)"),
+                (false, false) => headless::TailFormat::Text,
+            };
+            let lines = std::sync::Arc::new(headless::Lines::new(Box::new(std::io::stdout())));
+            headless::tail(source, filter, format, args.duration, lines).await
+        }),
+        Some(Command::Record(args)) => headless_run(cli.log_file.as_deref(), async move {
+            let filter = headless::parse_filter(args.filter.as_deref().unwrap_or(""))?;
+            let source = headless_source(&args.target, &cli.target, args.demo, "record").await?;
+            headless::record(source, &args.out, args.duration, filter).await
+        }),
+        Some(Command::Export(args)) => headless_run(cli.log_file.as_deref(), async move {
+            let filter = headless::parse_filter(args.filter.as_deref().unwrap_or(""))?;
+            let input = match (&args.input, args.duration) {
+                (Some(file), _) => {
+                    if args.target.package.is_some() || cli.target.package.is_some() {
+                        bail!("give either --input or a target (--package), not both");
+                    }
+                    headless::ExportInput::File(file)
+                }
+                (None, Some(d)) => headless::ExportInput::Live(
+                    headless_source(&args.target, &cli.target, args.demo, "export").await?,
+                    d,
+                ),
+                (None, None) => bail!("give --input FILE, or capture live with --package and --duration (like 60s)"),
+            };
+            headless::export_har(&args.har, input, filter).await
+        }),
         Some(Command::Demo(ref args)) => {
             let theme = theme(cli.theme);
             if let Some(spec) = &args.dump_frame {
@@ -169,6 +279,56 @@ fn main() -> anyhow::Result<()> {
             result
         }
     }
+}
+
+/// Runs a command without the UI: logging to the log file, spilled bodies cleaned up after.
+fn headless_run(log_file: Option<&Path>, work: impl Future<Output = anyhow::Result<()>>) -> anyhow::Result<()> {
+    let _log = init_logging(log_file)?;
+    traffic_police_core::fmt::set_local_offset_secs(traffic_police_tui::local_utc_offset_secs());
+    spill::remove_stale();
+    let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
+    let result = rt.block_on(async {
+        headless::stop_on_ctrl_c();
+        work.await
+    });
+    // the backend may still be saying goodbye; it has had its chance
+    rt.shutdown_timeout(Duration::from_secs(1));
+    spill::remove_all();
+    result
+}
+
+/// What a command without the UI watches. It has no picker, so --package is needed; target
+/// flags may come before the command too (`traffic-police -p com.example.app tail`).
+async fn headless_source(
+    args: &TargetArgs,
+    outer: &TargetArgs,
+    demo: bool,
+    command: &str,
+) -> anyhow::Result<headless::Source> {
+    if demo {
+        let now_ms = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64);
+        return Ok(headless::Source::Demo(DemoConfig { wall_start_ms: now_ms, ..DemoConfig::default() }, 1.0));
+    }
+    if args.mode == Mode::Attach || outer.mode == Mode::Attach {
+        bail!("attach mode arrives in Phase 4; use library mode (see the README)");
+    }
+    let Some(package) = args.package.clone().or_else(|| outer.package.clone()) else {
+        bail!("{command} needs the app: --package com.example.app (the UI lets you pick instead)");
+    };
+    let target = DeviceTarget {
+        serial: args.serial.clone().or_else(|| outer.serial.clone()),
+        package,
+        process: args.process.clone().or_else(|| outer.process.clone()),
+        pid: args.pid.or(outer.pid),
+        follow: args.follow || outer.follow,
+    };
+    if args.launch || outer.launch {
+        let adb = Adb::from_env();
+        adb.ensure_server().await.context("traffic-police talks to devices through the adb server")?;
+        launch_app(&adb, target.serial.as_deref(), &target.package).await?;
+    }
+    tracing::info!(command, package = %target.package, serial = ?target.serial, follow = target.follow, "headless session");
+    Ok(headless::Source::Device(target))
 }
 
 fn theme(arg: ThemeArg) -> Theme {
@@ -300,7 +460,8 @@ async fn run_device_mode(args: TargetArgs, theme: Theme, detect_images: bool) ->
     let (status_tx, status_rx) = watch::channel(ConnectionStatus::Waiting("looking for the device…".into()));
     let log = session_log();
     app.session_log = log.clone();
-    let backend = tokio::spawn(run_device(adb, target, ids, event_tx, command_rx, status_tx, log));
+    let sink = log.map(|l| l as std::sync::Arc<dyn traffic_police_core::session::StreamSink>);
+    let backend = tokio::spawn(run_device(adb, target, ids, event_tx, command_rx, status_tx, sink));
     let result = terminal::run(app, event_rx, RunOptions { detect_images, status: Some(status_rx) }).await;
     // the UI dropped its command sender: the backend says goodbye and removes its forward
     let _ = tokio::time::timeout(Duration::from_secs(3), backend).await;
@@ -346,7 +507,8 @@ async fn run_demo(args: &DemoArgs, theme: Theme, detect_images: bool) -> anyhow:
     app.jq_runner = jq_in_child;
     let log = session_log();
     app.session_log = log.clone();
-    let backend = tokio::spawn(traffic_police_backends::run_demo(cfg, args.speed, ids, event_tx, command_rx, log));
+    let sink = log.map(|l| l as std::sync::Arc<dyn traffic_police_core::session::StreamSink>);
+    let backend = tokio::spawn(traffic_police_backends::run_demo(cfg, args.speed, ids, event_tx, command_rx, sink));
     let result = terminal::run(app, event_rx, RunOptions { detect_images, status: None }).await;
     backend.abort();
     result

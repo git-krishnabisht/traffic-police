@@ -17,6 +17,7 @@ traffic-police-backends.workspace = true
 traffic-police-adb.workspace = true
 traffic-police-tui.workspace = true
 anyhow.workspace = true
+base64.workspace = true
 clap.workspace = true
 tokio.workspace = true
 tracing.workspace = true

@@ -673,7 +673,7 @@ Verified against `platform/packages/modules/adb` (Android 17), older `system/cor
 
 ## Appendix B: NDJSON output of `traffic-police tail`
 
-One JSON object per line. `v` is the schema version (1). Lines are emitted when a transaction completes or fails (or, with `--events`, one line per normalized event).
+`tail --json` prints one JSON object per line. `v` is the schema version (1). A line is printed when a transaction completes, fails, or is cut off by the end of its source (`"state":"detached"`), in that order, not in start order. Without `--json`, `tail` prints the same transactions as text for people (`07:10:01.123  200  GET  305 ms  225 B  https://…`); scripts should use `--json`.
 
 ```jsonc
 {"v":1,"type":"txn","id":"0:7",
@@ -684,7 +684,22 @@ One JSON object per line. `v` is the schema version (1). Lines are emitted when 
  "response":{"protocol":"h2","headers":[["content-type","application/json"]],"body_bytes":225,"decoded_bytes":225,"content_type":"application/json"},
  "timing":{"queued":0.4,"dns":-1,"connect":-1,"ssl":-1,"send":0.2,"wait":280.1,"receive":24.5},
  "thread":{"name":"DefaultDispatcher-worker-3","origin":"call"},
+ "stack":["com.example.app.Api.status(Api.kt:42)","com.example.app.MainActivity.refresh(MainActivity.kt:88)"],
  "client":"okhttp/4.12.0","rules":[]}
 ```
 
-`--bodies` adds `request.body` and `response.body` as `{"text": …}` for UTF-8 text or `{"base64": …}` otherwise (after Content-Encoding decoding).
+- `start` is null when the source sent no wall clock; `status` and `response` are null when no response arrived. Timing phases that did not happen (or were not observed) are `-1`.
+- `stack` holds the initiating stack, innermost first, as `class.method(file:line)`; `"stack_truncated":true` is added when the runtime cut it at its depth limit.
+- A failed transaction adds `"failure":{"class":…,"message":…,"phase":…,"canceled":…}`.
+- `--bodies` adds `request.body` and `response.body` as `{"text": …}` for UTF-8 text or `{"base64": …}` otherwise (after Content-Encoding decoding).
+
+`tail --events` prints the captured stream instead, one line per message as the app sent it (the filter does not apply):
+
+```jsonc
+{"v":1,"type":"source","source":0,"device":{"label":"Pixel 8 [emulator-5554]","serial":"emulator-5554"},"resumed":false,"hello":{"t":"hello",…}}
+{"v":1,"type":"event","source":0,"msg":{"t":"req","seq":12,"ts":5800000000000,"txn":7,…}}
+{"v":1,"type":"body","source":0,"txn":7,"dir":"response","seq":14,"ts":5800123000000,"offset":0,"len":225}
+{"v":1,"type":"source_end","source":0,"ts":5809000000000,"reason":"the app exited"}
+```
+
+`msg` is a device message (§7) exactly as received, `pong` included. Body lines carry sizes; with `--bodies` they add `"base64"` with the chunk's bytes (as captured, still Content-Encoded). `source` numbers are the host's and match the `id` prefix of `txn` lines.

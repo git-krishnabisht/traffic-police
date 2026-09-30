@@ -2585,6 +2585,7 @@ name = "traffic-police"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "base64",
  "clap",
  "serde_json",
  "tokio",

@@ -1200,13 +1200,8 @@ impl App {
             };
             for (txn, needle) in rows.take_body_wanted() {
                 let t = store.txn(txn);
-                let mut bodies = vec![(store.body_bytes(&t.req_body), Some(t.req_headers.clone()))];
-                bodies.push((store.body_bytes(&t.resp_body), t.resp.as_ref().map(|r| r.headers.clone())));
-                if let Some(d) = &t.delivered_body {
-                    bodies.push((store.body_bytes(d), t.delivered.as_ref().map(|x| x.headers.clone())));
-                }
                 let needle_text = filter.needles().get(needle).cloned().unwrap_or_default();
-                jobs.push(SearchJob { txn, needle, rev: t.rev, search: BodySearch { bodies, needle: needle_text } });
+                jobs.push(SearchJob { txn, needle, rev: t.rev, search: BodySearch::new(store, t, needle_text) });
             }
         };
         collect(&mut self.rows, &self.store);

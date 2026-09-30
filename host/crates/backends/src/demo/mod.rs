@@ -1393,7 +1393,7 @@ pub struct DemoSession {
     current: Option<u32>,
     buf: BytesMut,
     /// Keeps the generated stream, so a demo session can be saved like a real one.
-    pub log: Option<std::sync::Arc<traffic_police_core::session::SessionLog>>,
+    pub log: Option<std::sync::Arc<dyn traffic_police_core::session::StreamSink>>,
 }
 
 impl DemoSession {

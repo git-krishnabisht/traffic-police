@@ -17,7 +17,7 @@ use traffic_police_core::SessionEvent;
 use traffic_police_core::backend::{BackendCommand, ConnectionStatus};
 use traffic_police_core::model::{SourceId, SourceInfo};
 use traffic_police_core::normalize::{Control, Normalizer};
-use traffic_police_core::session::{DeviceRecord, SessionLog};
+use traffic_police_core::session::{DeviceRecord, StreamSink};
 use traffic_police_core::store::SourceIds;
 use traffic_police_proto::msg::{self, CaptureConfig, CaptureConfigPatch, HostMsg, RuleSet};
 use traffic_police_proto::{Decoder, PROTOCOL_VERSION};
@@ -119,7 +119,7 @@ enum End {
 /// session log (when one is kept).
 struct Out {
     events: mpsc::Sender<Vec<SessionEvent>>,
-    log: Option<Arc<SessionLog>>,
+    log: Option<Arc<dyn StreamSink>>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -130,7 +130,7 @@ pub async fn run_device(
     events: mpsc::Sender<Vec<SessionEvent>>,
     mut commands: mpsc::UnboundedReceiver<BackendCommand>,
     status: watch::Sender<ConnectionStatus>,
-    log: Option<Arc<SessionLog>>,
+    log: Option<Arc<dyn StreamSink>>,
 ) {
     let out = Out { events, log };
     // the process we attach to (kept across hiccups and device disconnects, to resume it)
@@ -635,7 +635,7 @@ fn drain(
     decoder: &mut Decoder,
     normalizer: &mut Normalizer,
     batch: &mut Vec<SessionEvent>,
-    log: Option<&SessionLog>,
+    log: Option<&dyn StreamSink>,
 ) -> Option<End> {
     loop {
         match decoder.next_frame() {

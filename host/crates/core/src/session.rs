@@ -57,6 +57,16 @@ struct Inner {
     error: Option<String>,
 }
 
+/// Something that wants the captured stream as it arrives: backends hand it each source's hello,
+/// every device frame with the source it came from, and when sources end.
+pub trait StreamSink: Send + Sync {
+    /// A source starts (or, `resumed`, reconnects): its device and the `hello` as received.
+    fn source(&self, source: SourceId, device: &DeviceRecord, hello: &[u8], resumed: bool);
+    /// A device frame from `source`.
+    fn frame(&self, source: SourceId, f: &Frame);
+    fn source_end(&self, source: SourceId, at: Ts, reason: &str);
+}
+
 /// Keeps the captured stream: backends hand it every frame, with the source it came from.
 pub struct SessionLog {
     inner: Mutex<Inner>,
@@ -150,7 +160,7 @@ impl SessionLog {
     }
 
     /// A source starts (or, `resumed`, reconnects): its device and the `hello` as received.
-    pub fn source(&self, source: SourceId, device: &DeviceRecord, hello: &[u8], resumed: bool) {
+    pub fn record_source(&self, source: SourceId, device: &DeviceRecord, hello: &[u8], resumed: bool) {
         let hello: Value = serde_json::from_slice(hello).unwrap_or(Value::Null);
         let v = json!({
             "t": "source",
@@ -164,7 +174,7 @@ impl SessionLog {
     }
 
     /// A device frame from `source`.
-    pub fn frame(&self, source: SourceId, f: &Frame) {
+    pub fn record_frame(&self, source: SourceId, f: &Frame) {
         let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         if inner.current != Some(source) {
             // a short source record switches without repeating the hello
@@ -176,7 +186,7 @@ impl SessionLog {
         Self::write(&mut inner);
     }
 
-    pub fn source_end(&self, source: SourceId, at: Ts, reason: &str) {
+    pub fn record_source_end(&self, source: SourceId, at: Ts, reason: &str) {
         self.record(kind::SOURCE_END, &json!({ "t": "source_end", "source": source, "ts": at, "reason": reason }));
     }
 
@@ -244,6 +254,18 @@ impl SessionLog {
         gz.write_all(&buf)?;
         gz.finish()?.flush()?;
         Ok(keep.map_or(store.len(), HashSet::len))
+    }
+}
+
+impl StreamSink for SessionLog {
+    fn source(&self, source: SourceId, device: &DeviceRecord, hello: &[u8], resumed: bool) {
+        self.record_source(source, device, hello, resumed);
+    }
+    fn frame(&self, source: SourceId, f: &Frame) {
+        self.record_frame(source, f);
+    }
+    fn source_end(&self, source: SourceId, at: Ts, reason: &str) {
+        self.record_source_end(source, at, reason);
     }
 }
 

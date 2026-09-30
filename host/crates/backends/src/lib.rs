@@ -23,7 +23,7 @@ pub async fn run_demo(
     ids: SourceIds,
     events: mpsc::Sender<Vec<SessionEvent>>,
     mut commands: mpsc::UnboundedReceiver<BackendCommand>,
-    log: Option<std::sync::Arc<traffic_police_core::session::SessionLog>>,
+    log: Option<std::sync::Arc<dyn traffic_police_core::session::StreamSink>>,
 ) {
     let mut session = DemoSession::new(cfg, ids);
     session.log = log;
