@@ -2,9 +2,9 @@ name: host
 
 on:
   push:
-    paths: ["host/**", ".github/workflows/host.yml"]
+    paths: ["host/**", "testdata/**", ".github/workflows/host.yml"]
   pull_request:
-    paths: ["host/**", ".github/workflows/host.yml"]
+    paths: ["host/**", "testdata/**", ".github/workflows/host.yml"]
 
 env:
   CARGO_TERM_COLOR: always

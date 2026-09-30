@@ -1,0 +1,91 @@
+name: android
+
+on:
+  push:
+    paths: ["android/**", "testdata/**", ".github/workflows/android.yml"]
+  pull_request:
+    paths: ["android/**", "testdata/**", ".github/workflows/android.yml"]
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * *"
+
+defaults:
+  run:
+    working-directory: android
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+      # JVM tests against eight OkHttp versions (protocol goldens included), every artifact, the
+      # sample app in all three build types, and the published form of the libraries
+      - run: >-
+          ./gradlew --stacktrace
+          :capture-core:check
+          :capture:assembleRelease :capture-noop:assembleRelease
+          :sample-app:assembleDebug :sample-app:assembleRelease :sample-app:assembleNondebuggable
+          publishAllPublicationsToBuildRepository
+      - name: The published libraries have no third-party runtime dependencies
+        run: |
+          repo=build/repo/io/trafficpolice
+          if grep -q "<dependency>" $repo/capture-core/*/*.pom $repo/capture-noop/*/*.pom; then
+            echo "capture-core and capture-noop must have no dependencies"; exit 1
+          fi
+          others=$(grep -o "<artifactId>[^<]*</artifactId>" $repo/capture/*/capture-*.pom | grep -v -e ">capture<" -e ">capture-core<" || true)
+          if [ -n "$others" ]; then echo "capture depends on: $others"; exit 1; fi
+      - name: Release builds carry no capture code
+        run: |
+          apk=sample-app/build/outputs/apk/release/sample-app-release.apk
+          unzip -q -o "$apk" 'classes*.dex' -d release-dex
+          if grep -a -q "Lio/trafficpolice/capture/" release-dex/classes*.dex; then
+            echo "the release APK contains capture classes"; exit 1
+          fi
+
+  # The sample app on emulators, driven by the host's end-to-end test: every scenario, both
+  # processes, kill and relaunch, the same-uid refusal. Slow, so on demand and nightly.
+  device:
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    strategy:
+      fail-fast: false
+      matrix:
+        api: [26, 36]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Enable KVM
+        working-directory: .
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+      - run: ./gradlew :sample-app:assembleDebug
+      - working-directory: host
+        run: rustup toolchain install 1.98.1 --profile minimal
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: host
+      - working-directory: host
+        run: cargo test --locked -p traffic-police-backends --test device_e2e --no-run
+      - uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ matrix.api }}
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          working-directory: host
+          script: |
+            adb install -r ../android/sample-app/build/outputs/apk/debug/sample-app-debug.apk
+            TP_E2E_SERIAL=emulator-5554 cargo test --locked -p traffic-police-backends --test device_e2e -- --ignored --nocapture
