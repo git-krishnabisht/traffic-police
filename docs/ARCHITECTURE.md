@@ -147,14 +147,17 @@ intercept(chain):
 
 ### 4.4 Rules on the device
 
-Rules (PROTOCOL.md §8) are evaluated in the process, because only there can a response be changed before the app sees it. `RulesEngine` is client-neutral; `OkHttpRules` and the HUC wrapper adapt it.
+Rules (PROTOCOL.md §8) are evaluated in the process, because only there can a response be changed before the app sees it. `RuleSet` compiles the host's set and finds the rules for a request; `RuleRun` applies them without knowing the client; `OkHttpRules` (in the network interceptor) and `HucExchange` (in the HttpURLConnection wrapper) drive it.
 
 - Matching uses the request as it goes on the wire (method, scheme, host, port with 80/443 defaults filled in, encoded path, decoded query parameters). Studio's matcher compares `URL.getPort()`, which is `-1` for default ports, so a port criterion of 443 never matches there; ours normalizes.
-- `delay` sleeps before `proceed()`. `fail` throws before `proceed()` (so `proceed()` runs zero times, which OkHttp allows). The exception kinds are `timeout` (`SocketTimeoutException`), `io` (`IOException`), `protocol` (`ProtocolException`), `unknown_host` (`UnknownHostException`) and `connect` (`ConnectException`). OkHttp's retry-on-connection-failure may retry `io` and `connect` failures (running the rule again as a new attempt); `timeout` and `protocol` are never retried. The docs and the Rules view say so.
+- Rules belong to the host connection that sent them. When it ends they stop applying (a connection that took over keeps its own), so quitting traffic-police gives the app its normal behaviour back. They keep applying while recording is paused, when nothing is recorded.
+- `delay` sleeps before `proceed()`, in 50 ms slices so that a canceled call stops waiting. `fail` throws before `proceed()` (so `proceed()` runs zero times, which OkHttp allows). The exception kinds are `timeout` (`SocketTimeoutException`), `io` (`IOException`), `protocol` (`ProtocolException`), `unknown_host` (`UnknownHostException`) and `connect` (`ConnectException`). Only OkHttp 3.9 to 3.12 retry a simulated failure (`io`, `connect` and `unknown_host`, on a pooled connection or to another address), and the rule then fails the new attempt too; later versions retry only failures they saw on a connection. The tests measure this on every supported OkHttp (PROTOCOL.md §8.4).
 - Status and header actions rebuild the status line and headers without buffering the body.
-- Body actions read the original body completely (limit 32 MiB), decode `gzip` and `deflate` per `Content-Encoding` (`br` and `zstd` cannot be decoded on the device without libraries: the action is skipped with a `diag`), close the original body (OkHttp refuses to continue a call whose previous body is still open), and deliver the new body with `Content-Encoding` removed and `Content-Length` set. Bridge's transparent gzip then leaves it alone, and `ResponseBody.bytes()` length checks hold (Studio never fixes `Content-Length`, which breaks `bytes()` on non-gzip bodies).
-- `replace` is literal unless `regex = true`; a literal replacement never interprets `$` or `\` (Studio always treats the replacement as a regex template).
+- Body actions read the original body completely (limit 32 MiB; above it the original streams through and the action is skipped with a `rule_skipped` diagnostic), close the original body (OkHttp refuses to continue a call whose previous body is still open), and deliver the new body with `Content-Encoding` removed and `Content-Length` set. Bridge's transparent gzip then leaves it alone, and `ResponseBody.bytes()` length checks hold (Studio never fixes `Content-Length`, which breaks `bytes()` on non-gzip bodies).
+- `replace` decodes `gzip` and `deflate` per `Content-Encoding` (`br` and `zstd` cannot be decoded on the device without libraries: the action is skipped with a diagnostic), reads the text in the Content-Type charset (UTF-8 by default) and writes it back in the same charset. It is literal unless `regex = true`; a literal replacement never interprets `$` or `\` (Studio always treats the replacement as a regex template). A `body` action needs no decoding, so it works on any encoding.
+- Upgrades (a 101, or `Connection: upgrade` both ways) are never rewritten, paused or not. WebSocket calls skip network interceptors altogether.
 - OkHttp stores what leaves the network interceptors in its HTTP cache, so a rewritten response could outlive the rule. By default a rule that changes the status, headers or body also sets `Cache-Control: no-store` on the delivered response and lists that change in its `rule` event; `cache_rewrites = true` on a rule turns this off.
+- HttpURLConnection: the wrapper finds the rules when the exchange starts. Delays and failures happen in the first call that connects, and every getter answers from the delivered response: the status line, headers by name and by index, and the input and error streams, which throw for an error status as the platform does (Android: `FileNotFoundException` for every status of 400 and above; the JDK: only for 404 and 410). The getters `URLConnection` derives from headers (content type and length, dates) run its own code over the delivered headers, so they agree. `scripts/gen_huc_wrappers.py` generates both wrappers from one method list.
 - Rules are applied without a global lock around body reads (Studio folds all rules under one monitor, so a slow body blocks every other response).
 - Every application is reported (`rule` event) with the original kept (Studio reports only HttpURLConnection rule hits, as flags, and never keeps the original).
 
@@ -440,7 +443,7 @@ pub struct SessionStore {
 - **Graph source** (decided in review). By default the graph plots **all of the app's network traffic**: the whole-app `TrafficStats` uid counters the runtime samples every 500 ms, which is what Android Studio plots. It includes non-HTTP traffic and HTTP from clients traffic-police does not hook, so a spike may have no matching row. `T` switches to **captured requests**: bytes of the captured bodies and headers at the device time they were written or read, which line up with the rows and resolve finer than 500 ms. The legend and the header's rate readout name the active source. Sources without whole-app counters (HAR imports, or a device where `TrafficStats` is unsupported) fall back to captured requests automatically, and the legend says so.
 - **Connection View.** A custom virtualized table: only visible rows are formatted each frame. Columns: Name, Size, Type, Status, Time, Timeline, plus optional Method, Host, Path, Thread, Start, Request size, Protocol, Client. The Timeline column shares the graph's window. Each bar has three shades (sending, waiting, receiving) and sub-cell precision with the eighth-block characters `▏▎▍▌▋▊▉█`; a bar that starts inside a cell is drawn as the inverse-colored partial block (a cell can show two colors, so the boundary between two phases inside one cell is rounded to the nearest eighth). Status text is always present (`200`, `404`, `failed`, `···`) and colored by class. Rule-modified rows show a `✎` marker, later hops of a redirect `↪`, rows with dropped events `!`, pinned rows `★`, and the row marked for a diff `◆`. When parked at the bottom in live mode, the list auto-scrolls. Sort keys are cached per transaction and re-sorted incrementally, so a sorted list stays cheap while traffic arrives. Columns are laid out to the pane: when the list is narrow the Timeline column goes first, and Name keeps at least 12 cells.
 - **Thread View.** Lanes on the shared time axis; bars are selectable and open the detail pane.
-- **Rules view.** Ordered list with enabled toggles, match summary, action summary, and per-rule hit counts; a form for editing; errors from the file or the device shown inline.
+- **Rules view.** Ordered list with enabled toggles, match summary, action summary, and per-rule hit counts; errors from the file or the device shown inline; editing in `$EDITOR` (5.11).
 - **Detail pane tabs.** Overview, Response, Request, Call Stack (Studio's order), with the fields from the brief. `o` toggles original and modified when a rule changed the response; `p` toggles Parsed and Source.
 - **Freeze** renders from a store snapshot (5.6); unfreezing jumps back to the live store.
 - **Virtualization everywhere.** Ratatui's `Table` allocates every row it is given and `Paragraph` scrolls only up to 65,535 lines and re-wraps from the top each frame, so neither ever receives more than the visible slice: the list, thread lanes, body viewers, hex dumps and diffs all keep their own offsets into indexed data and build widgets for the visible rows only. A one-cell scroll indicator shows the position in the total count.
@@ -500,12 +503,12 @@ Bodies up to 256 KiB are decoded on the UI task; larger ones on a worker (`spawn
 
 ### 5.11 Rules (host side)
 
-- Stored in `.traffic-police/rules.toml` in the project (the nearest ancestor of the working directory containing `.traffic-police/`, or `--project DIR`). Schema in PROTOCOL.md §8 (the TOML form mirrors the wire form).
-- The file is watched (debounced 200 ms). A valid change is pushed to the device immediately (`set_rules`); an invalid one is shown in the Rules view and status bar while the last valid set stays active.
-- Edits from the TUI form are written back with comment-preserving TOML editing. `$EDITOR` can be opened on the file from the Rules view.
-- `r` creates a rule prefilled from the selected request (method, scheme, host, port, exact path, and the query parameters present).
+- Stored in `.traffic-police/rules.toml` in the project (the nearest ancestor of the working directory containing `.traffic-police/`, or `--project DIR`). Schema in PROTOCOL.md §8 (the TOML form mirrors the wire form); every problem is reported with its line.
+- The UI polls the file, and the files its bodies come from, every 250 ms, and reads it once it has stayed unchanged for 200 ms (polling works the same on every platform and needs no dependency). A valid change is pushed to the device at once (`set_rules`); an invalid one is shown in the Rules view and the status bar while the last valid set stays active. Headless commands (`tail`, `record`, `export --live`) read the rules once, when they start.
+- The Rules view lists the file's rules with their hit counts (from `rule` events) and the selected rule's match and actions; its footer says where the file is, how many rules are on, and how many the app says it runs (`rules_ack`). Space turns a rule on or off by rewriting its `enabled` value in place (comments and layout stay). Enter opens `$EDITOR` at the rule, and saving applies it. `r` on a request appends a rule that matches it exactly (method, scheme, host, port, path, and the query parameters present, with any value), off and with a placeholder `status` action, and opens it in the editor; without a `.traffic-police/` directory it creates one in the working directory. There is no form for editing rules inside the UI; the editor and live reload do that job (9.2).
 - Bodies loaded from `file = "…"` are read on the host and sent inline (base64 for binary).
-- The device reports per-rule compile errors (`rules_ack`) and every application (`rule` events). The Rules view shows hit counts from those events.
+- The device reports per-rule compile errors (`rules_ack`) and every application (`rule` events). The detail pane shows the response the app received, `o` the original; `rule:modified` and `rule:<id>` filter for what rules changed. `tail --json` and HAR exports hold the delivered response and keep the original next to it.
+- The demo shows two built-in rules instead of a file.
 
 ### 5.12 CLI, headless modes, doctor
 
@@ -592,7 +595,7 @@ A CI step (`cargo tree -e features`) fails if a C library sneaks back in through
 
 **Android**
 
-- JVM tests (JUnit 4, MockWebServer from the same OkHttp major version) for gzip, chunked, streaming, redirects, errors, timeouts, cancellation, one-shot and duplex request bodies, WebSocket and other upgrades, composition with an app `EventListener`, and every rule action. The same suite runs against OkHttp 3.9.0, 3.12.13, 3.14.9, 4.0.0, 4.12.0, 5.0.0 and 5.5.0, each with the Okio it ships and with the newest Okio, via Gradle test configurations that swap the runtime dependency while the library stays compiled against its fixed targets (4.1).
+- JVM tests (JUnit 4, MockWebServer from the same OkHttp version) for gzip, chunked, streaming, redirects, errors, timeouts, cancellation, one-shot request bodies, upgrades (a call that switches protocols; WebSocket calls skip network interceptors), composition with an app `EventListener`, and every rule action, including which OkHttp versions retry a simulated failure. Duplex request bodies (HTTP/2 only) are handled but not tested yet. The same suite runs against OkHttp 3.9.0, 3.12.13, 3.14.9, 4.0.0, 4.12.0, 5.0.0 and 5.5.0, each with the Okio it ships, and 3.9.0 also with Okio 3, via Gradle test suites that swap the runtime dependency while the library stays compiled against its fixed targets (4.1).
 - Protocol conformance: JVM tests write golden frame files (`testdata/protocol/v1/*.frames` plus an expected-events JSON), and Rust tests decode them; the Rust side writes host-to-device golden frames that the Java tests decode. Regenerating golden files is an explicit Gradle/cargo task, never a side effect of a normal test run.
 - Instrumented tests on emulators (API 26 and the latest API level): the sample app's scenarios with the library, and the attach path in Phase 4.
 - End to end: a script installs the sample app, starts `traffic-police tail --json --package …`, triggers the scenario list through an instrumentation, and asserts the NDJSON stream (methods, URLs, statuses, body hashes, thread names, stack frames containing the sample's call sites).
@@ -650,7 +653,16 @@ Decided in the Phase 1 review:
 - **Frame rate:** redraw promptly on input and data, not only on a timer (5.8).
 - **Phase order kept:** attach mode (watching an app without changing it) stays Phase 4, after rules in Phase 3.
 
-No questions are open.
+Decided in the Phase 2 review:
+
+- **Git:** Phase 2 merged into `master` and pushed; Phase 3 is on `phase-3`.
+- **Body explorer:** the detail pane splits in two, the response body as a tree explored with `h`/`j`/`k`/`l` above the tabs (5.8). No later phase had it, so it is built in Phase 3.
+
+Open for the Phase 3 review:
+
+- **Rules end with the connection.** When traffic-police quits or loses the app, the app's normal behaviour returns. The alternative keeps rules in the app until they are changed, which survives a restart of traffic-police but can leave an app misbehaving with no one watching.
+- **No rule form in the UI.** Rules are edited in `$EDITOR` with live reload; Space turns one on or off and `r` starts one from a request.
+- **Headless commands read the rules once.** `tail` and `record` do not pick up changes to `rules.toml` while they run.
 
 ### 9.3 Risks
 

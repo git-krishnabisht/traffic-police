@@ -633,6 +633,33 @@ name = "stub"
     }
 
     #[test]
+    fn the_readme_example_is_valid() {
+        let readme = include_str!("../../../../README.md");
+        let section = &readme[readme.find("\n## Rules\n").expect("the README's Rules section")..];
+        let start = section.find("```toml\n").expect("its example") + "```toml\n".len();
+        let end = start + section[start..].find("```").expect("the example's end");
+        let f = parse(&section[start..end], Path::new("."));
+        assert!(f.is_valid(), "{:?}", f.problems);
+        assert_eq!(
+            f.entries.iter().map(|e| (e.id.as_str(), e.enabled)).collect::<Vec<_>>(),
+            [("force-pass", true), ("enroll-down", false)]
+        );
+    }
+
+    #[test]
+    fn the_protocol_example_is_valid() {
+        let doc = include_str!("../../../../docs/PROTOCOL.md");
+        let section = &doc[doc.find("### 8.1 File format").expect("PROTOCOL.md §8.1")..];
+        let start = section.find("```toml\n").expect("its example") + "```toml\n".len();
+        let end = start + section[start..].find("```").expect("the example's end");
+        let base = dir("protocol");
+        std::fs::write(base.join("fixtures/config-error.json"), "{\"error\":true}").unwrap();
+        let f = parse(&section[start..end], &base);
+        assert!(f.is_valid(), "{:?}", f.problems);
+        assert_eq!(f.entries.len(), 4);
+    }
+
+    #[test]
     fn the_files_bodies_come_from_are_listed_to_be_watched() {
         let base = dir("files");
         // listed even when missing: the rule works once the file appears

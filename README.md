@@ -6,11 +6,12 @@ and response details, the thread and call stack that made each request, a thread
 response rewrite rules. No proxy and no certificates: a small runtime inside the (debuggable)
 app hooks OkHttp and HttpURLConnection and streams events to the terminal over adb.
 
-> **Status: Phase 2.** Library mode works: add the library to your app's debug build and watch
+> **Status: Phase 3.** Library mode works: add the library to your app's debug build and watch
 > its traffic live from a device or an emulator, then filter, search, copy as cURL, diff, decode
 > tokens, export HAR, save and reopen sessions, or run without the UI (`tail`, `record`,
-> `export`, `doctor`). Editable rules arrive in Phase 3; attach mode (any debuggable app, no
-> code changes) in Phase 4. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design
+> `export`, `doctor`). [Rules](#rules) change what the app receives: delay or fail a request, or
+> change a response's status, headers or body. Attach mode (any debuggable app, no code
+> changes) arrives in Phase 4. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design
 > and [docs/PROTOCOL.md](docs/PROTOCOL.md) for the device protocol.
 
 ## Install
@@ -159,6 +160,7 @@ costs per request, in logcat), `security` (checks that another uid is refused).
 |---|---|
 | Move | `↑` `↓` or `j` `k` · `g` `G` top and bottom · `PgUp` `PgDn` · `Tab` `Shift+Tab` move focus between graph, list and detail |
 | Views | `1` Connection View · `2` Thread View · `3` Rules |
+| Rules | `r` on a request: a new rule that matches it · in the Rules view: `Space` on or off · `Enter` edit in `$EDITOR` |
 | Detail pane | `Enter` open · `Esc` close · `h` `l` or `←` `→` switch tabs · `p` parsed or source · `o` original or rule-modified response |
 | Body explorer | The box above the tabs shows the response body; `Shift+Tab` from the tabs (or `Tab` from the list, or a click) goes there: `j` `k` move · `h` fold, or go up to the enclosing object · `l` unfold, or step in · `Enter` fold, or the value menu on a single value · `[` `]` fold or unfold all |
 | Bodies | `Enter` fold or unfold JSON · `[` fold all · `]` unfold all · <code>&#124;</code> jq filter (empty filter clears) · `<` `>` scroll sideways |
@@ -176,8 +178,7 @@ Mouse: click rows and tabs, double-click a row to open it, wheel to scroll (on t
 wheel zooms and Shift+wheel moves in time), drag on the graph to select a range, drag the divider
 to resize the panes.
 
-Every key can be changed in the config file (below). Phase 3 adds `r` (new rule from the
-selected request) and rule editing.
+Every key can be changed in the config file (below).
 
 ### Filters
 
@@ -214,7 +215,7 @@ traffic-police doctor -p com.example.app                      # what is wrong, a
 again); `--bodies` adds bodies to `--json` lines. `record` writes the file as it captures (with
 `--filter`, only matching requests, at the end). Like the UI, both begin with the requests the
 app made before they connected (the app keeps its last 1,000). Status goes to stderr, data to
-stdout. `doctor` checks adb, the config, the terminal and clipboard,
+stdout. `doctor` checks adb, the config, the terminal and clipboard, the project's `rules.toml`,
 each device, and with `--package` that the app is installed, debuggable and capturing; it
 changes nothing and exits with 1 when a check fails.
 
@@ -275,7 +276,65 @@ source_roots = ["app/src/main/java", "app/src/main/kotlin", "sdk/src/main/kotlin
 
 `source_roots` lets `Enter` on a Call Stack frame open the file at that line in `$VISUAL` or
 `$EDITOR` (VS Code, Cursor, Zed, Sublime Text and Helix get `file:line`; others `+line file`).
-Rules (`.traffic-police/rules.toml`) arrive with Phase 3; the demo shows two built-in rules.
+
+## Rules
+
+Rules change what the app receives, with the server left alone: slow a request down, make it
+fail, or change a response's status, headers or body. They live in `.traffic-police/rules.toml`,
+next to `project.toml` (the nearest one at or above the directory you start from, or
+`--project DIR`):
+
+```toml
+version = 1
+
+[[rule]]
+id = "force-pass"
+name = "Force verdict pass"
+
+  [rule.match]
+  host = "*.example.app"             # a glob: * stays between dots, ** crosses them
+  path = "/api/sdk/sim-binding/status/"
+
+  [[rule.action]]
+  type = "replace"                   # in the body's text; gzip and deflate are handled
+  find = '"verdict":"pending"'
+  with = '"verdict":"pass"'
+
+[[rule]]
+id = "enroll-down"
+enabled = false
+
+  [rule.match]
+  methods = ["POST"]
+  path = "/api/sdk/enroll"
+
+  [[rule.action]]
+  type = "fail"
+  exception = "timeout"              # timeout, io, protocol, unknown_host or connect
+```
+
+The actions are `delay` (`ms`), `fail` (`exception`), `status` (`code`, `reason`), `header`
+(`op` add, set or remove), `body` (`text`, `base64`, or a `file` in `.traffic-police/`) and
+`replace` (`find`, `with`, `regex`). [docs/PROTOCOL.md §8](docs/PROTOCOL.md#8-rules) has every
+field, and exactly what each action does with OkHttp and HttpURLConnection.
+
+- **Make one:** select a request and press `r`. traffic-police adds a rule that matches it
+  exactly, turned off and with a placeholder action, and opens it in `$EDITOR`: say what it
+  does, save, and turn it on. (With no `.traffic-police` directory yet, `r` creates one in the
+  directory you started from.)
+- **Change them:** the Rules view (`3`) lists them with how often each applied. `Space` turns
+  the selected rule on or off; `Enter` opens it in `$EDITOR`. Saved changes, to `rules.toml` or a
+  body file, reach the app at once. A mistake is reported with its line, and the rules that were
+  active stay active. The footer says how many rules the app runs.
+- **See what they did:** the detail pane shows the response the app received; `o` shows the
+  original. `rule:modified` and `rule:<id>` filter for the requests rules changed. `tail --json`,
+  HAR and session files keep both.
+- Rules apply only while traffic-police is connected; when it quits, the app behaves normally
+  again. They keep applying while recording is paused. A changed response gets
+  `Cache-Control: no-store`, so OkHttp's cache does not keep it after the rule is off
+  (`cache_rewrites = true` on a rule allows caching).
+- `tail`, `record` and `export --live` apply the rules as they are when the command starts.
+- The demo shows two built-in rules.
 
 ## Attach mode (Phase 4)
 
@@ -309,6 +368,11 @@ launch there).
   never touched.
 - **DETACHED "another traffic-police took over":** a second traffic-police connected to the
   same process.
+- **A rule does nothing:** the Rules view's footer says how many rules the app runs, and a rule
+  the app refused shows why. Rules match the request as it is sent: the path is URL-encoded, and
+  `*` in a host stops at dots (`*.example.com` does not match `example.com`).
+- **The app crashes when a rule makes a request fail:** the app gets the exception a real
+  network failure throws, so code that does not handle it would crash on a real failure too.
 - **Anything else:** `traffic-police doctor -p com.example.app` checks adb, the config, the
   device, the app and its capture runtime, and prints a fix for each failure.
 - **Copy does nothing inside tmux:** tmux passes OSC 52 on only with `set -g set-clipboard on`.

@@ -161,7 +161,7 @@ host                                   device
 - **Keep-alive.** The host sends `ping` every 5 s. If no frame at all arrives for 15 s after a ping, the host treats the connection as dead (a stuck forward) and reconnects. The device needs no keep-alive.
 - **Backpressure and loss.** App threads never block on the socket. Events go into a bounded queue (default 8 MiB) drained by one writer thread; on overflow the oldest queued events are dropped and counted, and a `dropped` event is sent when the writer catches up. Events that reached the ring buffer are never reported as dropped; eviction from the ring is normal ageing.
 - **Recording paused** (`set_config { recording: false }`): the runtime stops creating transactions. Transactions already in flight finish normally. Rules keep applying.
-- **Closing.** Either side MAY send `bye` before closing. The device keeps capturing into the ring buffer after a client disconnects.
+- **Closing.** Either side MAY send `bye` before closing. The device keeps capturing into the ring buffer after a client disconnects. The rules that connection sent stop applying, so the app behaves normally again once traffic-police quits; when another host has taken over, its rules stay.
 
 ## 7. Message reference
 
@@ -285,7 +285,7 @@ Sent once, after the last `body_end` of the transaction (or after `resp` when th
   "rules": [{ "id": "force-pass", "name": "Force verdict pass" }],
   "changes": [
     { "op": "status", "from": 200, "to": 500, "reason": "Internal Server Error" },
-    { "op": "header_set", "name": "Cache-Control", "value": "no-store", "old": ["max-age=60"] },
+    { "op": "header_set", "name": "Cache-Control", "value": "no-store", "old": ["max-age=60"], "reason": "cache_guard" },
     { "op": "header_add", "name": "X-Debug", "value": "1" },
     { "op": "header_remove", "name": "ETag", "old": ["\"abc\""] },
     { "op": "body_replace", "bytes": 42 },
@@ -298,7 +298,9 @@ Sent once, after the last `body_end` of the transaction (or after `resp` when th
 ```
 
 - `delivered` is present when the status line, headers or body changed; it is the response the app received. The original stays in `resp` and in `dir = 1` chunks. A changed body is sent as `dir = 2` chunks followed by `body_end { dir: "delivered" }`.
-- For a `fail` action the `rule` event precedes the `fail` event (which has `simulated: true`).
+- For a `fail` action the `rule` event precedes the `fail` event (which has `simulated: true`); the change's `exception` is the class thrown.
+- `reason` marks a change the runtime made itself: `cache_guard` (§8.4, rule 7), or `body_changed` for the `Content-Encoding` removed and the `Content-Length` set with a new body (rule 4).
+- `rules` lists every rule that acted, including one whose actions changed nothing: a `replace` that finds nothing reports `body_edit` with `matches: 0`, and the app gets the original.
 
 #### `dropped` — events lost to queue overflow
 
@@ -440,9 +442,9 @@ Reasons: `shutdown`, `replaced`, `protocol_mismatch`, `bad_frame`, `timeout`, `i
 version = 1
 
 [[rule]]
-id = "slow-status"                 # stable identifier; generated when missing
+id = "slow-status"                 # stable identifier; rule-<n> (its position) when missing
 name = "Slow status poll"
-enabled = true
+enabled = true                     # the default
 
   [rule.match]
   methods = ["GET"]                # any method when absent
@@ -501,9 +503,11 @@ id = "stub-config"
 
   [[rule.action]]
   type = "body"
-  file = "fixtures/config-error.json"    # relative to .traffic-police/; or text = "…"
+  file = "fixtures/config-error.json"    # relative to .traffic-police/; or text = "…", or base64 = "…"
   content_type = "application/json"      # optional; replaces Content-Type when given
 ```
+
+The host checks the file before it sends anything, and reports each problem with its line: `version` must be 1; keys it does not know, and fields that belong to another action type, are mistakes; ids are unique; `delay` takes 0 to 600,000 ms; `status` takes 100 to 599, and without `reason` the standard phrase is used (empty when the code has none); header names are tokens and values printable ASCII (OkHttp refuses others); a body has exactly one of `text`, `base64` and `file`; `replace` needs a non-empty `find`, and a `regex` one must compile (§8.3). A file with problems is not used: the rules that were active stay active. A `file` is read when the rules are, and inlined (as text when it is UTF-8, else base64); the UI watches it with `rules.toml`, so saving either sends the rules again (ARCHITECTURE.md §5.11).
 
 ### 8.2 Wire form
 
@@ -528,30 +532,36 @@ A matcher is exactly one of `{ "exact": s }`, `{ "glob": s }`, `{ "regex": s }`.
 
 ### 8.3 Matching
 
-- Glob syntax: `*` matches any run of characters except the field's separator (`.` in hosts, `/` in paths; nothing in query values), `**` matches any run including separators, `?` matches one character. Host matching is case-insensitive; path and query matching are case-sensitive; paths are matched in their encoded form (`HttpUrl.encodedPath()`); query parameter names and values are matched decoded.
-- Regexes use Java `java.util.regex` syntax on the device; the host validates them with a compatible subset check and the device reports compile errors in `rules_ack`.
+- Glob syntax: `*` matches any run of characters except the field's separator (`.` in hosts, `/` in paths; nothing in query values), `**` matches any run including separators, `?` matches one character other than the separator. Host matching is case-insensitive; path and query matching are case-sensitive; paths are matched in their encoded form (`HttpUrl.encodedPath()`); query parameter names and values are matched decoded.
+- Regexes use Java `java.util.regex` syntax on the device and match anywhere in the value (`find`), so `^…$` anchors one to the whole value; globs and exact matchers always match the whole value. The host checks a regex with Rust's `regex` crate first, letting through the Java constructs that crate lacks (look-around, backreferences); the device reports what it cannot compile in `rules_ack`, and that rule is not active.
 - All enabled rules whose match succeeds apply, in list order. Within a rule, actions apply in list order.
 
 ### 8.4 Application points and semantics
 
 | Action | OkHttp (network interceptor) | HttpURLConnection wrapper |
 |---|---|---|
-| `delay { ms }` | `Thread.sleep(ms)` before `chain.proceed()` | Sleep in the first call that connects |
+| `delay { ms }` | `Thread.sleep(ms)` before `chain.proceed()` | Sleep in the first call that connects (`connect()`, `getResponseCode()`, `getInputStream()`, a header getter…) |
 | `fail { exception }` | Throw before `chain.proceed()`; `proceed()` is never called | Throw from the first call that connects |
 | `status { code, reason }` | `response.newBuilder().code(code).message(reason)` | Overrides `getResponseCode()`/`getResponseMessage()` and the status line in `getHeaderField(0)` |
 | `header { op, name, value }` | Edits response headers | Overrides header getters |
 | `body { text \| base64 \| file }` | Original body read in full (captured as `dir = 1`), closed, replaced | Wrapper returns the replacement stream |
-| `replace { find, with, regex }` | Original body read in full, decoded, edited, re-encoded as UTF-8 | Same, on the stream |
+| `replace { find, with, regex }` | Original body read in full, decoded, edited, re-encoded in its own charset | Same, on the stream |
 
-`fail` exception kinds:
+Delays and failures apply before the request is sent, in rule order: each delay sleeps, and the first `fail` throws, after which nothing more applies. A delay ends early when the call is canceled, which then fails as canceled rather than simulated. A simulated failure has phase `connect` and the message `simulated by traffic-police` unless the action gives one.
 
-| `exception` | Thrown | Retried by OkHttp's retry-on-connection-failure? |
+`fail` exception kinds, and whether OkHttp's retry-on-connection-failure (on by default) tries the call again, as measured on every OkHttp the runtime supports:
+
+| `exception` | Thrown | Retried by OkHttp? |
 |---|---|---|
 | `timeout` | `java.net.SocketTimeoutException` | No |
 | `protocol` | `java.net.ProtocolException` | No |
-| `io` | `java.io.IOException` | Possibly (the rule then applies again to the new attempt) |
-| `connect` | `java.net.ConnectException` | Possibly |
-| `unknown_host` | `java.net.UnknownHostException` | Possibly |
+| `io` | `java.io.IOException` | Only by OkHttp 3.9 to 3.12: when the call was on a pooled connection, or the host has another address to try |
+| `connect` | `java.net.ConnectException` | As `io` |
+| `unknown_host` | `java.net.UnknownHostException` | As `io` |
+
+A retry is a new attempt: the rule fails it again, and the host records it as another request. OkHttp 3.14 and later retry only failures they saw on a connection, and a rule throws before the request reaches one. OkHttp 3.9 to 3.12 also treat the address as failed, as after a real failure, so while the host has other addresses (IPv4 and IPv6, say) later connections try those first.
+
+HttpURLConnection: after a simulated failure, calls that throw repeat the same exception, getters answer as for a failed connection (`null`, `-1`), and `getErrorStream()` is `null`. A rule's status decides what the app can read, as the platform does: for 400 and above, `getInputStream()` throws (`FileNotFoundException` on Android for every such code; on the JDK for 404 and 410, and `IOException` otherwise) and `getErrorStream()` returns the body; for a status below 400, `getInputStream()` returns it, even when the network's status was an error.
 
 Rules for bodies (these follow from OkHttp's layering: network interceptors see the encoded body, and `BridgeInterceptor` decompresses afterwards based on `Content-Encoding`):
 
@@ -560,12 +570,12 @@ Rules for bodies (these follow from OkHttp's layering: network interceptors see 
 3. The original is decoded according to `Content-Encoding` (`gzip`, `deflate`; `br` and `zstd` cannot be decoded on the device without extra libraries, so body actions on them are skipped with a diagnostic), then decoded as text using the Content-Type charset (default UTF-8) for `replace`.
 4. The new body is delivered **without** `Content-Encoding`, with `Content-Length` set to its length, and with `Content-Type` replaced when the action gave one. OkHttp's transparent gzip therefore leaves it alone, and `ResponseBody.bytes()` length checks hold.
 5. Status-only and header-only rules do not buffer: the body streams through the normal tee.
-6. Upgrade responses (101, or `Connection: upgrade` on both sides) are never rewritten.
+6. Upgrade responses (101, or `Connection: upgrade` on both sides) are never rewritten, whether or not recording is paused. WebSocket calls never reach network interceptors, so rules do not see them at all.
 7. OkHttp caches what leaves the network interceptors, so a rewritten response could outlive its rule. Unless the rule sets `cache_rewrites = true`, a rule that changed the status, headers or body also sets `Cache-Control: no-store` on the delivered response, and lists it as `{ "op": "header_set", "name": "Cache-Control", "value": "no-store", "reason": "cache_guard" }`.
 
 ### 8.5 Traceability
 
-The original response (status line, headers, body) is always captured and sent (`resp`, `dir = 1`). What the app received is sent as `rule.delivered` and `dir = 2`. The host shows the delivered response by default and toggles to the original with `o`.
+The original response (status line, headers, body) is always captured and sent (`resp`, `dir = 1`). What the app received is sent as `rule.delivered` and `dir = 2`. The host shows the delivered response by default and toggles to the original with `o`. Exports hold what the app received and keep the original next to it: `original` in `tail --json` lines (Appendix B), `_trafficPolice.original` in HAR files, which read back into the same exchange.
 
 ## 9. Timing marks
 
@@ -618,8 +628,8 @@ Frame types inside the gzip stream:
 
 - `testdata/protocol/v1/device/` holds device-to-host goldens written by the Java runtime (`ProtocolGoldenTest`, frozen clock): `<scenario>.frames` is every byte the host received on the connection, and `<scenario>.expected.json` is the encoder's reading of each frame, in order (`{"frame":"json","msg":{…}}`, or `{"frame":"body","seq","txn","dir","flags","ts","offset","len","crc32"}`).
 - The Rust side checks them twice. `traffic-police-proto` (`tests/goldens.rs`) decodes every frame, compares it with the expected reading, and round-trips each JSON message through the typed model: every field the runtime sends must come back with the same value (absent, `null`, `false`, `0` and empty values count as defaults). Fields and message types named `future_*` stand for a newer runtime and must be ignored. `traffic-police-core` (`tests/goldens.rs`) runs the frames through the normalizer and the session store and pins a summary of the resulting transactions, diagnostics and markers as snapshots.
-- Scenarios: handshake, replay and every control message (`rules_ack`, `config_ack`, `pong`, `replay`); GET with gzip JSON (timing marks, connection and TLS details); POST with a request body; chunked streaming response; body over the cap with `prog`; redirect (two hops, one call); failures (timeout with a cause, cancellation); `dropped` and `diag`; the largest body chunk (64 KiB); unknown fields and message types; protocol mismatch (`bye`); takeover (`bye replaced`).
-- Not stored: the 16 MiB maximum frame (generated in both test suites instead: the largest legal frame decodes, one byte more is rejected), and `rule` events with `delivered`, which the runtime emits only once it applies rules (Phase 3); the Rust decoder's handling of them is covered by unit tests of the documented examples.
+- Scenarios: handshake, replay and every control message (`rules_ack`, `config_ack`, `pong`, `replay`); GET with gzip JSON (timing marks, connection and TLS details); POST with a request body; chunked streaming response; body over the cap with `prog`; redirect (two hops, one call); failures (timeout with a cause, cancellation); `dropped` and `diag`; the largest body chunk (64 KiB); unknown fields and message types; protocol mismatch (`bye`); takeover (`bye replaced`); rules (`rule_rewrite`: a gzip response whose status, headers and decoded text a rule changes, with `delivered` and the `dir = 2` body, then a simulated failure).
+- Not stored: the 16 MiB maximum frame (generated in both test suites instead: the largest legal frame decodes, one byte more is rejected).
 - `testdata/protocol/v1/host/` holds host-to-device goldens written by Rust (`hello_ack`, `set_rules` with every matcher and action, `set_config`, `ping`, `bye`, each with its JSON). The Java test sends each to a live runtime and checks what it does: the configuration takes effect, `set_config` patches only the named fields, `ping` gets its `pong`, `set_rules` gets a `rules_ack` for its version, and `bye` closes the connection.
 - Regenerating goldens is an explicit task (`./gradlew :capture-core:updateProtocolGoldens`, `cargo test -p traffic-police-proto --test goldens -- --ignored update_goldens`), never a side effect.
 - Fuzzing: arbitrary bytes into the Rust frame decoder never panic, never allocate more than the 16 MiB limit, and always end in a frame, a clean "need more bytes", or an error.
@@ -693,7 +703,8 @@ Verified against `platform/packages/modules/adb` (Android 17), older `system/cor
 
 - `start` is null when the source sent no wall clock; `status` and `response` are null when no response arrived. Timing phases that did not happen (or were not observed) are `-1`.
 - `stack` holds the initiating stack, innermost first, as `class.method(file:line)`; `"stack_truncated":true` is added when the runtime cut it at its depth limit.
-- A failed transaction adds `"failure":{"class":…,"message":…,"phase":…,"canceled":…}`.
+- A failed transaction adds `"failure":{"class":…,"message":…,"phase":…,"canceled":…,"simulated":…}`; `simulated` is true when a rule's `fail` action threw it.
+- `rules` lists the ids of the rules that applied, each once. When they changed the response, `status` and `response` are what the app received, and `original` adds the response as the network gave it, in the same form plus its `status`.
 - `--bodies` adds `request.body` and `response.body` as `{"text": …}` for UTF-8 text or `{"base64": …}` otherwise (after Content-Encoding decoding).
 
 `tail --events` prints the captured stream instead, one line per message as the app sent it (the filter does not apply):
