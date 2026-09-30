@@ -41,4 +41,4 @@ expression: "detail(12.0, MEDIUM, path_ends(\".png\"), \"l\")"
 │ threshold                              ···          1.90 s              █ ││                                                             │
 │ events                  17 B json      200          970 ms              ▌ ││                                                             │
 ╰───────────────────────────────────────────────────────────────────────────╯╰─────────────────────────────────────────────────────────────╯
- ←→ tabs   ↑↓ move   / search   nN next/previous   Enter fold   p parsed/source   | jq   Esc close   ? help      ⚠ studio inspector present
+ ←→ tabs   ↑↓ move   / search   nN next/previous   y copy   w save   Enter fold   p parsed/source   ? help       ⚠ studio inspector present

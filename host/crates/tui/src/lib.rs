@@ -8,6 +8,7 @@ pub mod detail;
 pub mod graph;
 pub mod images;
 pub mod picker;
+pub mod share;
 pub mod terminal;
 pub mod theme;
 pub mod ui;

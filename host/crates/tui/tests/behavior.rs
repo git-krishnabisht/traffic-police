@@ -472,3 +472,55 @@ fn search_in_the_detail_pane_steps_through_matches() {
     press(&mut app, MEDIUM, "/zz<Esc>");
     assert_eq!(app.search.query, "true");
 }
+
+#[test]
+fn copy_as_curl_url_and_a_json_value() {
+    let mut app = app_at(40.0);
+    let to = goto(&mut app, MEDIUM, path_is("/api/sdk/init"));
+    press(&mut app, MEDIUM, &format!("{to}yc"));
+    let curl = app.copied.clone().expect("copied");
+    assert!(curl.starts_with("curl"), "{curl}");
+    assert!(curl.contains("--data-binary '{"), "the JSON request body goes inline: {curl}");
+    assert!(!curl.contains("Content-Length"), "{curl}");
+    press(&mut app, MEDIUM, "yu");
+    assert!(app.copied.as_deref().unwrap().ends_with("/api/sdk/init"));
+    // the value under the cursor in the response body
+    press(&mut app, MEDIUM, "<Enter>l");
+    press(&mut app, MEDIUM, "/pollIntervalMs<Enter>");
+    press(&mut app, MEDIUM, "yv");
+    assert_eq!(app.copied.as_deref(), Some("1500"));
+}
+
+#[test]
+fn save_a_body_and_export_har() {
+    use traffic_police_tui::app::Overlay;
+    let dir = std::env::temp_dir().join(format!("tp-share-test-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut app = app_at(40.0);
+    let to = goto(&mut app, MEDIUM, path_is("/api/sdk/init"));
+    press(&mut app, MEDIUM, &format!("{to}w"));
+    assert_eq!(app.overlay, Overlay::Prompt);
+    let default = app.prompt.as_ref().unwrap().input.value().to_string();
+    assert!(default.ends_with("init.json"), "{default}");
+    let body = dir.join("init.json");
+    app.prompt.as_mut().unwrap().input = tui_input::Input::new(body.display().to_string());
+    app.finish_prompt();
+    let saved = std::fs::read_to_string(&body).unwrap();
+    assert!(saved.contains("\"sessionId\""), "{saved}");
+
+    // all requests as HAR
+    press(&mut app, MEDIUM, "ea");
+    let har = dir.join("all.har");
+    app.prompt.as_mut().unwrap().input = tui_input::Input::new(har.display().to_string());
+    app.finish_prompt();
+    let doc: serde_json::Value = serde_json::from_slice(&std::fs::read(&har).unwrap()).unwrap();
+    let entries = doc["log"]["entries"].as_array().unwrap();
+    assert_eq!(entries.len(), app.view_store().len());
+    let init = entries.iter().find(|e| e["request"]["url"].as_str().unwrap().ends_with("/api/sdk/init")).unwrap();
+    assert_eq!(init["request"]["method"], "POST");
+    assert!(init["request"]["postData"]["text"].as_str().unwrap().starts_with('{'));
+    assert!(init["_trafficPolice"]["thread"]["name"].is_string());
+    assert!(init["timings"]["wait"].as_f64().unwrap() >= 0.0);
+    std::fs::remove_dir_all(&dir).unwrap();
+}

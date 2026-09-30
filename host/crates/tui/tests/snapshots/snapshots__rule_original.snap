@@ -41,4 +41,4 @@ expression: "detail(40.0, MEDIUM, modified(), \"lo\")"
 │ monitor                302 B json      200          1.65 s      ▐▏        ││   "enrollmentSim": null                                     │
 │ ✎ status?sessionI…     264 B json      200          327 ms      ▏         ││ }                                                           │
 ╰───────────────────────────────────────────────────────────────────────────╯╰─────────────────────────────────────────────────────────────╯
- ←→ tabs   ↑↓ move   / search   nN next/previous   Enter fold   p parsed/source   | jq   ? help               showing the original response
+ ←→ tabs   ↑↓ move   / search   nN next/previous   y copy   w save   Enter fold   p parsed/source   ? help    showing the original response

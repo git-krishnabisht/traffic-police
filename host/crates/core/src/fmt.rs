@@ -112,11 +112,44 @@ mod jiff_like {
         OFFSET_SECS.store(offset_secs, Ordering::Relaxed);
     }
 
+    pub fn offset_secs() -> i64 {
+        OFFSET_SECS.load(Ordering::Relaxed)
+    }
+
     pub fn local_hms(unix_ms: i64) -> Option<(i64, i64, i64, i64)> {
         let local_ms = unix_ms.checked_add(OFFSET_SECS.load(Ordering::Relaxed) * 1000)?;
         let day_ms = local_ms.rem_euclid(86_400_000);
         Some((day_ms / 3_600_000, (day_ms / 60_000) % 60, (day_ms / 1000) % 60, day_ms % 1000))
     }
+}
+
+/// ISO 8601 with milliseconds in the local offset: `2026-09-29T10:40:00.600+05:30`.
+pub fn iso8601(unix_ms: i64) -> String {
+    iso8601_at(unix_ms, jiff_like::offset_secs())
+}
+
+fn iso8601_at(unix_ms: i64, off: i64) -> String {
+    let local = unix_ms + off * 1000;
+    let days = local.div_euclid(86_400_000);
+    let day_ms = local.rem_euclid(86_400_000);
+    // civil date from days since 1970-01-01 (Howard Hinnant's algorithm)
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + i64::from(m <= 2);
+    let (h, min, s, ms) = (day_ms / 3_600_000, (day_ms / 60_000) % 60, (day_ms / 1000) % 60, day_ms % 1000);
+    let zone = if off == 0 {
+        "Z".to_string()
+    } else {
+        let a = off.abs();
+        format!("{}{:02}:{:02}", if off < 0 { '-' } else { '+' }, a / 3600, (a / 60) % 60)
+    };
+    format!("{y:04}-{m:02}-{d:02}T{h:02}:{min:02}:{s:02}.{ms:03}{zone}")
 }
 
 /// Set the UTC offset used by [`wall_clock`] (the UI resolves the local zone once at start-up).
@@ -127,6 +160,14 @@ pub fn set_local_offset_secs(offset_secs: i64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn iso_dates() {
+        assert_eq!(iso8601_at(1_790_658_600_600, 0), "2026-09-29T05:10:00.600Z");
+        assert_eq!(iso8601_at(1_790_658_600_600, 19_800), "2026-09-29T10:40:00.600+05:30");
+        assert_eq!(iso8601_at(0, -3600), "1969-12-31T23:00:00.000-01:00");
+        assert_eq!(iso8601_at(951_782_400_000, 0), "2000-02-29T00:00:00.000Z");
+    }
 
     #[test]
     fn formats() {

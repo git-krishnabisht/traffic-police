@@ -41,4 +41,4 @@ expression: "detail(12.0, MEDIUM, |t| t.status() == Some(500), \"l\")"
 │ threshold                              ···          1.90 s              █ ││     <address>envoy</address>                                │
 │ events                  17 B json      200          970 ms              ▌ ││   </body>                                                   │
 ╰───────────────────────────────────────────────────────────────────────────╯╰─────────────────────────────────────────────────────────────╯
- ←→ tabs   ↑↓ move   / search   nN next/previous   Enter fold   p parsed/source   | jq   Esc close   ? help      ⚠ studio inspector present
+ ←→ tabs   ↑↓ move   / search   nN next/previous   y copy   w save   Enter fold   p parsed/source   ? help       ⚠ studio inspector present

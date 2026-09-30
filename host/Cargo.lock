@@ -2665,6 +2665,7 @@ name = "traffic-police-tui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "base64",
  "bytes",
  "crossterm",
  "image",
@@ -2673,6 +2674,7 @@ dependencies = [
  "ratatui",
  "ratatui-image",
  "regex",
+ "serde_json",
  "tokio",
  "tokio-stream",
  "tracing",

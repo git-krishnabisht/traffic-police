@@ -51,4 +51,4 @@ expression: "detail(40.0, LARGE, modified(), \"G\")"
 │ monitor                                  302 B json      200          1.65 s            ██                 ││                                                                                        │
 │ ✎ status?sessionId=session_15bce3a5…     264 B json      200          327 ms            ▏                  ││ Rule              ✎ "Force verdict pass" changed this response: body edited (1 match), │
 ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────╯╰────────────────────────────────────────────────────────────────────────────────────────╯
- ←→ tabs   ↑↓ move   / search   nN next/previous   Enter fold   p parsed/source   | jq   Esc close   ? help                                                                  ⚠ studio inspector present
+ ←→ tabs   ↑↓ move   / search   nN next/previous   y copy   w save   Enter fold   p parsed/source   | jq   Esc close   ? help                                                ⚠ studio inspector present

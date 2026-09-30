@@ -41,4 +41,4 @@ expression: "frame(12.0, MEDIUM, \"xy\")"
 │                                                                                                                                          │
 │                                                                                                                                          │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
- Enter open   / filter   Space pause   m pin   c collapse   s sort   Tab next panel   q quit   ? help                       session cleared
+ Enter open   / filter   Space pause   m pin   y copy   e export   c collapse   s sort   Tab next panel   ? help            session cleared

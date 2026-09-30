@@ -41,4 +41,4 @@ expression: "frame(12.0, MEDIUM, \"2jl<Enter>\")"
 │                                                                           ││ Started           00:04.100  (05:10:04.100)                 │
 │                                                                           ││ Duration          61 ms                                     │
 ╰───────────────────────────────────────────────────────────────────────────╯╰─────────────────────────────────────────────────────────────╯
- ←→ tabs   ↑↓ move   / search   nN next/previous   Enter fold   p parsed/source   | jq   Esc close   ? help      ⚠ studio inspector present
+ ←→ tabs   ↑↓ move   / search   nN next/previous   y copy   w save   Enter fold   p parsed/source   ? help       ⚠ studio inspector present

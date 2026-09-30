@@ -54,6 +54,8 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         Overlay::Jq => draw_jq(f, app, footer),
         Overlay::Filter => draw_filter(f, app, footer),
         Overlay::Search => draw_search(f, app, footer),
+        Overlay::Menu => draw_menu(app, area, f.buffer_mut()),
+        Overlay::Prompt => draw_prompt(f, app, footer),
         Overlay::None => {}
     }
 }
@@ -1172,6 +1174,69 @@ fn draw_detail_pane(app: &mut App, r: Rect, buf: &mut Buffer) {
     }
 }
 
+/// A menu (copy, export): each entry with its key.
+fn draw_menu(app: &App, area: Rect, buf: &mut Buffer) {
+    let Some(menu) = &app.menu else { return };
+    let t = &app.theme;
+    let w = menu
+        .items
+        .iter()
+        .map(|i| i.label.width() as u16 + 8)
+        .max()
+        .unwrap_or(20)
+        .clamp(44, area.width.saturating_sub(8));
+    let r = centered(area, w, menu.items.len() as u16 + 4);
+    draw_box(buf, r, menu.title, t);
+    for (i, item) in menu.items.iter().enumerate() {
+        let y = r.y + 1 + i as u16;
+        let style = if i == menu.cursor { t.selected() } else { Style::default() };
+        if i == menu.cursor {
+            fill(buf, Rect { x: r.x + 1, y, width: r.width - 2, height: 1 }, style);
+        }
+        text(
+            buf,
+            r.x + 2,
+            y,
+            r.width - 4,
+            vec![
+                Span::styled(format!("{}  ", item.key), t.accent().add_modifier(Modifier::BOLD).patch(style)),
+                Span::styled(truncate(&item.label, (r.width - 7) as usize), t.text().patch(style)),
+            ],
+        );
+    }
+    text(
+        buf,
+        r.x + 2,
+        r.y + r.height - 2,
+        r.width - 4,
+        vec![Span::styled("a letter or Enter chooses · Esc closes", t.faint())],
+    );
+}
+
+/// A path typed in the bottom line.
+fn draw_prompt(f: &mut Frame, app: &mut App, r: Rect) {
+    let t = app.theme.clone();
+    let Some(p) = &app.prompt else { return };
+    let buf = f.buffer_mut();
+    fill(buf, r, t.selected());
+    let prompt = format!(" {} ▸ ", p.label);
+    let pw = prompt.width() as u16;
+    let note = "Enter save · Esc cancel";
+    let width = r.width.saturating_sub(pw + note.width() as u16 + 3) as usize;
+    let scroll = p.input.visual_scroll(width);
+    let value: String = p.input.value().chars().skip(scroll).collect();
+    text(
+        buf,
+        r.x,
+        r.y,
+        r.width.saturating_sub(note.width() as u16 + 2),
+        vec![Span::styled(prompt, t.accent().patch(t.selected())), Span::styled(value, t.text().patch(t.selected()))],
+    );
+    right_text(buf, r, r.y, vec![Span::styled(note, t.dim().patch(t.selected()))]);
+    let cx = (p.input.visual_cursor().max(scroll) - scroll) as u16;
+    f.set_cursor_position((r.x + pw + cx, r.y));
+}
+
 /// The search being typed for the detail pane, in the bottom line.
 fn draw_search(f: &mut Frame, app: &mut App, r: Rect) {
     let t = app.theme.clone();
@@ -1215,7 +1280,8 @@ fn hints(app: &App) -> Vec<(&'static [Action], &'static str)> {
         (Overlay::Columns { .. }, _, _) => {
             vec![(&[A::Up, A::Down], "move"), (&[A::Activate], "toggle"), (&[A::Back], "close")]
         }
-        (Overlay::ConfirmClear | Overlay::Filter | Overlay::Jq | Overlay::Search, ..) => vec![],
+        (Overlay::ConfirmClear | Overlay::Filter | Overlay::Jq | Overlay::Search | Overlay::Prompt, ..) => vec![],
+        (Overlay::Menu, ..) => vec![(&[A::Up, A::Down], "move"), (&[A::Activate], "choose"), (&[A::Back], "close")],
         (_, Focus::Graph, _) => vec![
             (&[A::Left, A::Right], "move"),
             (&[A::ZoomIn, A::ZoomOut], "zoom"),
@@ -1230,6 +1296,8 @@ fn hints(app: &App) -> Vec<(&'static [Action], &'static str)> {
             (&[A::Up, A::Down], "move"),
             (&[A::Find], "search"),
             (&[A::FindNext, A::FindPrev], "next/previous"),
+            (&[A::Copy], "copy"),
+            (&[A::Save], "save"),
             (&[A::Activate], "fold"),
             (&[A::Parsed], "parsed/source"),
             (&[A::Jq], "jq"),
@@ -1252,6 +1320,8 @@ fn hints(app: &App) -> Vec<(&'static [Action], &'static str)> {
             (&[A::Find], "filter"),
             (&[A::Pause], pause),
             (&[A::Pin], "pin"),
+            (&[A::Copy], "copy"),
+            (&[A::Export], "export"),
             (&[A::Collapse], "collapse"),
             (&[A::Sort], "sort"),
             (&[A::FocusNext], "next panel"),

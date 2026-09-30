@@ -41,4 +41,4 @@ expression: "press(&mut reattached, MEDIUM, \"\")"
 │ monitor                                                                   ···          500 ms                                          █▐│
 │ enroll                                                                    ···           96 ms                                          ▕ │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
- Enter open   / filter   Space pause   m pin   c collapse   s sort   Tab next panel   q quit   ? help            ⚠ studio inspector present
+ Enter open   / filter   Space pause   m pin   y copy   e export   c collapse   s sort   ? help                  ⚠ studio inspector present

@@ -18,6 +18,8 @@ pub fn app_with(secs: f64, cfg: DemoConfig, theme: Theme) -> App {
     let mut app = App::new(SessionStore::new(), theme);
     app.caps = Capabilities { pause: true, rules: false, live: true };
     app.rules = Some(demo_rules());
+    // never touch the real clipboard from tests
+    app.clipboard = traffic_police_tui::share::ClipboardMode::Off;
     let mut session = DemoSession::new(cfg, app.store.source_ids());
     let end = (secs * NS_PER_SEC as f64) as u64;
     let mut t = 0;

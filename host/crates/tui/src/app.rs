@@ -78,6 +78,10 @@ pub enum Overlay {
     Filter,
     /// Typing a search for the detail pane in the bottom line.
     Search,
+    /// A menu of choices (copy, export): `App::menu`.
+    Menu,
+    /// A path typed in the bottom line (save a body, export): `App::prompt`.
+    Prompt,
 }
 
 /// A search match in the detail pane: a row, and display columns in it.
@@ -293,6 +297,12 @@ pub struct App {
     pub jq_input: Input,
     pub filter_input: Input,
     pub search: DetailSearch,
+    pub menu: Option<crate::share::Menu>,
+    pub prompt: Option<crate::share::Prompt>,
+    /// Where copied text goes.
+    pub clipboard: crate::share::ClipboardMode,
+    /// The last text copied (also kept when the clipboard is off).
+    pub copied: Option<String>,
     pub search_input: Input,
     search_before: Option<String>,
     /// Where the text being typed stops parsing (the previous filter stays active meanwhile).
@@ -356,6 +366,10 @@ impl App {
             jq_input: Input::default(),
             filter_input: Input::default(),
             search: DetailSearch::default(),
+            menu: None,
+            prompt: None,
+            clipboard: crate::share::ClipboardMode::default(),
+            copied: None,
             search_input: Input::default(),
             search_before: None,
             filter_error: None,
@@ -767,6 +781,13 @@ impl App {
                 let q = self.search_input.value().to_string();
                 self.set_search(&q, true);
             }
+            Event::Paste(s) if self.overlay == Overlay::Prompt => {
+                if let Some(p) = &mut self.prompt {
+                    for c in s.chars().filter(|c| !c.is_control()) {
+                        p.input.handle_event(&Event::Key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE)));
+                    }
+                }
+            }
             Event::Paste(s) if self.overlay == Overlay::Filter => {
                 for c in s.chars().filter(|c| !c.is_control()) {
                     self.filter_input.handle_event(&Event::Key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE)));
@@ -854,6 +875,50 @@ impl App {
                         self.filter_input.handle_event(&Event::Key(k));
                         let text = self.filter_input.value().to_string();
                         self.apply_filter(&text);
+                    }
+                }
+                return;
+            }
+            Overlay::Menu => {
+                let Some(menu) = &mut self.menu else {
+                    self.overlay = Overlay::None;
+                    return;
+                };
+                let n = menu.items.len();
+                match k.code {
+                    KeyCode::Esc | KeyCode::Char('q') => {
+                        self.overlay = Overlay::None;
+                        self.menu = None;
+                    }
+                    KeyCode::Up | KeyCode::Char('k') if n > 0 => menu.cursor = (menu.cursor + n - 1) % n,
+                    KeyCode::Down | KeyCode::Char('j') if n > 0 => menu.cursor = (menu.cursor + 1) % n,
+                    KeyCode::Enter => {
+                        if let Some(item) = menu.items.get(menu.cursor) {
+                            let action = item.action.clone();
+                            self.run_menu(action);
+                        }
+                    }
+                    KeyCode::Char(c) => {
+                        if let Some(item) = menu.items.iter().find(|i| i.key == c) {
+                            let action = item.action.clone();
+                            self.run_menu(action);
+                        }
+                    }
+                    _ => {}
+                }
+                return;
+            }
+            Overlay::Prompt => {
+                match k.code {
+                    KeyCode::Esc => {
+                        self.overlay = Overlay::None;
+                        self.prompt = None;
+                    }
+                    KeyCode::Enter => self.finish_prompt(),
+                    _ => {
+                        if let Some(p) = &mut self.prompt {
+                            p.input.handle_event(&Event::Key(k));
+                        }
                     }
                 }
                 return;
@@ -981,7 +1046,10 @@ impl App {
             Action::Find | Action::FindNext | Action::FindPrev => {
                 self.flash("open a request (Enter) to search it; / in the list filters");
             }
-            Action::Palette | Action::Diff | Action::Copy | Action::Save | Action::Export => {
+            Action::Copy => self.open_copy_menu(),
+            Action::Save => self.open_save_prompt(),
+            Action::Export => self.open_export_menu(),
+            Action::Palette | Action::Diff => {
                 self.flash(format!("{}: coming later in Phase 2", a.info().title));
             }
             _ => match self.focus {

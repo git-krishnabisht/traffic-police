@@ -347,6 +347,8 @@ fn dump_frame(args: &DemoArgs, spec: &str, theme: Theme) -> anyhow::Result<()> {
         None => Vec::new(),
     };
     let mut app = demo_app(theme);
+    // a rendering tool: copying must not reach the real clipboard
+    app.clipboard = traffic_police_tui::share::ClipboardMode::Off;
     let mut session = DemoSession::new(demo_config(args, None)?, app.store.source_ids());
     let end = (secs * NS_PER_SEC as f64) as u64;
     let step = 25 * NS_PER_MS;

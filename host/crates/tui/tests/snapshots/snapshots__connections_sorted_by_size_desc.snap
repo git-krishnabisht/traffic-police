@@ -41,4 +41,4 @@ expression: "frame(12.0, MEDIUM, \"ssS\")"
 │ threshold                                                                 ···          1.90 s                                        ▐██▐│
 │ config                                                      0 B           302           61 ms                                ▏           │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
- Enter open   / filter   Space pause   m pin   c collapse   s sort   Tab next panel   q quit   ? help            sorted by size, descending
+ Enter open   / filter   Space pause   m pin   y copy   e export   c collapse   s sort   ? help                  sorted by size, descending
