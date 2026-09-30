@@ -72,6 +72,7 @@ class MainActivity : Activity() {
             "all" -> runAll()
             "poll" -> startPolling()
             "overhead" -> launchScenario("overhead measurement") { scenarios.overhead() }
+            "security" -> launchScenario("connect to our own capture socket") { scenarios.selfConnect() }
         }
     }
 

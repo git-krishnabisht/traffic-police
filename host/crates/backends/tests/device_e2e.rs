@@ -484,6 +484,20 @@ async fn sample_app_end_to_end() {
     // run 1 is still there, untouched
     check_main_run(&mut report, &session.store, main1, "run 1 after the relaunch");
 
+    // another uid (here: the app itself, as another app would) is refused without a byte
+    adb.shell(id, "logcat -c").await.unwrap();
+    adb.shell(id, "am start -n io.trafficpolice.sample/.MainActivity --es run security").await.unwrap();
+    let mut verdict = String::new();
+    for _ in 0..20 {
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        let log = adb.shell(id, "logcat -d -s TrafficPoliceSample").await.unwrap().stdout_text();
+        if let Some(line) = log.lines().find(|l| l.contains("security:") || l.contains("SECURITY FAILURE")) {
+            verdict = line.to_string();
+            break;
+        }
+    }
+    report.check(verdict.contains("closed without a byte"), || format!("same-uid connection: {verdict:?}"));
+
     // quit: each backend says goodbye and removes its forward
     drop(quit);
     for t in tasks {

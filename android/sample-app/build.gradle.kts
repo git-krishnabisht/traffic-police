@@ -24,6 +24,14 @@ android {
             // release builds use capture-noop; signed with the debug key so they install for testing
             signingConfig = signingConfigs.getByName("debug")
         }
+        // A release-like build that wrongly ships the real capture library: capture must refuse
+        // to start because the app is not debuggable (ARCHITECTURE.md §7).
+        create("nondebuggable") {
+            initWith(getByName("release"))
+            applicationIdSuffix = ".nondebuggable"
+            isDebuggable = false
+            matchingFallbacks += listOf("release")
+        }
     }
 
     compileOptions {
@@ -39,6 +47,7 @@ android {
 dependencies {
     debugImplementation(project(":capture"))
     releaseImplementation(project(":capture-noop"))
+    "nondebuggableImplementation"(project(":capture"))
 
     implementation(libs.okhttp.latest)
     implementation(libs.okhttp.tls)

@@ -269,6 +269,34 @@ class Scenarios(private val context: Context, private val log: (String) -> Unit)
             "added ${us(with[n / 2] - without[n / 2])} at the median, ${us(with[n * 9 / 10] - without[n * 9 / 10])} at p90")
     }
 
+    /**
+     * Connects to this process's own capture socket as the app's uid, as another app on the
+     * device could try: the runtime must close the connection without sending a byte (only adb's
+     * shell uid and root may connect). Not part of [runAll].
+     */
+    suspend fun selfConnect() = withContext(Dispatchers.IO) {
+        val name = "traffic-police_${context.packageName}_${android.os.Process.myPid()}"
+        val socket = android.net.LocalSocket()
+        try {
+            socket.connect(android.net.LocalSocketAddress(name, android.net.LocalSocketAddress.Namespace.ABSTRACT))
+            socket.soTimeout = 3000
+            val first = try {
+                socket.inputStream.read()
+            } catch (e: IOException) {
+                -1
+            }
+            if (first == -1) {
+                log("security: a connection from uid ${android.os.Process.myUid()} was closed without a byte (only shell and root may connect)")
+            } else {
+                log("SECURITY FAILURE: the capture socket answered uid ${android.os.Process.myUid()}")
+            }
+        } catch (e: IOException) {
+            log("security: cannot connect to @$name: ${e.message} (capture not running?)")
+        } finally {
+            socket.close()
+        }
+    }
+
     private suspend fun secondProcess() {
         context.startService(Intent(context, WorkerService::class.java).putExtra("port", Backend.http.port))
         delay(1500)
