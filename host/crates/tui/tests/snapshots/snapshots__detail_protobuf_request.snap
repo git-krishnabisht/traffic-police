@@ -41,4 +41,4 @@ expression: "detail(12.0, MEDIUM, path_is(\"/v1/metrics\"), \"ll\")"
 │ threshold                              ···          1.90 s              █ ││   3: 1790658605200                                          │
 │ events                  17 B json      200          970 ms              ▌ ││ }                                                           │
 ╰───────────────────────────────────────────────────────────────────────────╯╰─────────────────────────────────────────────────────────────╯
- ←→ tabs   ↑↓ move   Enter fold   p parsed/source   | jq   Esc close   ? help                                    ⚠ studio inspector present
+ ←→ tabs   ↑↓ move   / search   nN next/previous   Enter fold   p parsed/source   | jq   Esc close   ? help      ⚠ studio inspector present

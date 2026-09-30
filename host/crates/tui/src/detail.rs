@@ -636,6 +636,31 @@ fn unicode_width_graphemes(s: &str) -> impl Iterator<Item = &str> {
 }
 
 /// Render the pane's content rows for the current tab into `area`, with the Overview preview.
+/// A row's text as drawn (before horizontal scrolling), for search; `None` for rows that are
+/// not text (the timing bar, images).
+pub fn row_text(app: &mut App, doc: &Doc, i: usize, txn: TxnIdx) -> Option<String> {
+    match doc.row(i)? {
+        DocRow::Line(l) => Some(l.spans.iter().map(|s| s.content.as_ref()).collect()),
+        DocRow::Body(bi) => {
+            let dir = doc.body_dir?;
+            let parsed = app.detail.parsed;
+            app.body_view(txn, dir).map(|v| v.plain(bi, parsed))
+        }
+        DocRow::Frame { index } => {
+            let t = app.view_store().txn(txn);
+            let f = t.stack.get(index)?;
+            let lead = if is_framework(&f.c) { "    at " } else { "  at " };
+            let loc = match (&f.f, f.l) {
+                (Some(file), Some(l)) => format!("({file}:{l})"),
+                (Some(file), None) => format!("({file})"),
+                _ => "(Unknown Source)".into(),
+            };
+            Some(format!("{lead}{}.{}{loc}", f.c, f.m))
+        }
+        DocRow::FrameRun { .. } | DocRow::TimingBar | DocRow::Image { .. } | DocRow::ImageCont => None,
+    }
+}
+
 pub fn draw(app: &mut App, area: Rect, buf: &mut Buffer) {
     let Some(txn) = app.selected else { return };
     let theme = app.theme.clone();
@@ -659,6 +684,9 @@ pub fn draw(app: &mut App, area: Rect, buf: &mut Buffer) {
     if len == 0 {
         return;
     }
+    app.refresh_search(&doc);
+    let hits = app.search.matches.clone();
+    let current_hit = app.search.current;
     app.detail.cursor = app.detail.cursor.min(len - 1);
     app.clamp_detail_scroll();
     let scroll = app.detail.scroll.min(len.saturating_sub(1));
@@ -757,6 +785,18 @@ pub fn draw(app: &mut App, area: Rect, buf: &mut Buffer) {
                 }
             }
             Some(DocRow::ImageCont) | None => {}
+        }
+        // search matches on this row, over what was drawn
+        let first = hits.partition_point(|m| m.row < i);
+        for (k, m) in hits.iter().enumerate().skip(first).take_while(|(_, m)| m.row == i) {
+            let style = theme.search_hit(current_hit == Some(k));
+            let from = m.start.saturating_sub(usize::from(hs));
+            let to = m.end.saturating_sub(usize::from(hs)).min(usize::from(area.width));
+            for x in from..to {
+                if let Some(c) = buf.cell_mut((area.x + x as u16, y)) {
+                    c.set_style(style);
+                }
+            }
         }
     }
     // JSON path of the cursor line

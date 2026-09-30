@@ -383,6 +383,21 @@ impl BodyView {
         }
     }
 
+    /// Visible line `i` as plain text, for search (columns match [`BodyView::line`]).
+    pub fn plain(&self, i: usize, parsed: bool) -> String {
+        if parsed && let Some(jq) = &self.jq {
+            return jq.lines.get(i).map(|l| l.text.clone()).unwrap_or_default();
+        }
+        match self.content(parsed) {
+            Content::Json(doc) => {
+                self.visible.get(i).map(|&l| doc.lines[l as usize].line.text.clone()).unwrap_or_default()
+            }
+            Content::Lines(lines) => lines.get(i).map(|l| l.text.clone()).unwrap_or_default(),
+            Content::Hex => hex::line(&self.decoded.bytes, i),
+            Content::Image(_) | Content::Empty => String::new(),
+        }
+    }
+
     /// Replace the parsed view with jq outputs (`Ok`) or an error message (`Err`).
     pub fn set_jq(&mut self, filter: String, result: Result<(Vec<String>, bool), String>) {
         let lines = match result {

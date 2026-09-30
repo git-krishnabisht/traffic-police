@@ -53,13 +53,14 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         Overlay::ConfirmClear => draw_confirm(app, area, buf),
         Overlay::Jq => draw_jq(f, app, footer),
         Overlay::Filter => draw_filter(f, app, footer),
+        Overlay::Search => draw_search(f, app, footer),
         Overlay::None => {}
     }
 }
 
 /// A rounded box, its border highlighted when the panel has focus. Returns the inside.
 fn panel(buf: &mut Buffer, r: Rect, focused: bool, t: &Theme) -> Rect {
-    let style = if focused { t.accent() } else { t.faint() };
+    let style = t.border(focused);
     ratatui::widgets::Block::bordered()
         .border_type(ratatui::widgets::BorderType::Rounded)
         .border_style(style)
@@ -1154,6 +1155,53 @@ fn draw_detail_pane(app: &mut App, r: Rect, buf: &mut Buffer) {
     }
     let content = Rect { x: inner.x + 1, width: inner.width.saturating_sub(1), ..inner };
     detail::draw(app, content, buf);
+    // bottom border: the search, and where in its matches the cursor is
+    if !app.search.query.is_empty() {
+        let n = app.search.matches.len();
+        let at = match app.search.current {
+            _ if n == 0 => "no matches".to_string(),
+            Some(c) => format!("{} of {n}", c + 1),
+            None => format!("{n} matches"),
+        };
+        let label = vec![
+            Span::styled("search ", t.dim()),
+            Span::styled(truncate(&app.search.query, 30), t.accent()),
+            Span::styled(format!(" · {at}"), t.dim()),
+        ];
+        border_labels(buf, r, r.y + r.height.saturating_sub(1), false, vec![label]);
+    }
+}
+
+/// The search being typed for the detail pane, in the bottom line.
+fn draw_search(f: &mut Frame, app: &mut App, r: Rect) {
+    let t = app.theme.clone();
+    let buf = f.buffer_mut();
+    fill(buf, r, t.selected());
+    let prompt = " search ▸ ";
+    let pw = prompt.width() as u16;
+    let n = app.search.matches.len();
+    let note = if app.search.query.is_empty() {
+        "type to search this tab · Esc cancel".to_string()
+    } else if n == 0 {
+        "no matches".to_string()
+    } else {
+        format!("{n} match{} · Enter keep · Esc cancel", if n == 1 { "" } else { "es" })
+    };
+    let note_w = (note.width() as u16 + 2).min(r.width / 2);
+    let width = r.width.saturating_sub(pw + note_w + 1) as usize;
+    let scroll = app.search_input.visual_scroll(width);
+    let value: String = app.search_input.value().chars().skip(scroll).collect();
+    text(
+        buf,
+        r.x,
+        r.y,
+        r.width.saturating_sub(note_w),
+        vec![Span::styled(prompt, t.accent().patch(t.selected())), Span::styled(value, t.text().patch(t.selected()))],
+    );
+    let style = if n == 0 && !app.search.query.is_empty() { t.warn() } else { t.dim() };
+    right_text(buf, r, r.y, vec![Span::styled(note, style.patch(t.selected()))]);
+    let cx = (app.search_input.visual_cursor().max(scroll) - scroll) as u16;
+    f.set_cursor_position((r.x + pw + cx, r.y));
 }
 
 // --- status bar and overlays ---------------------------------------------------------------------
@@ -1167,7 +1215,7 @@ fn hints(app: &App) -> Vec<(&'static [Action], &'static str)> {
         (Overlay::Columns { .. }, _, _) => {
             vec![(&[A::Up, A::Down], "move"), (&[A::Activate], "toggle"), (&[A::Back], "close")]
         }
-        (Overlay::ConfirmClear | Overlay::Filter | Overlay::Jq, ..) => vec![],
+        (Overlay::ConfirmClear | Overlay::Filter | Overlay::Jq | Overlay::Search, ..) => vec![],
         (_, Focus::Graph, _) => vec![
             (&[A::Left, A::Right], "move"),
             (&[A::ZoomIn, A::ZoomOut], "zoom"),
@@ -1180,6 +1228,8 @@ fn hints(app: &App) -> Vec<(&'static [Action], &'static str)> {
         (_, Focus::Detail, _) => vec![
             (&[A::Left, A::Right], "tabs"),
             (&[A::Up, A::Down], "move"),
+            (&[A::Find], "search"),
+            (&[A::FindNext, A::FindPrev], "next/previous"),
             (&[A::Activate], "fold"),
             (&[A::Parsed], "parsed/source"),
             (&[A::Jq], "jq"),

@@ -19,6 +19,7 @@ use traffic_police_core::store::{GraphSource, SessionStore};
 use traffic_police_proto::msg::RuleSet;
 use tui_input::Input;
 use tui_input::backend::crossterm::EventHandler;
+use unicode_width::UnicodeWidthStr;
 
 use crate::actions::{Action, Keymap};
 use crate::bodycache::{BodyCache, BodyJob, Lookup};
@@ -75,6 +76,27 @@ pub enum Overlay {
     Jq,
     /// Typing a filter in the bottom line.
     Filter,
+    /// Typing a search for the detail pane in the bottom line.
+    Search,
+}
+
+/// A search match in the detail pane: a row, and display columns in it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SearchMatch {
+    pub row: usize,
+    pub start: usize,
+    pub end: usize,
+}
+
+/// Search in the detail pane (`/` there): matches of the current tab, found again when the
+/// request, the tab, the view or the body changes.
+#[derive(Debug, Clone, Default)]
+pub struct DetailSearch {
+    pub query: String,
+    pub matches: Vec<SearchMatch>,
+    pub current: Option<usize>,
+    /// What the matches were found in: (request, tab, parsed, rows).
+    found_in: Option<(TxnIdx, Tab, bool, usize)>,
 }
 
 /// Graph zoom levels (visible window width).
@@ -270,6 +292,9 @@ pub struct App {
     pub overlay: Overlay,
     pub jq_input: Input,
     pub filter_input: Input,
+    pub search: DetailSearch,
+    pub search_input: Input,
+    search_before: Option<String>,
     /// Where the text being typed stops parsing (the previous filter stays active meanwhile).
     pub filter_error: Option<ParseError>,
     /// The filter before editing started, for Esc.
@@ -330,6 +355,9 @@ impl App {
             overlay: Overlay::None,
             jq_input: Input::default(),
             filter_input: Input::default(),
+            search: DetailSearch::default(),
+            search_input: Input::default(),
+            search_before: None,
             filter_error: None,
             filter_before: None,
             message: None,
@@ -732,6 +760,13 @@ impl App {
                     self.jq_input.handle_event(&Event::Key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE)));
                 }
             }
+            Event::Paste(s) if self.overlay == Overlay::Search => {
+                for c in s.chars().filter(|c| !c.is_control()) {
+                    self.search_input.handle_event(&Event::Key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE)));
+                }
+                let q = self.search_input.value().to_string();
+                self.set_search(&q, true);
+            }
             Event::Paste(s) if self.overlay == Overlay::Filter => {
                 for c in s.chars().filter(|c| !c.is_control()) {
                     self.filter_input.handle_event(&Event::Key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE)));
@@ -819,6 +854,27 @@ impl App {
                         self.filter_input.handle_event(&Event::Key(k));
                         let text = self.filter_input.value().to_string();
                         self.apply_filter(&text);
+                    }
+                }
+                return;
+            }
+            Overlay::Search => {
+                match k.code {
+                    KeyCode::Esc => {
+                        let before = self.search_before.take().unwrap_or_default();
+                        self.search_input = Input::new(before.clone());
+                        self.set_search(&before, false);
+                        self.overlay = Overlay::None;
+                    }
+                    KeyCode::Enter => {
+                        self.search_before = None;
+                        self.overlay = Overlay::None;
+                        self.report_search();
+                    }
+                    _ => {
+                        self.search_input.handle_event(&Event::Key(k));
+                        let q = self.search_input.value().to_string();
+                        self.set_search(&q, true);
                     }
                 }
                 return;
@@ -914,14 +970,18 @@ impl App {
                 }
             }
             Action::Pin => self.toggle_pin(),
-            Action::Palette
-            | Action::Find
-            | Action::FindNext
-            | Action::FindPrev
-            | Action::Diff
-            | Action::Copy
-            | Action::Save
-            | Action::Export => {
+            Action::Find if self.detail_open => {
+                self.search_before = Some(self.search.query.clone());
+                self.search_input = Input::new(self.search.query.clone());
+                self.overlay = Overlay::Search;
+            }
+            Action::FindNext | Action::FindPrev if self.focus == Focus::Detail => {
+                self.step_search(if a == Action::FindNext { 1 } else { -1 });
+            }
+            Action::Find | Action::FindNext | Action::FindPrev => {
+                self.flash("open a request (Enter) to search it; / in the list filters");
+            }
+            Action::Palette | Action::Diff | Action::Copy | Action::Save | Action::Export => {
                 self.flash(format!("{}: coming later in Phase 2", a.info().title));
             }
             _ => match self.focus {
@@ -950,6 +1010,96 @@ impl App {
                 self.follow_list = self.is_live() && !self.detail_open;
             }
             Err(e) => self.filter_error = Some(e),
+        }
+    }
+
+    /// Sets the detail search; `jump` moves to the first match from the cursor on.
+    fn set_search(&mut self, q: &str, jump: bool) {
+        self.search.query = q.to_string();
+        self.search.found_in = None;
+        let doc = detail::build_doc(self);
+        self.refresh_search(&doc);
+        if jump && !self.search.matches.is_empty() {
+            let cur = self.detail.cursor;
+            let k = self.search.matches.iter().position(|m| m.row >= cur).unwrap_or(0);
+            self.go_to_match(k);
+        }
+    }
+
+    /// Finds the matches again if what the pane shows changed since they were found.
+    pub fn refresh_search(&mut self, doc: &detail::Doc) {
+        let Some(txn) = self.selected else { return };
+        if self.search.query.is_empty() {
+            self.search.matches.clear();
+            self.search.current = None;
+            return;
+        }
+        let key = (txn, self.detail.tab, self.detail.parsed, doc.len());
+        if self.search.found_in == Some(key) {
+            return;
+        }
+        self.search.found_in = Some(key);
+        self.search.matches.clear();
+        let Ok(re) = regex::RegexBuilder::new(&regex::escape(&self.search.query)).case_insensitive(true).build() else {
+            return;
+        };
+        for i in 0..doc.len() {
+            let Some(text) = detail::row_text(self, doc, i, txn) else { continue };
+            for m in re.find_iter(&text) {
+                let start = text[..m.start()].width();
+                let end = start + m.as_str().width();
+                self.search.matches.push(SearchMatch { row: i, start, end });
+            }
+        }
+        if self.search.current.is_some_and(|c| c >= self.search.matches.len()) {
+            self.search.current = None;
+        }
+    }
+
+    fn go_to_match(&mut self, k: usize) {
+        let Some(m) = self.search.matches.get(k).copied() else { return };
+        self.search.current = Some(k);
+        self.focus = Focus::Detail;
+        self.detail.cursor = m.row;
+        self.clamp_detail_scroll();
+        // keep a match on a long line in view
+        let hs = usize::from(self.detail.hscroll);
+        let width = self.area.width.saturating_sub(4) as usize / 2;
+        if m.start < hs || m.end > hs + width.max(20) {
+            self.detail.hscroll = m.start.saturating_sub(10).min(u16::MAX as usize) as u16;
+        }
+    }
+
+    fn step_search(&mut self, dir: i32) {
+        if self.search.query.is_empty() {
+            self.flash("/ searches the detail pane");
+            return;
+        }
+        let n = self.search.matches.len();
+        if n == 0 {
+            self.flash(format!("no matches for {:?}", self.search.query));
+            return;
+        }
+        let cur = self.detail.cursor;
+        let k = match (self.search.current, dir) {
+            (Some(c), 1) if self.search.matches[c].row == cur => (c + 1) % n,
+            (Some(c), _) if self.search.matches[c].row == cur => (c + n - 1) % n,
+            (_, 1) => self.search.matches.iter().position(|m| m.row > cur).unwrap_or(0),
+            _ => self.search.matches.iter().rposition(|m| m.row < cur).unwrap_or(n - 1),
+        };
+        self.go_to_match(k);
+        self.report_search();
+    }
+
+    fn report_search(&mut self) {
+        let n = self.search.matches.len();
+        if self.search.query.is_empty() {
+            return;
+        }
+        match self.search.current {
+            _ if n == 0 => self.flash(format!("no matches for {:?}", self.search.query)),
+            Some(c) => self.flash(format!("match {} of {n} · n next · N previous", c + 1)),
+            None => self.flash(format!("{n} matches · n next · N previous")),
         }
     }
 

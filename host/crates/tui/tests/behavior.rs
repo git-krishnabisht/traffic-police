@@ -452,3 +452,23 @@ fn body_filters_fill_in_from_the_background() {
     assert!(!paths.is_empty());
     assert!(paths.iter().all(|p| *p == "/api/sdk/init"), "{paths:?}");
 }
+
+#[test]
+fn search_in_the_detail_pane_steps_through_matches() {
+    let mut app = app_at(40.0);
+    let to = goto(&mut app, MEDIUM, path_is("/api/sdk/init"));
+    // Response tab of init: its JSON mentions "feature" keys several times
+    press(&mut app, MEDIUM, &format!("{to}<Enter>l/true<Enter>"));
+    let n = app.search.matches.len();
+    assert!(n >= 2, "{n} matches");
+    let first = app.search.current.expect("jumped to a match");
+    assert_eq!(app.detail.cursor, app.search.matches[first].row);
+    press(&mut app, MEDIUM, "n");
+    let second = app.search.current.unwrap();
+    assert_eq!(second, (first + 1) % n);
+    press(&mut app, MEDIUM, "N");
+    assert_eq!(app.search.current, Some(first));
+    // Esc while typing restores the previous search
+    press(&mut app, MEDIUM, "/zz<Esc>");
+    assert_eq!(app.search.query, "true");
+}

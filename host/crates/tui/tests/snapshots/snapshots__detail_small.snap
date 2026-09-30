@@ -31,4 +31,4 @@ expression: "detail(12.0, SMALL, path_is(\"/api/sdk/init\"), \"l\")"
 │   "ok": true,                                                                                    │
 │   "sessionId": "session_15bce3a5a963c9fde0ebe700e9d76981",                                       │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
- ←→ tabs   ↑↓ move   Enter fold   p parsed/source   | jq   ? help        ⚠ studio inspector present
+ ←→ tabs   ↑↓ move   / search   nN next/previous   ? help                ⚠ studio inspector present

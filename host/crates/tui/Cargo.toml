@@ -16,6 +16,7 @@ ratatui-image.workspace = true
 image.workspace = true
 tui-input.workspace = true
 unicode-width.workspace = true
+regex.workspace = true
 jiff.workspace = true
 tokio.workspace = true
 tokio-stream.workspace = true

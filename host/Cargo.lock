@@ -2672,6 +2672,7 @@ dependencies = [
  "jiff",
  "ratatui",
  "ratatui-image",
+ "regex",
  "tokio",
  "tokio-stream",
  "tracing",

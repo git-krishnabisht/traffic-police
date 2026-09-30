@@ -41,4 +41,4 @@ expression: "detail(12.0, MEDIUM, |t| t.hop > 0, \"\")"
 │ threshold                              ···          1.90 s              █ ││ TLS               TLSv1.3 · TLS_AES_128_GCM_SHA256          │
 │ events                  17 B json      200          970 ms              ▌ ││ Certificate       CN=*.example.app · issued by WE1          │
 ╰───────────────────────────────────────────────────────────────────────────╯╰─────────────────────────────────────────────────────────────╯
- ←→ tabs   ↑↓ move   Enter fold   p parsed/source   | jq   Esc close   ? help                                    ⚠ studio inspector present
+ ←→ tabs   ↑↓ move   / search   nN next/previous   Enter fold   p parsed/source   | jq   Esc close   ? help      ⚠ studio inspector present

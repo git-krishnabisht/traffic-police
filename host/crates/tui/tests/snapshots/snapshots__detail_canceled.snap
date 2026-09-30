@@ -41,4 +41,4 @@ expression: "detail(12.0, MEDIUM, path_ends(\"fonts.json\"), \"\")"
 │ status?sessionId=…     263 B json      200          174 ms              ▏ ││ Certificate       CN=*.example.app · issued by WE1          │
 │ fonts.json                             canceled     380 ms              ▏ ││ Started           00:11.200  (05:10:11.200)                 │
 ╰───────────────────────────────────────────────────────────────────────────╯╰─────────────────────────────────────────────────────────────╯
- ←→ tabs   ↑↓ move   Enter fold   p parsed/source   | jq   Esc close   ? help                                    ⚠ studio inspector present
+ ←→ tabs   ↑↓ move   / search   nN next/previous   Enter fold   p parsed/source   | jq   Esc close   ? help      ⚠ studio inspector present

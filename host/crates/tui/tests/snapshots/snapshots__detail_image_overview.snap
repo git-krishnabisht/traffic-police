@@ -41,4 +41,4 @@ expression: "detail(12.0, MEDIUM, path_ends(\".png\"), \"\")"
 │ threshold                              ···          1.90 s              █ ││ Certificate       CN=*.example.app · issued by WE1          │
 │ events                  17 B json      200          970 ms              ▌ ││ Started           00:03.000  (05:10:03.000)                 │
 ╰───────────────────────────────────────────────────────────────────────────╯╰─────────────────────────────────────────────────────────────╯
- ←→ tabs   ↑↓ move   Enter fold   p parsed/source   | jq   Esc close   ? help                                    ⚠ studio inspector present
+ ←→ tabs   ↑↓ move   / search   nN next/previous   Enter fold   p parsed/source   | jq   Esc close   ? help      ⚠ studio inspector present

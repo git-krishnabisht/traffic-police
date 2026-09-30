@@ -41,4 +41,4 @@ expression: "detail(40.0, MEDIUM, path_ends(\".tflite\"), \"l\")"
 │ monitor                302 B json      200          1.44 s ▕▍             ││ 000000b0  e1 c8 88 43 f0 0c 74 62  7a 86 09 ee f5 84 93 8f  │
 │ face-liveness-v3.…    5.0 MB binary    200          6.38 s  ███           ││ 000000c0  ee 26 fe 1f 60 51 72 44  0e 19 d4 58 3c fc 22 9b  │
 ╰───────────────────────────────────────────────────────────────────────────╯╰─────────────────────────────────────────────────────────────╯
- ←→ tabs   ↑↓ move   Enter fold   p parsed/source   | jq   Esc close   ? help                                    ⚠ studio inspector present
+ ←→ tabs   ↑↓ move   / search   nN next/previous   Enter fold   p parsed/source   | jq   Esc close   ? help      ⚠ studio inspector present

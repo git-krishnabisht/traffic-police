@@ -86,6 +86,9 @@ struct RgbSet {
     tag: (u8, u8, u8),
     attr: (u8, u8, u8),
     graph_sel: (u8, u8, u8),
+    /// Search matches in the detail pane, and the current one.
+    hit_bg: (u8, u8, u8),
+    hit_current_bg: (u8, u8, u8),
 }
 
 const DARK: RgbSet = RgbSet {
@@ -110,6 +113,8 @@ const DARK: RgbSet = RgbSet {
     tag: (224, 108, 117),
     attr: (209, 154, 102),
     graph_sel: (52, 58, 80),
+    hit_bg: (110, 92, 40),
+    hit_current_bg: (229, 192, 90),
 };
 
 const LIGHT: RgbSet = RgbSet {
@@ -134,6 +139,8 @@ const LIGHT: RgbSet = RgbSet {
     tag: (160, 30, 50),
     attr: (150, 90, 20),
     graph_sel: (222, 230, 246),
+    hit_bg: (255, 236, 170),
+    hit_current_bg: (255, 196, 60),
 };
 
 fn ansi256((r, g, b): (u8, u8, u8)) -> u8 {
@@ -260,6 +267,20 @@ impl Theme {
     }
     pub fn wait(&self) -> Color {
         if self.mono() { Color::Reset } else { self.c(self.rgb.wait) }
+    }
+    /// A search match; the current one stands out more.
+    pub fn search_hit(&self, current: bool) -> Style {
+        if self.mono() {
+            return if current {
+                Style::default().add_modifier(Modifier::REVERSED | Modifier::BOLD)
+            } else {
+                Style::default().add_modifier(Modifier::UNDERLINED)
+            };
+        }
+        let bg = if current { self.rgb.hit_current_bg } else { self.rgb.hit_bg };
+        let fg = if current { (20, 20, 20) } else { self.rgb.fg };
+        let s = Style::default().bg(self.c(bg)).fg(self.c(fg));
+        if current { s.add_modifier(Modifier::BOLD) } else { s }
     }
     pub fn marker(&self) -> Style {
         if self.mono() { Style::default().add_modifier(Modifier::BOLD) } else { self.fg(self.rgb.marker) }
