@@ -44,6 +44,7 @@ pub enum Action {
     FindNext,
     FindPrev,
     Pin,
+    NewRule,
     Diff,
     Copy,
     Save,
@@ -151,6 +152,14 @@ pub const ACTIONS: &[Info] = &[
     info!(FindNext, "find-next", Detail, "next match", "Next search match", ["n"]),
     info!(FindPrev, "find-previous", Detail, "previous match", "Previous search match", ["N"]),
     info!(Pin, "pin", List, "pin", "Pin or unpin the request", ["m"]),
+    info!(
+        NewRule,
+        "new-rule",
+        List,
+        "new rule",
+        "New rule matching the request (in .traffic-police/rules.toml)",
+        ["r"]
+    ),
     info!(Diff, "diff", List, "diff", "Mark for diff (the second mark opens the diff)", ["d"]),
     info!(Copy, "copy", Session, "copy", "Copy: cURL, URL, headers, body, value", ["y"]),
     info!(Save, "save", Session, "save body", "Save a body to a file", ["w"]),

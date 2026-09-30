@@ -50,6 +50,10 @@ struct Cli {
     /// Write the log here instead of the default location.
     #[arg(long, global = true, value_name = "PATH")]
     log_file: Option<PathBuf>,
+    /// The project whose .traffic-police/ (rules.toml, project.toml) to use; by default the
+    /// nearest one at or above the working directory.
+    #[arg(long, global = true, value_name = "DIR")]
+    project: Option<PathBuf>,
 }
 
 /// Which app to watch.
@@ -223,10 +227,14 @@ fn main() -> anyhow::Result<()> {
     let log_file = cli.log_file.clone();
     match cli.command {
         Some(Command::Jq { .. }) => unreachable!("handled above"),
-        Some(Command::Open { ref file }) => ui_run(log_file.as_deref(), run_open(file, theme, images, &settings)),
+        Some(Command::Open { ref file }) => {
+            ui_run(log_file.as_deref(), run_open(file, theme, images, &settings, cli.project.as_deref()))
+        }
         Some(Command::Tail(args)) => headless_run(log_file.as_deref(), &settings, async {
             let filter = headless::parse_filter(&args.filter.join(" "))?;
-            let source = headless_source(&args.target, &cli.target, args.demo, "tail", &settings).await?;
+            let source =
+                headless_source(&args.target, &cli.target, args.demo, "tail", &settings, cli.project.as_deref())
+                    .await?;
             let format = match (args.events, args.json) {
                 (true, _) => headless::TailFormat::Events { bodies: args.bodies },
                 (false, true) => headless::TailFormat::Json { bodies: args.bodies },
@@ -238,7 +246,9 @@ fn main() -> anyhow::Result<()> {
         }),
         Some(Command::Record(args)) => headless_run(log_file.as_deref(), &settings, async {
             let filter = headless::parse_filter(args.filter.as_deref().unwrap_or(""))?;
-            let source = headless_source(&args.target, &cli.target, args.demo, "record", &settings).await?;
+            let source =
+                headless_source(&args.target, &cli.target, args.demo, "record", &settings, cli.project.as_deref())
+                    .await?;
             headless::record(source, &args.out, args.duration, filter).await
         }),
         Some(Command::Export(args)) => headless_run(log_file.as_deref(), &settings, async {
@@ -251,7 +261,8 @@ fn main() -> anyhow::Result<()> {
                     headless::ExportInput::File(file)
                 }
                 (None, Some(d)) => headless::ExportInput::Live(
-                    headless_source(&args.target, &cli.target, args.demo, "export", &settings).await?,
+                    headless_source(&args.target, &cli.target, args.demo, "export", &settings, cli.project.as_deref())
+                        .await?,
                     d,
                 ),
                 (None, None) => bail!("give --input FILE, or capture live with --package and --duration (like 60s)"),
@@ -260,6 +271,7 @@ fn main() -> anyhow::Result<()> {
         }),
         Some(Command::Doctor { ref target }) => {
             let t = doctor::Target {
+                project: cli.project.clone(),
                 serial: target.serial.clone().or_else(|| cli.target.serial.clone()),
                 package: target.package.clone().or_else(|| cli.target.package.clone()),
                 process: target.process.clone().or_else(|| cli.target.process.clone()),
@@ -276,7 +288,7 @@ fn main() -> anyhow::Result<()> {
             if let Some(spec) = &args.dump_frame {
                 return dump_frame(args, spec, theme);
             }
-            ui_run(log_file.as_deref(), run_demo(args, theme, images, &settings))
+            ui_run(log_file.as_deref(), run_demo(args, theme, images, &settings, cli.project.as_deref()))
         }
         None => {
             if cli.target.mode == Mode::Attach {
@@ -285,7 +297,10 @@ fn main() -> anyhow::Result<()> {
                 );
                 std::process::exit(2);
             }
-            ui_run(log_file.as_deref(), run_device_mode(cli.target.clone(), theme, images, &settings))
+            ui_run(
+                log_file.as_deref(),
+                run_device_mode(cli.target.clone(), theme, images, &settings, cli.project.as_deref()),
+            )
         }
     }
 }
@@ -332,6 +347,7 @@ async fn headless_source(
     demo: bool,
     command: &str,
     settings: &config::Loaded,
+    project: Option<&Path>,
 ) -> anyhow::Result<headless::Source> {
     if demo {
         let now_ms = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64);
@@ -343,6 +359,10 @@ async fn headless_source(
     let Some(package) = args.package.clone().or_else(|| outer.package.clone()) else {
         bail!("{command} needs the app: --package com.example.app (the UI lets you pick instead)");
     };
+    let rules = ProjectRules::find(project);
+    if let Some(s) = rules.summary() {
+        eprintln!("traffic-police: {s}");
+    }
     let target = DeviceTarget {
         serial: args.serial.clone().or_else(|| outer.serial.clone()),
         package,
@@ -350,6 +370,7 @@ async fn headless_source(
         pid: args.pid.or(outer.pid),
         follow: args.follow || outer.follow,
         capture: settings.capture(),
+        rules: rules.active(),
     };
     let adb = settings.adb();
     if args.launch || outer.launch {
@@ -429,9 +450,61 @@ fn demo_app(theme: Theme) -> App {
 }
 
 /// Apply `.traffic-police/project.toml` (nearest one at or above the working directory).
-fn load_project(app: &mut App) {
-    let Ok(cwd) = std::env::current_dir() else { return };
-    match traffic_police_core::project::find(&cwd) {
+/// The project's rules (`.traffic-police/rules.toml`), read at start.
+struct ProjectRules {
+    dir: Option<PathBuf>,
+    file: Option<traffic_police_core::rules::RulesFile>,
+}
+
+impl ProjectRules {
+    fn find(project: Option<&Path>) -> ProjectRules {
+        let dir = match project {
+            Some(p) => Some(p.join(traffic_police_core::project::DIR)),
+            None => std::env::current_dir().ok().and_then(|d| traffic_police_core::rules::find_dir(&d)),
+        };
+        let file = dir.as_ref().map(|d| traffic_police_core::rules::load(&d.join(traffic_police_core::rules::FILE)));
+        ProjectRules { dir, file }
+    }
+
+    /// What the app gets: the file's rules when they are valid, else none.
+    fn active(&self) -> traffic_police_proto::msg::RuleSet {
+        self.file.as_ref().filter(|f| f.is_valid()).map_or_else(
+            || traffic_police_proto::msg::RuleSet { version: "none".into(), rules: Vec::new() },
+            |f| f.set.clone(),
+        )
+    }
+
+    /// For commands without the UI: what applies, or why nothing does.
+    fn summary(&self) -> Option<String> {
+        let f = self.file.as_ref().filter(|f| !f.entries.is_empty() || !f.problems.is_empty())?;
+        Some(if f.is_valid() {
+            let on = f.set.rules.iter().filter(|r| r.enabled).count();
+            format!("rules: {on} of {} on, from {}", f.entries.len(), f.path.display())
+        } else {
+            let list: Vec<String> = f.problems.iter().map(ToString::to_string).collect();
+            format!("rules: none apply; {} has problems:\n  {}", f.path.display(), list.join("\n  "))
+        })
+    }
+
+    fn apply(self, app: &mut App) {
+        app.rules = Some(self.active());
+        if let Some(f) = self.file.as_ref().filter(|f| !f.is_valid()) {
+            app.flash(format!("rules.toml: {} (no rules apply until it is fixed)", f.problems[0]));
+        }
+        app.rules_file = self.file;
+        app.rules_dir = self.dir;
+    }
+}
+
+fn load_project(app: &mut App, project: Option<&Path>) {
+    let start = match project {
+        Some(p) => p.to_path_buf(),
+        None => match std::env::current_dir() {
+            Ok(d) => d,
+            Err(_) => return,
+        },
+    };
+    match traffic_police_core::project::find(&start) {
         Ok(Some(p)) => {
             tracing::info!(root = %p.root.display(), roots = p.source_roots.len(), "project config");
             for w in &p.warnings {
@@ -456,9 +529,11 @@ async fn run_device_mode(
     theme: Theme,
     detect_images: bool,
     settings: &config::Loaded,
+    project: Option<&Path>,
 ) -> anyhow::Result<()> {
     let adb = settings.adb();
     adb.ensure_server().await.context("traffic-police talks to devices through the adb server")?;
+    let rules = ProjectRules::find(project);
     let target = match args.package.clone() {
         Some(package) => DeviceTarget {
             serial: args.serial.clone(),
@@ -467,6 +542,7 @@ async fn run_device_mode(
             pid: args.pid,
             follow: args.follow,
             capture: settings.capture(),
+            rules: rules.active(),
         },
         None => match traffic_police_tui::picker::pick(adb.clone(), theme.clone()).await? {
             Some(p) => DeviceTarget {
@@ -476,6 +552,7 @@ async fn run_device_mode(
                 pid: None,
                 follow: args.follow,
                 capture: settings.capture(),
+                rules: rules.active(),
             },
             None => return Ok(()),
         },
@@ -486,9 +563,10 @@ async fn run_device_mode(
     tracing::info!(package = %target.package, serial = ?target.serial, follow = target.follow, "device session");
 
     let mut app = App::new(SessionStore::new(), theme);
-    app.caps = Capabilities { pause: true, rules: false, live: true };
+    app.caps = Capabilities { pause: true, rules: true, live: true };
     settings.apply_ui(&mut app);
-    load_project(&mut app);
+    load_project(&mut app, project);
+    rules.apply(&mut app);
     app.jq_runner = jq_in_child;
     let ids = app.store.source_ids();
     let (event_tx, event_rx) = mpsc::channel(256);
@@ -532,12 +610,18 @@ async fn launch_app(adb: &Adb, serial: Option<&str>, package: &str) -> anyhow::R
     Ok(())
 }
 
-async fn run_demo(args: &DemoArgs, theme: Theme, detect_images: bool, settings: &config::Loaded) -> anyhow::Result<()> {
+async fn run_demo(
+    args: &DemoArgs,
+    theme: Theme,
+    detect_images: bool,
+    settings: &config::Loaded,
+    project: Option<&Path>,
+) -> anyhow::Result<()> {
     let now_ms = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64);
     let cfg = demo_config(args, Some(now_ms))?;
     let mut app = demo_app(theme);
     settings.apply_ui(&mut app);
-    load_project(&mut app);
+    load_project(&mut app, project);
     let ids = app.store.source_ids();
     let (event_tx, event_rx) = mpsc::channel(256);
     let (command_tx, command_rx) = mpsc::unbounded_channel();
@@ -553,11 +637,17 @@ async fn run_demo(args: &DemoArgs, theme: Theme, detect_images: bool, settings: 
 }
 
 /// `open FILE`: a saved session, replayed into the UI.
-async fn run_open(file: &Path, theme: Theme, detect_images: bool, settings: &config::Loaded) -> anyhow::Result<()> {
+async fn run_open(
+    file: &Path,
+    theme: Theme,
+    detect_images: bool,
+    settings: &config::Loaded,
+    project: Option<&Path>,
+) -> anyhow::Result<()> {
     let mut app = App::new(SessionStore::new(), theme);
     app.caps = Capabilities { pause: false, rules: false, live: false };
     settings.apply_ui(&mut app);
-    load_project(&mut app);
+    load_project(&mut app, project);
     app.jq_runner = jq_in_child;
     let name = file.file_name().map_or_else(|| file.display().to_string(), |n| n.to_string_lossy().into_owned());
     let opened = traffic_police_core::import::open(file, &app.store.source_ids())

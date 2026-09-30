@@ -90,17 +90,22 @@ fn entry(store: &SessionStore, t: &Transaction, now: Ts) -> Value {
         request["postData"] = post;
     }
 
+    // the response as the network gave it
     let resp_headers = t.resp.as_ref().map(|r| &r.headers);
-    let mut content = json!({ "size": t.resp_body.total, "mimeType": mime(resp_headers) });
-    if let Some((text, b64, size)) = body_text(store, t, &t.resp_body, resp_headers) {
-        content["size"] = json!(size);
-        content["compression"] = json!(size as i64 - t.resp_body.captured as i64);
-        content["text"] = json!(text);
-        if b64 {
-            content["encoding"] = json!("base64");
+    let content_of = |meta: &BodyMeta, headers: Option<&Headers>| {
+        let mut content = json!({ "size": meta.total, "mimeType": mime(headers) });
+        if let Some((text, b64, size)) = body_text(store, t, meta, headers) {
+            content["size"] = json!(size);
+            content["compression"] = json!(size as i64 - meta.captured as i64);
+            content["text"] = json!(text);
+            if b64 {
+                content["encoding"] = json!("base64");
+            }
         }
-    }
-    let response = json!({
+        content
+    };
+    let content = content_of(&t.resp_body, resp_headers);
+    let original = json!({
         "status": t.resp.as_ref().map_or(0, |r| r.status),
         "statusText": t.resp.as_ref().map_or(String::new(), |r| r.message.clone()),
         "httpVersion": http_version(t),
@@ -111,6 +116,24 @@ fn entry(store: &SessionStore, t: &Transaction, now: Ts) -> Value {
         "headersSize": -1,
         "bodySize": if t.resp.is_some() { json!(t.resp_body.total) } else { json!(-1) },
     });
+    // what the app received: the original, unless a rule changed it (then the original is kept
+    // in _trafficPolice.original)
+    let (response, replaced) = match &t.delivered {
+        Some(d) => {
+            let mut r = original.clone();
+            r["status"] = json!(d.status);
+            r["statusText"] = json!(d.message);
+            r["headers"] = name_values(d.headers.clone());
+            r["cookies"] = response_cookies(&d.headers);
+            r["redirectURL"] = json!(header(&d.headers, "location").unwrap_or(""));
+            if let Some(meta) = &t.delivered_body {
+                r["content"] = content_of(meta, Some(&d.headers));
+                r["bodySize"] = json!(meta.total);
+            }
+            (r, Some(original))
+        }
+        None => (original, None),
+    };
 
     let p = t.phases(now);
     let timings = json!({
@@ -162,6 +185,9 @@ fn entry(store: &SessionStore, t: &Transaction, now: Ts) -> Value {
     }
     if t.pinned {
         extra.insert("pinned".into(), json!(true));
+    }
+    if let Some(o) = replaced {
+        extra.insert("original".into(), o);
     }
     let marks: Map<String, Value> =
         t.marks.iter().map(|(n, ts)| (n.clone(), json!(ms(ts.saturating_sub(t.start))))).collect();

@@ -94,6 +94,17 @@ struct Editor {
     path: std::path::PathBuf,
 }
 
+/// Ends a background task with the loop.
+struct AbortOnDrop(Option<tokio::task::JoinHandle<()>>);
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        if let Some(h) = &self.0 {
+            h.abort();
+        }
+    }
+}
+
 async fn event_loop(
     term: &mut Term,
     app: &mut App,
@@ -110,6 +121,9 @@ async fn event_loop(
     let (jq_tx, mut jq_rx) = mpsc::unbounded_channel::<(JqJob, JqResult)>();
     let (body_tx, mut body_rx) = mpsc::unbounded_channel::<(BodyJob, BodyView)>();
     let (search_tx, mut search_rx) = mpsc::unbounded_channel::<(crate::app::SearchJob, bool)>();
+    let (rules_tx, mut rules_rx) = mpsc::unbounded_channel::<traffic_police_core::rules::RulesFile>();
+    // started once there is a rules file to watch (r can create it while the UI runs)
+    let mut watcher = AbortOnDrop(None);
     let mut backend_open = true;
     let mut stop = StopSignals::new()?;
     let mut input_dirty = true;
@@ -181,6 +195,10 @@ async fn event_loop(
                 app.finish_search(&job, hit);
                 data_dirty = true;
             }
+            Some(f) = rules_rx.recv() => {
+                app.rules_reloaded(f);
+                input_dirty = true;
+            }
             _ = stop.recv() => {
                 // SIGTERM or SIGHUP: leave the loop so the terminal is restored
                 if let Some(Editor { mut child, .. }) = editor.take() {
@@ -193,6 +211,12 @@ async fn event_loop(
         }
         if app.should_quit {
             return Ok(());
+        }
+        if watcher.0.is_none()
+            && app.rules_file.is_some()
+            && let Some(path) = app.rules_path()
+        {
+            watcher.0 = Some(tokio::spawn(crate::rules::watch(path, rules_tx.clone())));
         }
         dispatch_jobs(app, &body_tx, &jq_tx, &search_tx);
         if let Some((path, line)) = app.editor_request.take()

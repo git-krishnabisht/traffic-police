@@ -83,6 +83,8 @@ pub struct SessionStore {
     lane_index: HashMap<(SourceId, i64, String), u32>,
     markers: Vec<Marker>,
     diagnostics: Vec<Diagnostic>,
+    /// The latest `rules_ack` of each source.
+    rules_acks: HashMap<SourceId, traffic_police_proto::msg::RulesAck>,
     stats: Stats,
     generation: u64,
 }
@@ -513,7 +515,15 @@ impl SessionStore {
                 self.see(at);
                 self.markers.push(Marker { at, source, kind, label });
             }
+            SessionEvent::RulesAck { source, ack } => {
+                self.rules_acks.insert(source, ack);
+            }
         }
+    }
+
+    /// What the current source's app said about the rules it was last sent.
+    pub fn rules_ack(&self) -> Option<&traffic_police_proto::msg::RulesAck> {
+        self.rules_acks.get(&self.current_source()?.id)
     }
 }
 

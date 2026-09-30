@@ -35,6 +35,26 @@ pub struct DeviceTarget {
     pub follow: bool,
     /// What to capture (`[capture]`); recording follows pause and resume.
     pub capture: CaptureConfig,
+    /// The project's rules (`.traffic-police/rules.toml`); `SetRules` replaces them.
+    pub rules: RuleSet,
+}
+
+/// What the host wants the app to run with, kept across connections: the capture configuration
+/// and the rules, sent in `hello_ack` and updated while connected.
+struct Wanted {
+    config: CaptureConfig,
+    rules: RuleSet,
+}
+
+impl Wanted {
+    /// Commands that change what is wanted while no app is connected.
+    fn note(&mut self, cmd: BackendCommand) {
+        match cmd {
+            BackendCommand::SetRecording(on) => self.config.recording = on,
+            BackendCommand::SetRules(r) => self.rules = r,
+            _ => {}
+        }
+    }
 }
 
 /// Removes forwards to capture sockets that no longer exist on the device: a traffic-police that
@@ -138,7 +158,7 @@ pub async fn run_device(
     // the process we attach to (kept across hiccups and device disconnects, to resume it)
     let mut resume: Option<Resume> = None;
     let mut devices = adb.watch_devices();
-    let mut config = target.capture.clone();
+    let mut wanted = Wanted { config: target.capture.clone(), rules: target.rules.clone() };
     // with --follow, the process that exited (its socket may linger for a moment)
     let mut followed_away_from: Option<u32> = None;
     let mut swept = std::collections::HashSet::new();
@@ -147,8 +167,7 @@ pub async fn run_device(
         while let Ok(cmd) = commands.try_recv() {
             match cmd {
                 BackendCommand::Shutdown => return,
-                BackendCommand::SetRecording(on) => config.recording = on,
-                _ => {}
+                other => wanted.note(other),
             }
         }
         if out.events.is_closed() {
@@ -164,7 +183,7 @@ pub async fn run_device(
                     msg
                 };
                 set_status(&status, ConnectionStatus::Waiting(msg));
-                if wait_or_quit(&mut commands, &mut config, &mut devices, POLL).await {
+                if wait_or_quit(&mut commands, &mut wanted, &mut devices, POLL).await {
                     return;
                 }
                 continue;
@@ -199,14 +218,14 @@ pub async fn run_device(
                     )
                 };
                 set_status(&status, ConnectionStatus::Waiting(what));
-                if wait_or_quit(&mut commands, &mut config, &mut devices, POLL).await {
+                if wait_or_quit(&mut commands, &mut wanted, &mut devices, POLL).await {
                     return;
                 }
                 continue;
             }
             Err(e) => {
                 set_status(&status, ConnectionStatus::Waiting(format!("{}: {e}", device.label())));
-                if wait_or_quit(&mut commands, &mut config, &mut devices, POLL).await {
+                if wait_or_quit(&mut commands, &mut wanted, &mut devices, POLL).await {
                     return;
                 }
                 continue;
@@ -217,13 +236,13 @@ pub async fn run_device(
         if is_frozen(&adb, &device, socket.pid).await {
             let name = target.process.as_deref().unwrap_or(&target.package);
             set_status(&status, ConnectionStatus::Waiting(frozen_text(name, socket.pid)));
-            if wait_or_quit(&mut commands, &mut config, &mut devices, POLL).await {
+            if wait_or_quit(&mut commands, &mut wanted, &mut devices, POLL).await {
                 return;
             }
             continue;
         }
 
-        let end = connect(&adb, &device, &socket, &ids, &out, &mut commands, &status, &mut resume, &mut config).await;
+        let end = connect(&adb, &device, &socket, &ids, &out, &mut commands, &status, &mut resume, &mut wanted).await;
         let reason = match end {
             End::Shutdown => {
                 if let Some(r) = resume.as_mut() {
@@ -251,7 +270,7 @@ pub async fn run_device(
             }
             End::NoRuntime if resume.is_none() => {
                 // a socket without a runtime behind it (it just exited): look again
-                if wait_or_quit(&mut commands, &mut config, &mut devices, POLL).await {
+                if wait_or_quit(&mut commands, &mut wanted, &mut devices, POLL).await {
                     return;
                 }
                 continue;
@@ -270,7 +289,7 @@ pub async fn run_device(
         };
         if alive {
             set_status(&status, ConnectionStatus::Waiting(format!("{reason}; reconnecting")));
-            if wait_or_quit(&mut commands, &mut config, &mut devices, Duration::from_millis(300)).await {
+            if wait_or_quit(&mut commands, &mut wanted, &mut devices, Duration::from_millis(300)).await {
                 return;
             }
             continue;
@@ -302,7 +321,7 @@ pub async fn run_device(
 /// Pause and resume that arrive while waiting apply to the next connection's configuration.
 async fn wait_or_quit(
     commands: &mut mpsc::UnboundedReceiver<BackendCommand>,
-    config: &mut CaptureConfig,
+    wanted: &mut Wanted,
     devices: &mut watch::Receiver<DeviceList>,
     d: Duration,
 ) -> bool {
@@ -311,8 +330,7 @@ async fn wait_or_quit(
         tokio::select! {
             cmd = commands.recv() => match cmd {
                 Some(BackendCommand::Shutdown) | None => return true,
-                Some(BackendCommand::SetRecording(on)) => config.recording = on,
-                Some(_) => {}
+                Some(other) => wanted.note(other),
             },
             changed = devices.changed() => {
                 if changed.is_err() {
@@ -412,13 +430,13 @@ async fn connect(
     commands: &mut mpsc::UnboundedReceiver<BackendCommand>,
     status: &watch::Sender<ConnectionStatus>,
     resume: &mut Option<Resume>,
-    config: &mut CaptureConfig,
+    wanted: &mut Wanted,
 ) -> End {
     let port = match adb.forward(device.transport_id, &format!("localabstract:{}", socket.name)).await {
         Ok(p) => p,
         Err(e) => return End::Lost(format!("adb forward failed: {e}")),
     };
-    let end = stream(adb, port, device, socket, ids, out, commands, status, resume, config).await;
+    let end = stream(adb, port, device, socket, ids, out, commands, status, resume, wanted).await;
     if let Err(e) = adb.kill_forward(device.transport_id, port).await {
         tracing::debug!("removing forward tcp:{port}: {e}");
     }
@@ -436,7 +454,7 @@ async fn stream(
     commands: &mut mpsc::UnboundedReceiver<BackendCommand>,
     status: &watch::Sender<ConnectionStatus>,
     resume: &mut Option<Resume>,
-    config: &mut CaptureConfig,
+    wanted: &mut Wanted,
 ) -> End {
     let tcp = match TcpStream::connect(("127.0.0.1", port)).await {
         Ok(s) => s,
@@ -458,8 +476,7 @@ async fn stream(
             },
             cmd = commands.recv() => match cmd {
                 Some(BackendCommand::Shutdown) | None => return End::Shutdown,
-                Some(BackendCommand::SetRecording(on)) => config.recording = on,
-                Some(_) => {}
+                Some(other) => wanted.note(other),
             },
             _ = tokio::time::sleep(HELLO_TIMEOUT) => {
                 if !is_frozen(adb, device, socket.pid).await {
@@ -501,8 +518,8 @@ async fn stream(
         protocol: PROTOCOL_VERSION,
         host: msg::HostInfo { name: "traffic-police".into(), version: env!("CARGO_PKG_VERSION").into() },
         resume_after_seq: resume_after,
-        config: config.clone(),
-        rules: RuleSet { version: "none".into(), rules: Vec::new() },
+        config: wanted.config.clone(),
+        rules: wanted.rules.clone(),
     });
     if let Err(e) = send(&mut wr, &ack).await {
         return End::Lost(e);
@@ -579,7 +596,7 @@ async fn stream(
             },
             cmd = commands.recv() => match cmd {
                 Some(BackendCommand::SetRecording(on)) => {
-                    config.recording = on;
+                    wanted.config.recording = on;
                     let m = HostMsg::SetConfig(msg::SetConfig {
                         id: next_id,
                         config: CaptureConfigPatch { recording: Some(on), ..Default::default() },
@@ -593,8 +610,13 @@ async fn stream(
                     let _ = send(&mut wr, &HostMsg::Ping(msg::Ping { id: next_id })).await;
                     next_id += 1;
                 }
-                Some(BackendCommand::SetRules(_)) => {
-                    // rules arrive with rule support; this runtime does not apply them
+                Some(BackendCommand::SetRules(rules)) => {
+                    wanted.rules = rules.clone();
+                    let m = HostMsg::SetRules(msg::SetRules { id: next_id, rules });
+                    next_id += 1;
+                    if let Err(e) = send(&mut wr, &m).await {
+                        return End::Lost(e);
+                    }
                 }
                 Some(BackendCommand::Shutdown) | None => {
                     let bye = HostMsg::Bye(msg::Bye { reason: "shutdown".into(), message: None, supported: Vec::new() });

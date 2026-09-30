@@ -173,7 +173,10 @@ impl Normalizer {
             }),
             DeviceMsg::Hello(h) => return Some(Control::Hello(Box::new(h))),
             DeviceMsg::Replay(r) => return Some(Control::Replay(r)),
-            DeviceMsg::RulesAck(a) => return Some(Control::RulesAck(a)),
+            DeviceMsg::RulesAck(a) => {
+                out.push(SessionEvent::RulesAck { source, ack: a.clone() });
+                return Some(Control::RulesAck(a));
+            }
             DeviceMsg::ConfigAck(a) => return Some(Control::ConfigAck(a)),
             DeviceMsg::Pong(p) => {
                 out.push(SessionEvent::Clock { source, ts: p.clock.ts, wall_ms: p.clock.wall_ms });

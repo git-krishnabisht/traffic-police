@@ -230,3 +230,61 @@ golden!(
     takeover,
     rule_rewrite,
 );
+
+/// A store with a golden's events (the device's own encoding of a real session).
+fn store_of(name: &str) -> SessionStore {
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../testdata/protocol/v1/device");
+    let bytes = std::fs::read(dir.join(format!("{name}.frames"))).unwrap();
+    let mut decoder = Decoder::new();
+    decoder.push(&bytes);
+    let mut store = SessionStore::new();
+    let source = store.source_ids().next();
+    let mut normalizer = Normalizer::new(source);
+    let mut events = Vec::new();
+    while let Some(frame) = decoder.next_frame().unwrap() {
+        if let Ok(Some(Control::Hello(h))) = normalizer.frame(frame, &mut events) {
+            let info =
+                SourceInfo::from_hello(source, &h, "Pixel 8 [emulator-5554]".into(), Some("emulator-5554".into()));
+            events.push(SessionEvent::SourceUp(Box::new(info)));
+        }
+        store.apply_all(events.drain(..));
+    }
+    store
+}
+
+#[test]
+fn a_rule_changed_response_is_exported_as_the_app_got_it_with_the_original_kept() {
+    use traffic_police_core::export::{har::har, tail::json_line};
+    let store = store_of("rule_rewrite");
+    assert_eq!(store.rules_ack().and_then(|a| a.active), Some(2), "the app's rules_ack is kept");
+    let now = store.latest();
+    // tail: what the app received, and the original next to it
+    let line = json_line(&store, 0, now, true);
+    assert_eq!(line["status"], 200);
+    assert_eq!(line["rules"], serde_json::json!(["force-pass"]));
+    assert_eq!(line["response"]["body"]["text"], "{\"verdict\":\"pass\",\"attempt\":3}");
+    assert!(line["response"]["headers"].to_string().contains("X-Debug"), "{}", line["response"]["headers"]);
+    assert_eq!(line["original"]["status"], 202);
+    assert_eq!(line["original"]["body"]["text"], "{\"verdict\":\"pending\",\"attempt\":3}");
+    let failed = json_line(&store, 1, now, false);
+    assert_eq!(failed["failure"]["simulated"], true);
+    // HAR: the same, and it reads back into the same exchange
+    let doc = har(&store, &[0, 1], now);
+    let e = &doc["log"]["entries"][0];
+    assert_eq!(e["response"]["status"], 200);
+    assert_eq!(e["response"]["content"]["text"], "{\"verdict\":\"pass\",\"attempt\":3}");
+    assert_eq!(e["_trafficPolice"]["original"]["status"], 202);
+    let bytes = serde_json::to_vec(&doc).unwrap();
+    let opened = traffic_police_core::import::har(&bytes, &Default::default()).unwrap();
+    let mut back = SessionStore::new();
+    back.apply_all(opened.events);
+    let t = back.txn(0);
+    assert_eq!(t.resp.as_ref().unwrap().status, 202, "the network's status");
+    assert_eq!(t.status(), Some(200), "what the app got");
+    assert_eq!(t.rules[0].rules[0].id, "force-pass");
+    let body = back.body_bytes(t.delivered_body.as_ref().expect("the delivered body"));
+    assert_eq!(&body[..], b"{\"verdict\":\"pass\",\"attempt\":3}");
+    let again = har(&back, &[0], back.latest());
+    assert_eq!(again["log"]["entries"][0]["response"]["status"], 200);
+    assert_eq!(again["log"]["entries"][0]["_trafficPolice"]["original"]["status"], 202);
+}

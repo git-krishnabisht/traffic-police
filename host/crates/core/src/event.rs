@@ -78,6 +78,11 @@ pub enum SessionEvent {
         code: String,
         message: String,
     },
+    /// The app's answer to a rule set: how many rules are active, and each rule's error.
+    RulesAck {
+        source: SourceId,
+        ack: msg::RulesAck,
+    },
     /// Host-side markers (pause, resume, notes).
     Marker {
         source: Option<SourceId>,

@@ -12,10 +12,10 @@ use std::path::Path;
 use base64::Engine;
 use bytes::Bytes;
 use serde_json::Value;
-use traffic_police_proto::msg::{self, Addr, Conn, ErrorInfo, ReqBodyInfo, StackFrame};
+use traffic_police_proto::msg::{self, Addr, Conn, ErrorInfo, ReqBodyInfo, RuleRef, StackFrame};
 use traffic_police_proto::{BodyDir, Headers};
 
-use crate::event::{Failed, RequestStarted, ResponseStarted, SessionEvent};
+use crate::event::{Failed, RequestStarted, ResponseStarted, RuleApplied, SessionEvent};
 use crate::fmt::{NS_PER_MS, Ts, parse_iso8601};
 use crate::model::{SourceId, SourceInfo, TxnKey, Url};
 use crate::session::{self, Opened};
@@ -197,7 +197,9 @@ struct EntryEnd {
 fn entry_events(e: &Value, key: TxnKey, start: Ts, out: &mut Vec<SessionEvent>) -> EntryEnd {
     let tp = &e["_trafficPolice"];
     let req = &e["request"];
-    let resp = &e["response"];
+    // a response a rule changed: the network's is in _trafficPolice.original, the app's in response
+    let (resp, delivered) =
+        if tp["original"].is_object() { (&tp["original"], Some(&e["response"])) } else { (&e["response"], None) };
     let timings = &e["timings"];
     let at = |ms: f64| start + (ms.max(0.0) * NS_PER_MS as f64).round() as Ts;
     let phase = |name: &str| timings[name].as_f64().filter(|x| *x >= 0.0);
@@ -336,6 +338,42 @@ fn entry_events(e: &Value, key: TxnKey, start: Ts, out: &mut Vec<SessionEvent>) 
                 };
                 out.push(body_end(key, BodyDir::Response, body_done, total, 0, state));
             }
+        }
+    }
+    if let Some(d) = delivered.filter(|_| status > 0) {
+        let at = first_byte.unwrap_or(end);
+        let rules = tp["rules"]
+            .as_array()
+            .map(|hits| {
+                let mut ids: Vec<RuleRef> = Vec::new();
+                for id in hits.iter().flat_map(|h| h["rules"].as_array().cloned().unwrap_or_default()) {
+                    if let Some(id) = id.as_str()
+                        && !ids.iter().any(|r| r.id == id)
+                    {
+                        ids.push(RuleRef { id: id.to_string(), name: None });
+                    }
+                }
+                ids
+            })
+            .unwrap_or_default();
+        let headers = name_values(&d["headers"]);
+        out.push(SessionEvent::RuleApplied(Box::new(RuleApplied {
+            key,
+            at,
+            rules,
+            changes: Vec::new(),
+            delivered: Some(msg::DeliveredResponse {
+                status: d["status"].as_u64().unwrap_or(0).min(u64::from(u16::MAX)) as u16,
+                message: d["statusText"].as_str().unwrap_or("").to_string(),
+                headers,
+            }),
+        })));
+        if let Some(b) = body_bytes(&d["content"])
+            && d["content"] != resp["content"]
+        {
+            let n = b.len() as u64;
+            out.push(SessionEvent::Body { key, dir: BodyDir::Delivered, at, offset: 0, bytes: b });
+            out.push(body_end(key, BodyDir::Delivered, at, n, n, "complete"));
         }
     }
     for (name, at) in later {

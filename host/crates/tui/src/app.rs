@@ -329,8 +329,12 @@ pub struct App {
     /// The filter before editing started, for Esc.
     filter_before: Option<String>,
     pub message: Option<(String, Instant)>,
+    /// The rules the app runs (the demo's built-in ones, or the last valid rules.toml).
     pub rules: Option<RuleSet>,
     pub rules_cursor: usize,
+    /// rules.toml as last read (with its problems), and the `.traffic-police` directory.
+    pub rules_file: Option<traffic_police_core::rules::RulesFile>,
+    pub rules_dir: Option<PathBuf>,
     pub bars: Vec<Bar>,
     pub bar_cursor: usize,
     pub recording: bool,
@@ -403,6 +407,8 @@ impl App {
             message: None,
             rules: None,
             rules_cursor: 0,
+            rules_file: None,
+            rules_dir: None,
             bars: Vec::new(),
             bar_cursor: 0,
             recording: true,
@@ -1016,6 +1022,7 @@ impl App {
             Action::ViewRules => self.set_view(View::Rules),
             Action::FocusNext => self.cycle_focus(1),
             Action::FocusPrev => self.cycle_focus(-1),
+            Action::Pause if self.view == View::Rules && self.focus == Focus::List => self.toggle_rule(),
             Action::Pause => self.toggle_recording(),
             Action::Freeze => self.toggle_freeze(),
             Action::Live => {
@@ -1088,6 +1095,7 @@ impl App {
                 }
             }
             Action::Pin => self.toggle_pin(),
+            Action::NewRule => self.new_rule_from_selected(),
             Action::Find if self.detail_open => {
                 self.search_before = Some(self.search.query.clone());
                 self.search_input = Input::new(self.search.query.clone());
@@ -1396,7 +1404,13 @@ impl App {
     }
 
     fn rules_action(&mut self, a: Action) {
-        let n = self.rules.as_ref().map_or(0, |r| r.rules.len());
+        if a == Action::Activate {
+            return self.edit_rules();
+        }
+        let n = match &self.rules_file {
+            Some(f) => f.entries.len(),
+            None => self.rules.as_ref().map_or(0, |r| r.rules.len()),
+        };
         if n == 0 {
             return;
         }

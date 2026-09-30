@@ -13,6 +13,8 @@ use crate::config;
 
 /// What doctor looks at: the same flags as capture.
 pub struct Target {
+    /// `--project`: where `.traffic-police/` is (else found from the working directory).
+    pub project: Option<std::path::PathBuf>,
     pub serial: Option<String>,
     pub package: Option<String>,
     pub process: Option<String>,
@@ -143,7 +145,8 @@ pub async fn run(t: &Target, settings: &config::Loaded, adb: &Adb) -> Report {
             }
         }
     }
-    match std::env::current_dir().map(|d| traffic_police_core::project::find(&d)) {
+    let start = t.project.clone().map_or_else(std::env::current_dir, Ok);
+    match start.as_ref().map(|d| traffic_police_core::project::find(d)) {
         Ok(Ok(Some(p))) if p.warnings.is_empty() => {
             r.check(Mark::Ok, format!("project config in {}", p.root.join(".traffic-police").display()), None)
         }
@@ -155,8 +158,29 @@ pub async fn run(t: &Target, settings: &config::Loaded, adb: &Adb) -> Report {
         Ok(Err(e)) => r.check(Mark::Fail, format!("project config: {e}"), None),
         _ => {}
     }
-    if Path::new(".traffic-police/rules.toml").is_file() {
-        r.check(Mark::Note, "rules.toml is not read yet (rules arrive in Phase 3)", None);
+    let rules_dir = match &t.project {
+        Some(p) => Some(p.join(traffic_police_core::project::DIR)),
+        None => start.as_ref().ok().and_then(|d| traffic_police_core::rules::find_dir(d)),
+    };
+    if let Some(path) = rules_dir.map(|d| d.join(traffic_police_core::rules::FILE)).filter(|p| p.is_file()) {
+        let f = traffic_police_core::rules::load(&path);
+        if f.is_valid() {
+            let on = f.set.rules.iter().filter(|x| x.enabled).count();
+            r.check(
+                Mark::Ok,
+                format!("rules {}: {} rule{}, {on} on", path.display(), f.entries.len(), plural(f.entries.len())),
+                None,
+            );
+        } else {
+            r.check(
+                Mark::Fail,
+                format!("rules {}: {} problem{}", path.display(), f.problems.len(), plural(f.problems.len())),
+                Some("fix the lines below; until then no rules apply (docs/PROTOCOL.md §8 has the format)"),
+            );
+            for p in &f.problems {
+                let _ = writeln!(r.text, "      {p}");
+            }
+        }
     }
     let tty = std::io::IsTerminal::is_terminal(&std::io::stdout());
     match crossterm::terminal::size().ok().filter(|_| tty).ok_or(()) {

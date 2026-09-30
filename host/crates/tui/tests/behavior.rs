@@ -553,6 +553,58 @@ fn the_body_explorer_moves_and_folds_with_h_j_k_l() {
 }
 
 #[test]
+fn rules_from_the_project_file_toggle_edit_and_grow() {
+    let dir = std::env::temp_dir().join(format!("tp-rules-ui-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let tp = dir.join(".traffic-police");
+    std::fs::create_dir_all(&tp).unwrap();
+    let path = tp.join("rules.toml");
+    std::fs::write(
+        &path,
+        "version = 1\n\n# the status poll\n[[rule]]\nid = \"slow\"\nname = \"Slow poll\"\n  [rule.match]\n  path = \"/api/sdk/*/status/**\"\n  [[rule.action]]\n  type = \"delay\"\n  ms = 800\n",
+    )
+    .unwrap();
+    let mut app = app_at(40.0);
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    app.commands = Some(tx);
+    let f = traffic_police_core::rules::load(&path);
+    app.rules = Some(f.set.clone());
+    app.rules_file = Some(f);
+    app.rules_dir = Some(tp.clone());
+    let text = press(&mut app, MEDIUM, "3");
+    assert!(text.contains("[x] slow") && text.contains("Slow poll") && text.contains("delay 800 ms"), "{text}");
+    // Space turns it off in the file (the comment stays) and sends the new rules to the app
+    press(&mut app, MEDIUM, "<Space>");
+    let written = std::fs::read_to_string(&path).unwrap();
+    assert!(written.contains("# the status poll\n[[rule]]\nenabled = false\nid = \"slow\""), "{written}");
+    assert!(app.recording, "Space in the Rules view does not pause");
+    match rx.try_recv() {
+        Ok(BackendCommand::SetRules(r)) => assert!(!r.rules[0].enabled),
+        other => panic!("expected SetRules, got {other:?}"),
+    }
+    // Enter opens the file at the rule
+    press(&mut app, MEDIUM, "<Enter>");
+    assert_eq!(app.editor_request.take(), Some((path.clone(), 4)));
+    // r on a request appends a rule that matches it exactly, off, and opens it
+    let to = goto(&mut app, MEDIUM, path_is("/api/sdk/init"));
+    press(&mut app, MEDIUM, &format!("1{to}r"));
+    let f = traffic_police_core::rules::load(&path);
+    assert!(f.is_valid(), "{:?}", f.problems);
+    let new = f.set.rules.last().unwrap();
+    assert_eq!((new.id.as_str(), new.enabled), ("init", false));
+    assert_eq!(new.matcher.path, Some(traffic_police_proto::msg::Pattern::Exact("/api/sdk/init".into())));
+    assert_eq!(app.editor_request.take().map(|(p, _)| p), Some(path.clone()));
+    // a broken file keeps the active rules, and says where it breaks
+    let active = app.rules.clone();
+    std::fs::write(&path, "[[rule]]\nid = \"x\"\nbogus = true\n").unwrap();
+    app.rules_reloaded(traffic_police_core::rules::load(&path));
+    assert_eq!(app.rules, active);
+    let text = press(&mut app, MEDIUM, "3");
+    assert!(text.contains("rules.toml has 1 problem: line 3"), "{text}");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
 fn body_filters_fill_in_from_the_background() {
     let mut app = app_at(40.0);
     press(&mut app, MEDIUM, "/body:\"simBinding\"<Enter>");

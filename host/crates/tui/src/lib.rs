@@ -11,6 +11,7 @@ pub mod graph;
 pub mod images;
 pub mod palette;
 pub mod picker;
+pub mod rules;
 pub mod share;
 pub mod terminal;
 pub mod theme;

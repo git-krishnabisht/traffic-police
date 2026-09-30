@@ -16,9 +16,9 @@ expression: "frame(40.0, MEDIUM, \"3j\")"
 │          00:10.000            00:15.000             00:20.000            00:25.000            00:30.000            00:35.000             │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ Requests 60 ─ Connection ─ Thread ─ Rules ──────────────────────────────────────────────────────────────────────────────────────────────╮
-│      id              name                        hits                        Enroll endpoint down                                        │
-│  [x] force-pass      Force verdict pass             1                        disabled                                                    │
-│  [ ] enroll-down     Enroll endpoint down           0                                                                                    │
+│      id              name                      hits  state                   Enroll endpoint down                                        │
+│  [x] force-pass      Force verdict pass           1  on                      off                                                         │
+│  [ ] enroll-down     Enroll endpoint down         0  off                                                                                 │
 │                                                                              Match                                                       │
 │                                                                                methods  POST                                             │
 │                                                                                host     any                                              │
@@ -39,6 +39,6 @@ expression: "frame(40.0, MEDIUM, \"3j\")"
 │                                                                                                                                          │
 │                                                                                                                                          │
 │                                                                                                                                          │
-│ Rules come from .traffic-police/rules.toml; editing and pushing to the device arrive in Phase 3.                                         │
+│ The demo's built-in rules (a project's come from .traffic-police/rules.toml).                                                            │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
- ↑↓ select   Tab next panel   ? help                                                                             ⚠ studio inspector present
+ ↑↓ select   Space on/off   Enter edit   Tab next panel   ? help                                                 ⚠ studio inspector present

@@ -995,26 +995,112 @@ fn draw_threads(app: &mut App, r: Rect, buf: &mut Buffer) {
 }
 
 fn draw_rules(app: &mut App, r: Rect, buf: &mut Buffer) {
+    use traffic_police_proto::msg::{Pattern, Rule, RuleAction as A};
     let t = app.theme.clone();
-    let Some(rules) = app.rules.clone() else {
-        text(
-            buf,
-            r.x + 1,
-            r.y + 1,
-            r.width.saturating_sub(2),
-            vec![Span::styled(
-                "No rules. Rules are read from .traffic-police/rules.toml (docs/PROTOCOL.md §8).",
-                t.dim(),
-            )],
-        );
-        return;
+    // the rows: the file's rules (valid or not), or the demo's built-in ones
+    struct RowInfo {
+        id: String,
+        name: Option<String>,
+        enabled: bool,
+        rule: Option<Rule>,
+        problems: Vec<String>,
+    }
+    let active = app.rules.clone();
+    let find = |id: &str| active.as_ref().and_then(|s| s.rules.iter().find(|x| x.id == id).cloned());
+    let rows: Vec<RowInfo> = match &app.rules_file {
+        Some(f) => f
+            .entries
+            .iter()
+            .map(|e| RowInfo {
+                id: e.id.clone(),
+                name: e.name.clone(),
+                enabled: e.enabled,
+                rule: f.set.rules.iter().find(|x| x.id == e.id).cloned().or_else(|| find(&e.id)),
+                problems: f
+                    .problems
+                    .iter()
+                    .filter(|p| p.rule.as_deref() == Some(e.id.as_str()))
+                    .map(|p| p.line.map_or(p.message.clone(), |l| format!("line {l}: {}", p.message)))
+                    .collect(),
+            })
+            .collect(),
+        None => active
+            .as_ref()
+            .map(|s| {
+                s.rules
+                    .iter()
+                    .map(|x| RowInfo {
+                        id: x.id.clone(),
+                        name: x.name.clone(),
+                        enabled: x.enabled,
+                        rule: Some(x.clone()),
+                        problems: Vec::new(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
     };
+    // what the app said about the rules it runs
+    let ack = app.view_store().rules_ack().cloned();
+    let ack_current =
+        ack.as_ref().filter(|a| active.as_ref().is_some_and(|s| a.version.as_deref() == Some(s.version.as_str())));
+    let app_error =
+        |id: &str| ack_current.and_then(|a| a.errors.iter().find(|e| e.rule == id)).map(|e| e.message.clone());
+    let foot_y = r.y + r.height.saturating_sub(1);
+    let footer = match (&app.rules_file, app.rules_dir.is_some()) {
+        (Some(f), _) if !f.is_valid() => {
+            let file_wide: Vec<String> =
+                f.problems.iter().filter(|p| p.rule.is_none()).map(ToString::to_string).collect();
+            let first = file_wide.first().cloned().unwrap_or_else(|| f.problems[0].to_string());
+            vec![Span::styled(
+                format!(
+                    "rules.toml has {} problem{}: {first} · the rules that were active stay active",
+                    f.problems.len(),
+                    if f.problems.len() == 1 { "" } else { "s" }
+                ),
+                t.error(),
+            )]
+        }
+        (Some(f), _) => {
+            let on = f.set.rules.iter().filter(|x| x.enabled).count();
+            let mut spans = vec![Span::styled(
+                format!(
+                    "{} · {} rule{}, {on} on",
+                    f.path.display(),
+                    f.entries.len(),
+                    if f.entries.len() == 1 { "" } else { "s" }
+                ),
+                t.faint(),
+            )];
+            if let Some(a) = ack_current {
+                spans.push(Span::styled(format!(" · the app runs {}", a.active.unwrap_or(0)), t.faint()));
+            } else if app.caps.live && !f.set.rules.is_empty() {
+                spans.push(Span::styled(" · not sent to an app yet", t.faint()));
+            }
+            spans
+        }
+        (None, true) => vec![Span::styled(
+            "No rules yet: r on a request (Connection view) writes one; Enter here opens rules.toml.",
+            t.dim(),
+        )],
+        (None, false) if rows.is_empty() => vec![Span::styled(
+            "No rules: they live in .traffic-police/rules.toml (docs/PROTOCOL.md §8); r on a request creates it.",
+            t.dim(),
+        )],
+        (None, false) => vec![Span::styled(
+            "The demo's built-in rules (a project's come from .traffic-police/rules.toml).",
+            t.faint(),
+        )],
+    };
+    text(buf, r.x, foot_y, r.width, footer);
+    if rows.is_empty() {
+        return;
+    }
     let store = app.view_store();
-    let hits: Vec<usize> = rules
-        .rules
+    let hits: Vec<usize> = rows
         .iter()
-        .map(|rule| {
-            store.txns().iter().filter(|x| x.rules.iter().any(|h| h.rules.iter().any(|rr| rr.id == rule.id))).count()
+        .map(|row| {
+            store.txns().iter().filter(|x| x.rules.iter().any(|h| h.rules.iter().any(|rr| rr.id == row.id))).count()
         })
         .collect();
     let list_w = r.width * 55 / 100;
@@ -1024,116 +1110,126 @@ fn draw_rules(app: &mut App, r: Rect, buf: &mut Buffer) {
         r.y,
         list_w,
         vec![Span::styled(
-            format!("{:<5}{:<16}{:<26}{:>6}", "", "id", "name", "hits"),
+            format!("{:<5}{:<16}{:<24}{:>6}  {}", "", "id", "name", "hits", "state"),
             t.dim().add_modifier(Modifier::BOLD),
         )],
     );
-    for (i, rule) in rules.rules.iter().enumerate() {
+    let cursor = app.rules_cursor.min(rows.len() - 1);
+    for (i, row) in rows.iter().enumerate() {
         let y = r.y + 1 + i as u16;
-        if y >= r.y + r.height {
+        if y >= foot_y {
             break;
         }
-        let selected = i == app.rules_cursor;
+        let selected = i == cursor;
         if selected {
             fill(buf, Rect { x: r.x, y, width: list_w, height: 1 }, t.selected());
         }
         app.hits.add(Rect { x: r.x, y, width: list_w, height: 1 }, Target::RuleRow(i));
-        let base = if rule.enabled { t.text() } else { t.dim() };
+        let base = if row.enabled { t.text() } else { t.dim() };
         let row_style = if selected { t.selected() } else { Style::default() };
+        let (state, state_style) = if !row.problems.is_empty() {
+            ("✗ in the file".to_string(), t.error())
+        } else if let Some(e) = app_error(&row.id) {
+            (format!("✗ app: {e}"), t.error())
+        } else if !row.enabled {
+            ("off".to_string(), t.dim())
+        } else {
+            ("on".to_string(), t.ok())
+        };
         text(
             buf,
             r.x,
             y,
             list_w,
             vec![
-                Span::styled(if rule.enabled { " [x] " } else { " [ ] " }, base.patch(row_style)),
+                Span::styled(if row.enabled { " [x] " } else { " [ ] " }, base.patch(row_style)),
                 Span::styled(
-                    format!("{:<16}", truncate(&rule.id, 15)),
+                    format!("{:<16}", truncate(&row.id, 15)),
                     base.add_modifier(Modifier::BOLD).patch(row_style),
                 ),
-                Span::styled(
-                    format!("{:<26}", truncate(rule.name.as_deref().unwrap_or(""), 25)),
-                    base.patch(row_style),
-                ),
-                Span::styled(format!("{:>6}", hits[i]), t.marker().patch(row_style)),
+                Span::styled(format!("{:<24}", truncate(row.name.as_deref().unwrap_or(""), 23)), base.patch(row_style)),
+                Span::styled(format!("{:>6}  ", hits[i]), t.marker().patch(row_style)),
+                Span::styled(state, state_style.patch(row_style)),
             ],
         );
     }
-    // details of the selected rule
+    // the selected rule
     let dx = r.x + list_w + 2;
     let dw = r.width.saturating_sub(list_w + 3);
-    if let Some(rule) = rules.rules.get(app.rules_cursor) {
-        let mut y = r.y;
-        let mut line = |spans: Vec<Span<'static>>| {
-            if y < r.y + r.height {
-                text(buf, dx, y, dw, spans);
+    let row = &rows[cursor];
+    let mut y = r.y;
+    let mut line = |spans: Vec<Span<'static>>| {
+        if y < foot_y {
+            text(buf, dx, y, dw, spans);
+        }
+        y += 1;
+    };
+    line(vec![Span::styled(row.name.clone().unwrap_or_else(|| row.id.clone()), t.title())]);
+    let keys = if app.rules_file.is_some() { " · Space turns it " } else { "" };
+    let edit = if app.rules_file.is_some() { " · Enter edits" } else { "" };
+    let (state, other) = if row.enabled { ("on", "off") } else { ("off", "on") };
+    let state_line = if keys.is_empty() { state.to_string() } else { format!("{state}{keys}{other}{edit}") };
+    line(vec![Span::styled(state_line, if row.enabled { t.ok() } else { t.dim() })]);
+    for p in &row.problems {
+        line(vec![Span::styled(format!("✗ {p}"), t.error())]);
+    }
+    if let Some(e) = app_error(&row.id) {
+        line(vec![Span::styled(format!("✗ the app: {e}"), t.error())]);
+    }
+    let Some(rule) = &row.rule else { return };
+    line(vec![]);
+    line(vec![Span::styled("Match", t.title())]);
+    let m = &rule.matcher;
+    let pat = |p: &Option<Pattern>| match p {
+        Some(Pattern::Exact(s)) => s.clone(),
+        Some(Pattern::Glob(s)) => format!("{s} (glob)"),
+        Some(Pattern::Regex(s)) => format!("/{s}/"),
+        None => "any".into(),
+    };
+    line(vec![Span::styled(
+        format!("  methods  {}", if m.methods.is_empty() { "any".into() } else { m.methods.join(", ") }),
+        t.text(),
+    )]);
+    if let Some(s) = &m.scheme {
+        line(vec![Span::styled(format!("  scheme   {s}"), t.text())]);
+    }
+    line(vec![Span::styled(format!("  host     {}", pat(&m.host)), t.text())]);
+    if let Some(p) = m.port {
+        line(vec![Span::styled(format!("  port     {p}"), t.text())]);
+    }
+    line(vec![Span::styled(format!("  path     {}", pat(&m.path)), t.text())]);
+    for q in &m.query {
+        line(vec![Span::styled(format!("  query    {} = {}", q.name, pat(&q.value)), t.text())]);
+    }
+    line(vec![]);
+    line(vec![Span::styled("Actions", t.title())]);
+    if rule.actions.is_empty() {
+        line(vec![Span::styled("  none yet", t.dim())]);
+    }
+    for a in &rule.actions {
+        let s = match a {
+            A::Delay { ms } => format!("  delay {ms} ms"),
+            A::Fail { exception, .. } => format!("  fail with {exception}"),
+            A::Status { code, reason } => format!("  status {code} {}", reason.clone().unwrap_or_default()),
+            A::Header { op, name, value } => {
+                format!("  header {op} {name}{}", value.as_ref().map(|v| format!(": {v}")).unwrap_or_default())
             }
-            y += 1;
-        };
-        line(vec![Span::styled(rule.name.clone().unwrap_or_else(|| rule.id.clone()), t.title())]);
-        line(vec![Span::styled(
-            if rule.enabled { "enabled" } else { "disabled" },
-            if rule.enabled { t.ok() } else { t.dim() },
-        )]);
-        line(vec![]);
-        line(vec![Span::styled("Match", t.title())]);
-        let m = &rule.matcher;
-        let pat = |p: &Option<traffic_police_proto::msg::Pattern>| match p {
-            Some(traffic_police_proto::msg::Pattern::Exact(s)) => s.clone(),
-            Some(traffic_police_proto::msg::Pattern::Glob(s)) => format!("{s} (glob)"),
-            Some(traffic_police_proto::msg::Pattern::Regex(s)) => format!("/{s}/"),
-            None => "any".into(),
-        };
-        line(vec![Span::styled(
-            format!("  methods  {}", if m.methods.is_empty() { "any".into() } else { m.methods.join(", ") }),
-            t.text(),
-        )]);
-        if let Some(s) = &m.scheme {
-            line(vec![Span::styled(format!("  scheme   {s}"), t.text())]);
-        }
-        line(vec![Span::styled(format!("  host     {}", pat(&m.host)), t.text())]);
-        if let Some(p) = m.port {
-            line(vec![Span::styled(format!("  port     {p}"), t.text())]);
-        }
-        line(vec![Span::styled(format!("  path     {}", pat(&m.path)), t.text())]);
-        for q in &m.query {
-            line(vec![Span::styled(format!("  query    {} = {}", q.name, pat(&q.value)), t.text())]);
-        }
-        line(vec![]);
-        line(vec![Span::styled("Actions", t.title())]);
-        for a in &rule.actions {
-            use traffic_police_proto::msg::RuleAction as A;
-            let s = match a {
-                A::Delay { ms } => format!("  delay {ms} ms"),
-                A::Fail { exception, .. } => format!("  fail with {exception}"),
-                A::Status { code, reason } => format!("  status {code} {}", reason.clone().unwrap_or_default()),
-                A::Header { op, name, value } => {
-                    format!("  header {op} {name}{}", value.as_ref().map(|v| format!(": {v}")).unwrap_or_default())
-                }
-                A::Body { content_type, .. } => {
-                    format!("  replace body{}", content_type.as_ref().map(|c| format!(" ({c})")).unwrap_or_default())
-                }
-                A::Replace { find, with, regex } => {
-                    let what = if *regex { "regex" } else { "text" };
-                    format!("  replace {what}  {find}\n  with          {with}")
-                }
-                A::Unknown => "  (unknown action)".into(),
-            };
-            for part in s.split('\n') {
-                line(vec![Span::styled(part.to_string(), t.text())]);
+            A::Body { content_type, .. } => {
+                format!("  replace the body{}", content_type.as_ref().map(|c| format!(" ({c})")).unwrap_or_default())
             }
+            A::Replace { find, with, regex } => {
+                let what = if *regex { "regex" } else { "text" };
+                format!("  replace {what}  {find}\n  with          {with}")
+            }
+            A::Unknown => "  (an action this traffic-police does not know)".into(),
+        };
+        for part in s.split('\n') {
+            line(vec![Span::styled(part.to_string(), t.text())]);
         }
     }
-    text(
-        buf,
-        r.x,
-        r.y + r.height - 1,
-        r.width,
-        vec![Span::styled(
-            "Rules come from .traffic-police/rules.toml; editing and pushing to the device arrive in Phase 3.",
-            t.faint(),
-        )],
-    );
+    if rule.cache_rewrites {
+        line(vec![Span::styled("  (the app may cache what it changes)", t.faint())]);
+    }
 }
 
 /// The request's side: the body explorer on top, the tabs below.
@@ -1345,7 +1441,13 @@ fn hints(app: &App) -> Vec<(&'static [Action], &'static str)> {
             (&[A::Help], "help"),
         ],
         (_, Focus::List, View::Rules) => {
-            vec![(&[A::Up, A::Down], "select"), (&[A::FocusNext], "next panel"), (&[A::Help], "help")]
+            vec![
+                (&[A::Up, A::Down], "select"),
+                (&[A::Pause], "on/off"),
+                (&[A::Activate], "edit"),
+                (&[A::FocusNext], "next panel"),
+                (&[A::Help], "help"),
+            ]
         }
         (_, Focus::List, View::Connections) => vec![
             (&[A::Activate], "open"),

@@ -30,6 +30,17 @@ fn body(store: &SessionStore, t: &Transaction, meta: &BodyMeta, headers: Option<
     })
 }
 
+/// The rules that changed a transaction, once each, in order.
+fn rule_ids(t: &Transaction) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for id in t.rules.iter().flat_map(|h| h.rules.iter().map(|r| r.id.clone())) {
+        if !out.contains(&id) {
+            out.push(id);
+        }
+    }
+    out
+}
+
 /// Whether a transaction has finished (its line is due).
 pub fn finished(t: &Transaction) -> bool {
     matches!(t.state, TxnState::Complete | TxnState::Failed | TxnState::Detached)
@@ -43,7 +54,8 @@ pub fn json_line(store: &SessionStore, i: TxnIdx, now: Ts, bodies: bool) -> Valu
     if bodies && let Some((b, _)) = body(store, t, &t.req_body, Some(&t.req_headers)) {
         request["body"] = b;
     }
-    let response = t.resp.as_ref().map(|r| {
+    // the response as the network gave it
+    let original = t.resp.as_ref().map(|r| {
         let decoded = body(store, t, &t.resp_body, Some(&r.headers));
         let mut v = json!({
             "protocol": r.protocol,
@@ -57,6 +69,31 @@ pub fn json_line(store: &SessionStore, i: TxnIdx, now: Ts, bodies: bool) -> Valu
         }
         v
     });
+    // what the app received: the same, unless a rule changed it
+    let (response, original) = match (&t.delivered, original) {
+        (Some(d), Some(orig)) => {
+            let mut v = orig.clone();
+            v["headers"] = pairs(&d.headers);
+            v["content_type"] = json!(header(&d.headers, "content-type"));
+            if let Some(meta) = &t.delivered_body {
+                let decoded = body(store, t, meta, Some(&d.headers));
+                v["body_bytes"] = json!(meta.total);
+                v["decoded_bytes"] = json!(decoded.as_ref().map_or(0, |(_, n)| *n));
+                match (bodies, decoded) {
+                    (true, Some((b, _))) => v["body"] = b,
+                    _ => {
+                        if let Some(o) = v.as_object_mut() {
+                            o.remove("body");
+                        }
+                    }
+                }
+            }
+            let mut o = orig;
+            o["status"] = json!(t.resp.as_ref().map(|r| r.status));
+            (Some(v), Some(o))
+        }
+        (_, orig) => (orig, None),
+    };
     let p = t.phases(now);
     let mut line = json!({
         "v": 1,
@@ -89,13 +126,16 @@ pub fn json_line(store: &SessionStore, i: TxnIdx, now: Ts, bodies: bool) -> Valu
             Some(v) => format!("{}/{v}", c.kind),
             None => c.kind.clone(),
         }),
-        "rules": t.rules.iter().flat_map(|h| h.rules.iter().map(|r| r.id.clone())).collect::<Vec<_>>(),
+        "rules": rule_ids(t),
     });
     if t.stack_truncated {
         line["stack_truncated"] = json!(true);
     }
     if let Some(f) = &t.failure {
-        line["failure"] = json!({ "class": f.class, "message": f.message, "phase": f.phase, "canceled": f.canceled });
+        line["failure"] = json!({ "class": f.class, "message": f.message, "phase": f.phase, "canceled": f.canceled, "simulated": f.simulated });
+    }
+    if let Some(o) = original {
+        line["original"] = o;
     }
     line
 }
