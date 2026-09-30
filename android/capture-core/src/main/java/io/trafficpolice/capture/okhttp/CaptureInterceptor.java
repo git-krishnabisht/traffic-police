@@ -35,7 +35,7 @@ public final class CaptureInterceptor implements Interceptor {
     private CaptureInterceptor() {}
 
     private static final class Version {
-        static final String VALUE = OkHttpCompat.version();
+        static final String VALUE = OkHttpDetect.version();
     }
 
     static String okhttpVersion() {

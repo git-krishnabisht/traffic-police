@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- cleartext only reaches the app's own server on 127.0.0.1 -->
+    <application
+        android:name=".SampleApp"
+        android:label="traffic-police sample"
+        android:theme="@android:style/Theme.Material.Light"
+        android:usesCleartextTraffic="true">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- A second process, to show that each process is captured on its own. -->
+        <service
+            android:name=".WorkerService"
+            android:exported="false"
+            android:process=":worker" />
+    </application>
+</manifest>

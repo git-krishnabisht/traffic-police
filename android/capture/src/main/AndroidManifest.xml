@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <!-- Starts capture when the app's main process starts (debuggable apps only). A high
+             initOrder runs it before other providers, so their start-up requests are seen. -->
+        <provider
+            android:name="io.trafficpolice.TrafficPoliceInitProvider"
+            android:authorities="${applicationId}.trafficpolice-init"
+            android:exported="false"
+            android:initOrder="1000" />
+    </application>
+</manifest>
