@@ -319,6 +319,11 @@ impl Filter {
         Ok(Some(Filter { source: input.trim().to_string(), terms, needles }))
     }
 
+    /// Whether a result can change with the clock alone (`time` terms on open requests).
+    pub fn uses_clock(&self) -> bool {
+        self.terms.iter().any(|t| matches!(t.test, Test::Time(..)))
+    }
+
     /// The texts of `body:` terms, lower-cased; results are asked for by index.
     pub fn needles(&self) -> &[String] {
         &self.needles

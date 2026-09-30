@@ -141,6 +141,14 @@ fn frame_time_with_50k_transactions() {
         app.now_override = Some(now);
         next += 1;
     }));
+    app.apply_filter("method:GET path:/api/** -status:5xx header:authorization");
+    results.push(time_frames("filtered, new request every frame", &mut app, 100, |app, _| {
+        now += 33 * NS_PER_MS;
+        app.ingest(synth(source, next, 1, now, 10 * NS_PER_MS));
+        app.now_override = Some(now);
+        next += 1;
+    }));
+    app.apply_filter("");
     render_keys(&mut app, 200, 50, &parse_keys("<Esc>2").unwrap());
     results.push(time_frames("Thread View", &mut app, 200, |_, _| {}));
     render_keys(&mut app, 200, 50, &parse_keys("1G<Enter>l").unwrap());

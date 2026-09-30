@@ -108,6 +108,9 @@ pub struct RowModel {
     body_hits: HashMap<(TxnIdx, usize), (u64, bool)>,
     /// `body:` searches the filter needs and nobody has run yet.
     body_wanted: HashSet<(TxnIdx, usize)>,
+    /// The filter's result per transaction, with the revision it was computed for (a new
+    /// request or a change is filtered again; the others are not).
+    filtered: Vec<Option<(u64, bool)>>,
     expanded: HashSet<TxnIdx>,
     rows: Vec<Row>,
     order: Vec<TxnIdx>,
@@ -204,6 +207,7 @@ impl RowModel {
             self.filter = filter;
             self.body_hits.clear();
             self.body_wanted.clear();
+            self.filtered.clear();
             self.dirty = true;
         }
     }
@@ -224,6 +228,9 @@ impl RowModel {
     /// A finished `body:` search, for the transaction revision it looked at.
     pub fn set_body_hit(&mut self, txn: TxnIdx, needle: usize, rev: u64, hit: bool) {
         self.body_hits.insert((txn, needle), (rev, hit));
+        if let Some(slot) = self.filtered.get_mut(txn as usize) {
+            *slot = None;
+        }
         self.dirty = true;
     }
 
@@ -244,9 +251,11 @@ impl RowModel {
 
     /// Rebuild if the store changed or settings changed. Cheap when nothing changed.
     pub fn refresh(&mut self, store: &SessionStore, now: Ts) {
-        // Durations of open requests grow with the clock, so a Time sort and a range filter
-        // can change even without new events.
-        let clock_matters = self.sort.column == Column::Time || self.range.is_some();
+        // Durations of open requests grow with the clock, so a Time sort, a range, and a
+        // filter with `time` terms can change even without new events.
+        let clock_matters = self.sort.column == Column::Time
+            || self.range.is_some()
+            || self.filter.as_ref().is_some_and(|f| f.uses_clock());
         if !self.dirty && self.seen_generation == Some(store.generation()) && !(clock_matters && now != self.seen_now) {
             return;
         }
@@ -257,10 +266,23 @@ impl RowModel {
         let filter = self.filter.clone();
         let mut order = std::mem::take(&mut self.order);
         order.clear();
-        if self.sort != Sort::default() {
+        self.filtered.resize(store.len(), None);
+        let sorted = self.sort != Sort::default();
+        if sorted {
             self.sort_by_key(store, now);
+        }
+        let mut check = Check {
+            range,
+            filter: filter.as_deref(),
+            clock: filter.as_ref().is_some_and(|f| f.uses_clock()),
+            now,
+            hits: &self.body_hits,
+            wanted: &mut self.body_wanted,
+            cache: &mut self.filtered,
+        };
+        if sorted {
             for &i in &self.sorted {
-                if passes(i, store.txn(i), range, filter.as_deref(), now, &self.body_hits, &mut self.body_wanted) {
+                if check.passes(i, store.txn(i)) {
                     order.push(i);
                 }
             }
@@ -268,7 +290,7 @@ impl RowModel {
             let mut keyed: Vec<(u64, u64, TxnIdx)> = Vec::new();
             for i in 0..store.len() as TxnIdx {
                 let t = store.txn(i);
-                if passes(i, t, range, filter.as_deref(), now, &self.body_hits, &mut self.body_wanted) {
+                if check.passes(i, t) {
                     keyed.push((t.start, t.key.txn, i));
                 }
             }
@@ -342,31 +364,52 @@ impl RowModel {
     }
 }
 
-/// The time range and the filter; `body:` terms without a result yet are queued in `wanted`
-/// and hide the row until the result arrives.
-fn passes(
-    i: TxnIdx,
-    t: &Transaction,
+/// The time range and the filter for one refresh.
+struct Check<'a> {
     range: Option<(Ts, Ts)>,
-    filter: Option<&Filter>,
+    filter: Option<&'a Filter>,
+    /// The filter has terms that change with the clock.
+    clock: bool,
     now: Ts,
-    hits: &HashMap<(TxnIdx, usize), (u64, bool)>,
-    wanted: &mut HashSet<(TxnIdx, usize)>,
-) -> bool {
-    if let Some((a, b)) = range
-        && !(t.start <= b && t.end.unwrap_or(if t.state.is_open() { now } else { t.start }) >= a)
-    {
-        return false;
-    }
-    filter.is_none_or(|f| {
-        f.matches(t, now, &mut |needle| match hits.get(&(i, needle)) {
+    hits: &'a HashMap<(TxnIdx, usize), (u64, bool)>,
+    wanted: &'a mut HashSet<(TxnIdx, usize)>,
+    cache: &'a mut Vec<Option<(u64, bool)>>,
+}
+
+impl Check<'_> {
+    /// Whether `t` passes the range and the filter. `body:` terms without a result yet are
+    /// queued in `wanted` and hide the row until the result arrives. Filter results are kept
+    /// per revision, except for open requests under a filter that uses the clock.
+    fn passes(&mut self, i: TxnIdx, t: &Transaction) -> bool {
+        let now = self.now;
+        if let Some((a, b)) = self.range
+            && !(t.start <= b && t.end.unwrap_or(if t.state.is_open() { now } else { t.start }) >= a)
+        {
+            return false;
+        }
+        let Some(f) = self.filter else { return true };
+        let volatile = self.clock && t.state.is_open();
+        if !volatile
+            && let Some(Some((rev, ok))) = self.cache.get(i as usize)
+            && *rev == t.rev
+        {
+            return *ok;
+        }
+        let mut waiting = false;
+        let (hits, wanted) = (self.hits, &mut *self.wanted);
+        let ok = f.matches(t, now, &mut |needle| match hits.get(&(i, needle)) {
             Some(&(rev, hit)) if rev == t.rev => Some(hit),
             _ => {
                 wanted.insert((i, needle));
+                waiting = true;
                 None
             }
-        })
-    })
+        });
+        if !waiting && let Some(slot) = self.cache.get_mut(i as usize) {
+            *slot = Some((t.rev, ok));
+        }
+        ok
+    }
 }
 
 fn same_endpoint(a: &Transaction, b: &Transaction) -> bool {
@@ -376,4 +419,99 @@ fn same_endpoint(a: &Transaction, b: &Transaction) -> bool {
 /// Whether a transaction is still in flight (for live displays).
 pub fn is_pending(t: &Transaction) -> bool {
     t.state.is_open() || t.state == TxnState::Detached && t.resp.is_none()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::SessionEvent;
+    use crate::event::{RequestStarted, ResponseStarted};
+    use crate::fmt::NS_PER_SEC;
+    use crate::model::TxnKey;
+
+    fn request(s: &mut SessionStore, txn: u64, path: &str, at: Ts) -> TxnKey {
+        let key = TxnKey { source: 0, txn };
+        s.apply(SessionEvent::Request(Box::new(RequestStarted {
+            key,
+            at,
+            call: None,
+            hop: 0,
+            method: "GET".into(),
+            url: format!("https://api.example.app{path}"),
+            headers: Vec::new(),
+            client: None,
+            thread: None,
+            stack: Vec::new(),
+            stack_truncated: false,
+            body: None,
+            marks: Vec::new(),
+            conn: None,
+        })));
+        key
+    }
+
+    fn respond(s: &mut SessionStore, key: TxnKey, status: u16, at: Ts) {
+        let r = ResponseStarted {
+            key,
+            at,
+            status,
+            message: String::new(),
+            protocol: None,
+            headers: Vec::new(),
+            conn: None,
+        };
+        s.apply(SessionEvent::Response(Box::new(r)));
+        s.apply(SessionEvent::Completed { key, at });
+    }
+
+    fn filtered(text: &str) -> RowModel {
+        let mut m = RowModel::new();
+        m.set_filter(Filter::parse(text).unwrap().map(Arc::new));
+        m
+    }
+
+    fn shown(m: &RowModel, s: &SessionStore) -> Vec<String> {
+        m.rows().iter().map(|r| s.txn(r.txn()).url.path.clone()).collect()
+    }
+
+    #[test]
+    fn a_request_is_filtered_again_when_it_changes() {
+        let mut s = SessionStore::new();
+        let a = request(&mut s, 1, "/a", NS_PER_SEC);
+        let b = request(&mut s, 2, "/b", NS_PER_SEC);
+        let mut m = filtered("status:4xx");
+        m.refresh(&s, 2 * NS_PER_SEC);
+        assert!(shown(&m, &s).is_empty());
+        respond(&mut s, a, 200, 2 * NS_PER_SEC);
+        respond(&mut s, b, 404, 2 * NS_PER_SEC);
+        m.refresh(&s, 3 * NS_PER_SEC);
+        assert_eq!(shown(&m, &s), ["/b"]);
+    }
+
+    #[test]
+    fn a_time_filter_follows_the_clock_for_open_requests() {
+        let mut s = SessionStore::new();
+        request(&mut s, 1, "/slow", NS_PER_SEC);
+        let mut m = filtered("time>2s");
+        m.refresh(&s, 2 * NS_PER_SEC);
+        assert!(shown(&m, &s).is_empty());
+        // no new events: only the clock moved
+        m.refresh(&s, 4 * NS_PER_SEC);
+        assert_eq!(shown(&m, &s), ["/slow"]);
+    }
+
+    #[test]
+    fn a_body_result_shows_the_row_when_it_arrives() {
+        let mut s = SessionStore::new();
+        let a = request(&mut s, 1, "/a", NS_PER_SEC);
+        respond(&mut s, a, 200, 2 * NS_PER_SEC);
+        let mut m = filtered("body:token");
+        m.refresh(&s, 3 * NS_PER_SEC);
+        assert!(shown(&m, &s).is_empty(), "hidden until the search has run");
+        let wanted = m.take_body_wanted();
+        assert_eq!(wanted, [(0, 0)]);
+        m.set_body_hit(0, 0, s.txn(0).rev, true);
+        m.refresh(&s, 3 * NS_PER_SEC);
+        assert_eq!(shown(&m, &s), ["/a"]);
+    }
 }
