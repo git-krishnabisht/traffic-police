@@ -333,7 +333,8 @@ field, and exactly what each action does with OkHttp and HttpURLConnection.
   again. They keep applying while recording is paused. A changed response gets
   `Cache-Control: no-store`, so OkHttp's cache does not keep it after the rule is off
   (`cache_rewrites = true` on a rule allows caching).
-- `tail`, `record` and `export --live` apply the rules as they are when the command starts.
+- `tail`, `record` and `export --live` apply the rules too, and saved changes reach the app while
+  they run; stderr says when the file is read again, and what is wrong with it.
 - The demo shows two built-in rules.
 
 ## Attach mode (Phase 4)
