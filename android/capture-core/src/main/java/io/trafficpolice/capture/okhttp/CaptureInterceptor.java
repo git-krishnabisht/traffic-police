@@ -63,7 +63,8 @@ public final class CaptureInterceptor implements Interceptor {
             }
             rules.beforeRequest(null, OkHttpRules.cancel(chain.call()));
             Response response = chain.proceed(request);
-            return rules.editsResponse() ? OkHttpRules.apply(rules, request, response, null, chain.call(), false)
+            return rules.editsResponse() && !isUpgrade(request, response)
+                    ? OkHttpRules.apply(rules, request, response, null, chain.call(), false)
                     : response;
         }
         CallState state = null;
@@ -187,10 +188,7 @@ public final class CaptureInterceptor implements Interceptor {
             txn.request.end("closed_early");
         }
         ResponseBody body = response.body();
-        boolean upgrade = response.code() == 101
-                || ("upgrade".equalsIgnoreCase(request.header("Connection"))
-                        && "upgrade".equalsIgnoreCase(response.header("Connection")));
-        if (upgrade) {
+        if (isUpgrade(request, response)) {
             // never tee (or rewrite) an upgraded connection: its body is the socket (OkHttp 5.2+
             // makes it unreadable)
             txn.response.end("none");
@@ -208,6 +206,13 @@ public final class CaptureInterceptor implements Interceptor {
         return response.newBuilder()
                 .body(new TeeResponseBody(body, txn, chain.call(), !state.hasListener))
                 .build();
+    }
+
+    /** A switch to another protocol: its body is the connection, never teed or rewritten. */
+    static boolean isUpgrade(Request request, Response response) {
+        return response.code() == 101
+                || ("upgrade".equalsIgnoreCase(request.header("Connection"))
+                        && "upgrade".equalsIgnoreCase(response.header("Connection")));
     }
 
     /** OkHttp's own rule (internal {@code promisesBody}), re-implemented as recommended. */

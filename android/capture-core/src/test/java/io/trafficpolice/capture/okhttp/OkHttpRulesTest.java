@@ -345,6 +345,29 @@ public final class OkHttpRulesTest {
     }
 
     @Test
+    public void an_upgrade_is_never_rewritten_recording_or_paused() throws Exception {
+        // a plain call that asks for an upgrade (WebSocket calls skip network interceptors)
+        rules("[" + rule("up", "{\"path\":{\"exact\":\"/up\"}}",
+                "[{\"type\":\"status\",\"code\":500},{\"type\":\"body\",\"text\":\"x\"}]") + "]");
+        for (boolean recording : new boolean[] {true, false}) {
+            if (!recording) {
+                host.send("{\"t\":\"set_config\",\"id\":9,\"config\":{\"recording\":false}}");
+                host.awaitType("config_ack", 5_000);
+            }
+            server.enqueue(new MockResponse().setResponseCode(101)
+                    .setHeader("Connection", "Upgrade").setHeader("Upgrade", "tp-test"));
+            Request up = new Request.Builder().url(url("/up"))
+                    .header("Connection", "Upgrade").header("Upgrade", "tp-test").build();
+            try (Response r = client.newCall(up).execute()) {
+                assertEquals("the upgrade goes through untouched (recording: " + recording + ")", 101, r.code());
+            }
+        }
+        for (TestHost.Msg m : host.received()) {
+            assertFalse("no rule event for an upgrade", "rule".equals(m.t()));
+        }
+    }
+
+    @Test
     public void rules_stop_when_the_host_disconnects() throws Exception {
         rules("[" + rule("gone", "{}", "[{\"type\":\"status\",\"code\":500}]") + "]");
         host.close();
