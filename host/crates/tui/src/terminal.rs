@@ -18,7 +18,6 @@ use crossterm::{cursor, execute};
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use tokio::sync::mpsc;
-use tokio::time::MissedTickBehavior;
 use tokio_stream::StreamExt;
 use traffic_police_core::SessionEvent;
 use traffic_police_core::backend::ConnectionStatus;
@@ -31,9 +30,11 @@ use crate::ui;
 
 pub(crate) type Term = Terminal<CrosstermBackend<Stdout>>;
 
+/// Redraw pacing: up to 60 frames a second for input and arriving data, 30 while only the
+/// clock moves things (the live graph, growing bars), none when nothing changes.
 const INPUT_FRAME: Duration = Duration::from_millis(16);
-const DATA_FRAME: Duration = Duration::from_millis(33);
-const IDLE_FRAME: Duration = Duration::from_millis(250);
+const DATA_FRAME: Duration = Duration::from_millis(16);
+const CLOCK_FRAME: Duration = Duration::from_millis(33);
 
 /// Put the terminal back: raw mode off, main screen, mouse and paste reporting off, cursor on.
 /// Safe to call more than once and from the panic hook.
@@ -108,14 +109,23 @@ async fn event_loop(
     let mut editor: Option<Editor> = None;
     let (jq_tx, mut jq_rx) = mpsc::unbounded_channel::<(JqJob, JqResult)>();
     let (body_tx, mut body_rx) = mpsc::unbounded_channel::<(BodyJob, BodyView)>();
-    let mut ticker = tokio::time::interval(INPUT_FRAME);
-    ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
     let mut backend_open = true;
     let mut stop = StopSignals::new()?;
     let mut input_dirty = true;
     let mut data_dirty = false;
     let mut last_draw: Option<Instant> = None;
     loop {
+        // wake exactly when the next frame is due (nothing to draw: wait for an event)
+        let pace = if input_dirty {
+            Some(INPUT_FRAME)
+        } else if data_dirty {
+            Some(DATA_FRAME)
+        } else if editor.is_none() && app.is_time_dependent() {
+            Some(CLOCK_FRAME)
+        } else {
+            None
+        };
+        let wake = pace.map(|p| tokio::time::Instant::from_std(last_draw.map_or_else(Instant::now, |t| t + p)));
         tokio::select! {
             ev = async { input.as_mut().expect("guarded").next().await }, if input.is_some() => match ev {
                 Some(Ok(Event::Mouse(m))) if m.kind == MouseEventKind::Moved => {}
@@ -174,7 +184,7 @@ async fn event_loop(
                 traffic_police_core::store::spill::remove_all();
                 return Ok(());
             }
-            _ = ticker.tick() => {}
+            _ = async { tokio::time::sleep_until(wake.expect("guarded")).await }, if wake.is_some() => {}
         }
         if app.should_quit {
             return Ok(());
@@ -216,10 +226,12 @@ async fn event_loop(
         let since = last_draw.map_or(Duration::MAX, |t| t.elapsed());
         let due = (input_dirty && since >= INPUT_FRAME)
             || (data_dirty && since >= DATA_FRAME)
-            || (app.is_time_dependent() && since >= IDLE_FRAME);
+            || (app.is_time_dependent() && since >= CLOCK_FRAME);
         if due {
+            let started = Instant::now();
             term.draw(|f| ui::draw(f, app))?;
-            last_draw = Some(Instant::now());
+            app.frames.record(started, started.elapsed());
+            last_draw = Some(started);
             input_dirty = false;
             data_dirty = false;
         }

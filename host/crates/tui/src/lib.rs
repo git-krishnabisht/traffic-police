@@ -4,6 +4,7 @@ pub mod app;
 pub mod bodycache;
 pub mod bodyview;
 pub mod detail;
+pub mod graph;
 pub mod images;
 pub mod picker;
 pub mod terminal;

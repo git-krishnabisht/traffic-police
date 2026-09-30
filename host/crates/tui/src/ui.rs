@@ -18,6 +18,7 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::app::{App, Bar, Focus, Overlay, Tab, Target, View};
 use crate::detail::{self, draw_line};
+use crate::graph::{self, GraphStyle};
 use crate::theme::Theme;
 
 pub const MIN_WIDTH: u16 = 100;
@@ -220,7 +221,15 @@ fn draw_graph(app: &mut App, r: Rect, buf: &mut Buffer) {
         width: r.width.saturating_sub(GUTTER + 1),
         height: r.height.saturating_sub(2),
     };
-    let n = (plot.width as usize * 2).max(2);
+    // braille resolves two samples per cell; the other styles one per column
+    let per_cell = if app.graph_style == GraphStyle::Braille { 2 } else { 1 };
+    let n = (plot.width as usize * per_cell).max(2);
+    // Columns are fixed slices of time and the window ends at the last complete one: a moving
+    // window would re-slice every frame (values jitter) and the newest slice would dip while it
+    // fills. The graph lags "now" by at most one column.
+    let bucket_ns = (right.saturating_sub(left) / n as u64).max(1);
+    let right = right / bucket_ns * bucket_ns;
+    let left = right.saturating_sub(bucket_ns * n as u64);
     let b = app.view_store().traffic().buckets(app.graph_source, left, right, n);
     let max = b.rx.iter().chain(b.tx.iter()).copied().fold(0.0f64, f64::max);
     let ymax = fmt::nice_rate_ceil(max.max(1024.0));
@@ -298,22 +307,39 @@ fn draw_graph(app: &mut App, r: Rect, buf: &mut Buffer) {
     let points = |v: &[f64]| -> Vec<(f64, f64)> {
         v.iter().enumerate().filter(|&(i, _)| shown(i)).map(|(i, v)| (i as f64 + 0.5, *v)).collect()
     };
-    let (rx, tx) = (points(&b.rx), points(&b.tx));
-    let chart = Chart::new(vec![
-        Dataset::default()
-            .marker(Marker::Braille)
-            .graph_type(GraphType::Line)
-            .style(Style::default().fg(t.send()))
-            .data(&tx),
-        Dataset::default()
-            .marker(Marker::Braille)
-            .graph_type(GraphType::Line)
-            .style(Style::default().fg(t.recv()))
-            .data(&rx),
-    ])
-    .x_axis(Axis::default().bounds([0.0, n as f64]))
-    .y_axis(Axis::default().bounds([0.0, ymax]));
-    chart.render(plot, buf);
+    let columns =
+        |v: &[f64]| -> Vec<Option<f64>> { v.iter().enumerate().map(|(i, v)| shown(i).then_some(*v)).collect() };
+    let send_style = Style::default().fg(t.send()).add_modifier(Modifier::BOLD);
+    let recv_style = Style::default().fg(t.recv()).add_modifier(Modifier::BOLD);
+    match app.graph_style {
+        GraphStyle::Braille => {
+            let (rx, tx) = (points(&b.rx), points(&b.tx));
+            let chart = Chart::new(vec![
+                Dataset::default()
+                    .marker(Marker::Braille)
+                    .graph_type(GraphType::Line)
+                    .style(Style::default().fg(t.send()))
+                    .data(&tx),
+                Dataset::default()
+                    .marker(Marker::Braille)
+                    .graph_type(GraphType::Line)
+                    .style(Style::default().fg(t.recv()))
+                    .data(&rx),
+            ])
+            .x_axis(Axis::default().bounds([0.0, n as f64]))
+            .y_axis(Axis::default().bounds([0.0, ymax]));
+            chart.render(plot, buf);
+        }
+        GraphStyle::Heavy | GraphStyle::Lines => {
+            let heavy = app.graph_style == GraphStyle::Heavy;
+            graph::draw_steps(buf, plot, &columns(&b.tx), ymax, send_style, heavy);
+            graph::draw_steps(buf, plot, &columns(&b.rx), ymax, recv_style, heavy);
+        }
+        GraphStyle::Area => {
+            graph::draw_area(buf, plot, &columns(&b.rx), ymax, Style::default().fg(t.recv()));
+            graph::draw_steps(buf, plot, &columns(&b.tx), ymax, send_style, false);
+        }
+    }
     // markers (attach, detach, pause, ...)
     for m in app.view_store().markers().iter().filter(|m| m.at >= left && m.at < right) {
         let x = x_of(m.at);
@@ -1078,6 +1104,10 @@ fn draw_status(app: &App, r: Rect, buf: &mut Buffer) {
             avail -= w;
             left.push(n);
         }
+    }
+    if app.frames.visible {
+        let (fps, took) = app.frames.summary();
+        right.insert(0, Span::styled(format!("{fps} fps · {:.1} ms  ", took.as_secs_f64() * 1e3), t.faint()));
     }
     right.push(Span::styled(help, t.dim()));
     text(buf, r.x, r.y, r.width, left);

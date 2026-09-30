@@ -3,16 +3,16 @@ source: crates/tui/tests/snapshots.rs
 expression: "detail(12.0, MEDIUM, init(), \"lp\")"
 ---
  traffic-police  Pixel 8 [demo]  com.example.deepid_example  pid 4312  ● LIVE  ✎ 1 rule active                         images: half-blocks
- NETWORK  all app traffic · T switches                                                            ━ Receiving 2.9 KB/s   ━ Sending 1.4 KB/s
-  16 KB/s                                                                              ┊
-                                                                                       ┊            ⢠⠤⡀
-                                                                                       ┊            ⢸ ⡇
-                                                                                       ┊            ⡎ ⢣                 ⡤⡄
- 8.0 KB/s                                                                              ┊            ⡇ ⢸            ⢀⣀⡀ ⢸ ⢣
-                                                                                       ┊      ⣀⣀   ⢀⠇ ⠈⠉⠣⣀⡠⠒⢢  ⡔⠒⠤⠤⠊ ⢇ ⡜ ⢸⡖⠢⣀⣀⣀⣀    ⢸⠉⢣
-                                                                                       ⢀⣀⡀ ⢀⣀⡰⠁⠒⠉⠙⢄⣸  ⢠⠤⠜⠉⢣  ⠓⠚⠃⠈⡆   ⠘⠒⢆ ⢸⡄    ⠈⠢⠤⢄⣀⡇ ⠈⠦⢄
-        0                                                                              ⠐⠒⠑⠒⠊⠉⠁    ⠣⠤⠤⠤⠃   ⠈⠒⠒⠁   ⠈⠉⠑⠒⠃ ⠈⠒⠃⠧⠔⠉⠉⠢⠴⠁   ⠘⠒⠊⠉⠈⠒⠒
-                                                                                       00:00.000            00:05.000             00:10.000
+ NETWORK  all app traffic · T switches                                                            ━ Receiving 3.3 KB/s   ━ Sending 1.4 KB/s
+  16 KB/s                                                                               ┊
+                                                                                        ┊            ┏━┓
+                                                                                        ┊            ┃ ┃
+                                                                                        ┊            ┃ ┃                 ┏┓
+ 8.0 KB/s                                                                               ┊            ┃ ┗┓           ┏━┓ ┏┛┃           ┏┓
+                                                                                        ┊      ┏━━┓  ┃  ┗┏━┓━━┓┏┏━┓━┛ ┃ ┃ ┗┏━━━━━┓ ┏━┏┛┗┓
+                                                                                        ━━┏┓┏━━┛━━┗┓━┛ ┏━┛ ┗┓┏┗┛┛ ┗━┓ ┗━┛┓┏┛┏━━┓ ┗━┛━┛┓┏┗━┓
+        0                                                                               ━━┛┗┛      ┗━━━┛    ┗┛      ┗━┛  ┗┛┗┛  ┗━┛    ┗┛  ┗
+                                                                                        00:00.000            00:05.000
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
  Connection View   Thread View   Rules                               26 rows │  Overview   Response   Request   Call Stack               ✕
 Name                      Size Type      Status         Time Timeline        │ HTTP/2 200 OK

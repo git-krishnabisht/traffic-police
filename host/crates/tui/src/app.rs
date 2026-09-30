@@ -197,6 +197,31 @@ struct Frozen {
     events_since: u64,
 }
 
+/// Recent frames, for the optional frame-rate readout.
+#[derive(Debug, Clone, Default)]
+pub struct FrameStats {
+    /// Show the readout in the footer.
+    pub visible: bool,
+    /// Start of each frame in the last second, and how long it took to draw.
+    recent: std::collections::VecDeque<(Instant, Duration)>,
+}
+
+impl FrameStats {
+    pub fn record(&mut self, at: Instant, took: Duration) {
+        self.recent.push_back((at, took));
+        while self.recent.front().is_some_and(|(t, _)| at.duration_since(*t) > Duration::from_secs(1)) {
+            self.recent.pop_front();
+        }
+    }
+
+    /// Frames drawn in the last second, and the mean time to draw one.
+    pub fn summary(&self) -> (usize, Duration) {
+        let n = self.recent.len();
+        let total: Duration = self.recent.iter().map(|(_, d)| *d).sum();
+        (n, if n == 0 { Duration::ZERO } else { total / n as u32 })
+    }
+}
+
 /// Where the Thread View's bars are, flattened in visual order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Bar {
@@ -220,6 +245,8 @@ pub struct App {
     pub detail_height: usize,
     pub graph: GraphState,
     pub graph_source: GraphSource,
+    pub graph_style: crate::graph::GraphStyle,
+    pub frames: FrameStats,
     pub wall_labels: bool,
     pub columns: Vec<Column>,
     pub split_pct: u16,
@@ -272,6 +299,8 @@ impl App {
             detail_height: 10,
             graph: GraphState { span: DEFAULT_SPAN, ..Default::default() },
             graph_source: GraphSource::AppTotal,
+            graph_style: crate::graph::GraphStyle::default(),
+            frames: FrameStats { visible: std::env::var_os("TRAFFIC_POLICE_FPS").is_some(), ..Default::default() },
             wall_labels: false,
             columns: Column::DEFAULT.to_vec(),
             split_pct: 55,
