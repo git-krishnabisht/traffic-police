@@ -2598,6 +2598,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "traffic-police-adb"
+version = "0.1.0"
+dependencies = [
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "traffic-police-backends"
 version = "0.1.0"
 dependencies = [

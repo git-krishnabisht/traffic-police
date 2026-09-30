@@ -57,10 +57,20 @@ class MainActivity : Activity() {
         scope.launch {
             withContext(Dispatchers.IO) { Backend.start() }
             log("backend on 127.0.0.1:${Backend.http.port} (https ${Backend.https.port})")
-            when (intent.getStringExtra("run")) {
-                "all" -> runAll()
-                "poll" -> startPolling()
-            }
+            handle(intent)
+        }
+    }
+
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        handle(intent)
+    }
+
+    /** `--es run all` runs every scenario; `--es run poll` starts polling. */
+    private fun handle(intent: android.content.Intent?) {
+        when (intent?.getStringExtra("run")) {
+            "all" -> runAll()
+            "poll" -> startPolling()
         }
     }
 

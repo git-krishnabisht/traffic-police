@@ -1,0 +1,15 @@
+[package]
+name = "traffic-police-adb"
+description = "adb server client for traffic-police: device and process tracking, shell, forwards, runtime socket discovery"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+tokio.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
