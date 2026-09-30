@@ -3,6 +3,7 @@ package io.trafficpolice.capture.core;
 import java.util.ArrayDeque;
 import java.util.Iterator;
 import java.util.LinkedHashSet;
+import java.util.List;
 
 /**
  * The bounded queue between app threads and the writer (ARCHITECTURE.md §4.5). App threads
@@ -16,6 +17,8 @@ final class EventQueue {
     private final long maxBytes;
     private long bytes;
     private boolean woken;
+    /** The writer waits with nothing to do; only then does an offer wake it (a system call). */
+    private boolean idle;
 
     private long droppedEvents;
     private long droppedBytes;
@@ -42,20 +45,31 @@ final class EventQueue {
                 }
             }
         }
-        notifyAll();
+        if (idle) {
+            idle = false;
+            notifyAll();
+        }
     }
 
-    /** The next event, waiting up to {@code timeoutMillis}; null on timeout or {@link #wake()}. */
-    synchronized Event poll(long timeoutMillis) throws InterruptedException {
+    /**
+     * Moves every queued event to {@code out}, in order. With none queued, waits up to
+     * {@code timeoutMillis} for one, or for {@link #wake()}.
+     */
+    synchronized void drainTo(List<Event> out, long timeoutMillis) throws InterruptedException {
         if (queue.isEmpty() && !woken) {
-            wait(timeoutMillis);
+            idle = true;
+            try {
+                wait(timeoutMillis);
+            } finally {
+                idle = false;
+            }
         }
         woken = false;
-        Event e = queue.pollFirst();
-        if (e != null) {
+        Event e;
+        while ((e = queue.pollFirst()) != null) {
             bytes -= e.size();
+            out.add(e);
         }
-        return e;
     }
 
     synchronized boolean isEmpty() {

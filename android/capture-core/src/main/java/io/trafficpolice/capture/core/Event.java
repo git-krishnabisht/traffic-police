@@ -104,7 +104,7 @@ abstract class Event {
 
         @Override
         int size() {
-            return 256 + url.length() * 2 + stringsSize(headers) + (stack == null ? 0 : stack.frames.length * 96);
+            return 256 + url.length() * 2 + stringsSize(headers) + (stack == null ? 0 : stack.sizeEstimate() * 96);
         }
 
         @Override

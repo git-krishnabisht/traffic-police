@@ -48,9 +48,11 @@ public class ProtocolGoldenTest {
     private CaptureRuntime rt;
 
     @Before
-    public void setUp() {
+    public void setUp() throws InterruptedException {
         platform = new TestPlatform(true);
         rt = TestPlatform.runtime(platform, true);
+        // the runtime's "started" diag is in the ring before any host connects
+        TestPlatform.awaitWriter(rt);
     }
 
     @After

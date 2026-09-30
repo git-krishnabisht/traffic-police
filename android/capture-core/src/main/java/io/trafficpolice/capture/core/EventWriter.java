@@ -1,6 +1,7 @@
 package io.trafficpolice.capture.core;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
@@ -25,13 +26,19 @@ final class EventWriter implements Runnable {
         this.ring = ring;
     }
 
+    /**
+     * After a batch, the writer rests this long so the rest of a burst (a request makes about 20
+     * events within milliseconds) arrives without waking it event by event.
+     */
+    private static final long GATHER_MS = 2;
+
     @Override
     public void run() {
+        List<Event> batch = new ArrayList<>();
         while (running) {
             runTasks();
-            Event e;
             try {
-                e = queue.poll(250);
+                queue.drainTo(batch, 250);
             } catch (InterruptedException ie) {
                 break;
             }
@@ -39,15 +46,25 @@ final class EventWriter implements Runnable {
             if (dropped != null) {
                 emit(dropped);
             }
-            if (e != null) {
+            for (Event e : batch) {
                 emit(e);
             }
-            if (client != null && queue.isEmpty()) {
+            boolean worked = dropped != null || !batch.isEmpty();
+            batch.clear();
+            if (!worked) {
+                continue;
+            }
+            if (client != null) {
                 try {
                     client.flush();
                 } catch (IOException ex) {
                     dropClient();
                 }
+            }
+            try {
+                Thread.sleep(GATHER_MS);
+            } catch (InterruptedException ie) {
+                break;
             }
         }
         runTasks();

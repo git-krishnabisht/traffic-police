@@ -2,7 +2,9 @@ package io.trafficpolice.capture.core;
 
 /**
  * The thread and call stack that started a request (PROTOCOL.md §4 {@code thread}, {@code stack}).
- * Captured on the app's thread; the frames are formatted on the writer thread.
+ * The app's thread only records where it is ({@code new Throwable()}); turning that into frames
+ * ({@code getStackTrace()}: class, method, file and line for every frame), the costly part on
+ * ART, happens on the writer thread.
  */
 public final class ThreadStack {
     public static final String ORIGIN_CALL = "call";
@@ -12,15 +14,27 @@ public final class ThreadStack {
     final String threadName;
     final long threadId;
     final String origin;
-    final StackTraceElement[] frames;
-    final boolean truncated;
+    private final int depth;
+    /** Where the app was; resolved (and dropped) on first use of {@link #frames()}. */
+    private Throwable site;
+    private StackTraceElement[] frames;
+    private boolean truncated;
 
     public ThreadStack(String threadName, long threadId, String origin, StackTraceElement[] frames, boolean truncated) {
         this.threadName = threadName;
         this.threadId = threadId;
         this.origin = origin;
+        this.depth = frames.length;
         this.frames = frames;
         this.truncated = truncated;
+    }
+
+    private ThreadStack(String threadName, long threadId, String origin, Throwable site, int depth) {
+        this.threadName = threadName;
+        this.threadId = threadId;
+        this.origin = origin;
+        this.depth = depth;
+        this.site = site;
     }
 
     /**
@@ -29,15 +43,34 @@ public final class ThreadStack {
      */
     public static ThreadStack capture(String origin, int depth) {
         Thread t = Thread.currentThread();
-        StackTraceElement[] all = depth > 0 ? new Throwable().getStackTrace() : new StackTraceElement[0];
-        int start = 0;
-        while (start < all.length && isRuntimeFrame(all[start].getClassName())) {
-            start++;
+        return new ThreadStack(t.getName(), threadIdOf(t), origin, depth > 0 ? new Throwable() : null, depth);
+    }
+
+    /** The frames, resolved on first use (the writer thread). */
+    synchronized StackTraceElement[] frames() {
+        if (frames == null) {
+            StackTraceElement[] all = site != null ? site.getStackTrace() : new StackTraceElement[0];
+            site = null;
+            int start = 0;
+            while (start < all.length && isRuntimeFrame(all[start].getClassName())) {
+                start++;
+            }
+            int n = Math.max(0, Math.min(depth, all.length - start));
+            frames = new StackTraceElement[n];
+            System.arraycopy(all, start, frames, 0, n);
+            truncated = all.length - start > n;
         }
-        int n = Math.min(depth, all.length - start);
-        StackTraceElement[] frames = new StackTraceElement[Math.max(0, n)];
-        System.arraycopy(all, start, frames, 0, frames.length);
-        return new ThreadStack(t.getName(), threadIdOf(t), origin, frames, all.length - start > frames.length);
+        return frames;
+    }
+
+    synchronized boolean truncated() {
+        frames();
+        return truncated;
+    }
+
+    /** Frames this stack will have at most, for memory estimates (without resolving it). */
+    int sizeEstimate() {
+        return depth;
     }
 
     /** Classes of the capture runtime itself (not apps that happen to share the prefix). */
@@ -59,7 +92,7 @@ public final class ThreadStack {
 
     void writeStack(Json j) {
         j.key("stack").arr();
-        for (StackTraceElement f : frames) {
+        for (StackTraceElement f : frames()) {
             j.obj().kv("c", f.getClassName()).kv("m", f.getMethodName());
             if (f.getFileName() != null) {
                 j.kv("f", f.getFileName());
@@ -70,6 +103,6 @@ public final class ThreadStack {
             j.endObj();
         }
         j.endArr();
-        j.kv("stack_truncated", truncated);
+        j.kv("stack_truncated", truncated());
     }
 }
