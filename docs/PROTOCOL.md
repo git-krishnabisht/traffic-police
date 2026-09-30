@@ -601,15 +601,18 @@ Frame types inside the gzip stream:
 
 | Type | Content |
 |---:|---|
-| 1, 2 | Device frames exactly as received |
-| 16 | JSON `{"t":"session", "format":1, "created_wall_ms":…, "host":{…}, "filter":null}` — first frame |
-| 17 | JSON `{"t":"source", "source":N, "device":{…serial, model…}, "hello":{…original hello…}}` — starts or switches to source N; following device frames belong to N until the next type-17 frame |
-| 18 | JSON `{"t":"source_end", "source":N, "ts":…, "reason":"detached"}` |
-| 19 | JSON `{"t":"annotations", "pins":[…], "markers":[…], "notes":{…}}` — may repeat; the last one wins |
+| 1, 2 | Device frames exactly as received (§4, §5), except `hello`, which is kept in the source record |
+| 16 | JSON `{"t":"session", "format":1, "created_wall_ms":…, "host":{"name":"traffic-police","version":…}, "filter":null}` — the first frame. `filter` is null in format 1 |
+| 17 | JSON `{"t":"source", "source":N, "device":{"label":…, "serial":…}, "hello":{…the hello as received…}, "resumed":false}` — source N starts: a process the host connected to. `"resumed":true` means the host reconnected to the same process (same `instance`) and kept the source; the frames that follow continue it. The short form `{"t":"source", "source":N}` switches back to a source already started. Device frames belong to the source of the latest type-17 frame |
+| 18 | JSON `{"t":"source_end", "source":N, "ts":…, "reason":"the app exited"}` — `reason` is text for people |
+| 19 | JSON `{"t":"annotations", "pins":[{"source":N,"txn":T}], "markers":[{"at":…,"kind":"pause","label":…}], "notes":{}}` — written when a recording finishes; may repeat, and the last one wins. Marker kinds: `pause`, `resume`, `note` |
 
+- Source numbers are the writing host's; a reader gives sources its own numbers (pins are mapped along).
+- A file saved from the UI's `e` menu, or by `traffic-police record --filter`, may hold only some requests: it keeps every source record and every frame that belongs to no request (clock, traffic, diagnostics), and only the chosen requests' frames.
+- A reader keeps everything before a truncated gzip stream or frame, and says the recording was cut short (a crash, or a full disk).
 - Nothing is redacted: session files hold exactly what was captured (ARCHITECTURE.md 9.2).
 - Writers flush the gzip stream at least every 5 s during `traffic-police record`, so a crash loses little.
-- HAR files are imported by a separate backend that synthesizes the same events (without threads or stacks).
+- HAR files are imported by a separate reader that synthesizes the same events for a `har` source; threads, stacks and failures come back only from the `_trafficPolice` fields traffic-police writes (ARCHITECTURE.md 5.10).
 
 ## 11. Conformance tests
 
