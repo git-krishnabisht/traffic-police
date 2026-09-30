@@ -7,7 +7,6 @@ import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
-import io.trafficpolice.TrafficPolice
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -37,7 +36,7 @@ class MainActivity : Activity() {
             setPadding(32, 48, 32, 32)
         }
         val status = TextView(this).apply {
-            text = if (TrafficPolice.isActive()) "capture: on (debug build)" else "capture: off"
+            text = Capture.label
             textSize = 16f
         }
         column.addView(status)

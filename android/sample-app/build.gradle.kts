@@ -32,6 +32,18 @@ android {
             isDebuggable = false
             matchingFallbacks += listOf("release")
         }
+        // The app with no traffic-police code at all, for attach mode (ARCHITECTURE.md §4.7).
+        create("plain") {
+            initWith(getByName("debug"))
+            applicationIdSuffix = ".plain"
+        }
+    }
+
+    // Capture.kt: the builds with the library call it; the plain build has a stand-in
+    sourceSets {
+        for (withLibrary in listOf("debug", "release", "nondebuggable")) {
+            getByName(withLibrary).kotlin.directories.add("src/withLibrary/java")
+        }
     }
 
     compileOptions {

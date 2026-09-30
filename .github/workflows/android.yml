@@ -34,6 +34,7 @@ jobs:
           :capture-core:check
           :capture:assembleRelease :capture-noop:assembleRelease
           :sample-app:assembleDebug :sample-app:assembleRelease :sample-app:assembleNondebuggable
+          :sample-app:assemblePlain
           publishAllPublicationsToBuildRepository
       - name: The published libraries have no third-party runtime dependencies
         run: |
@@ -43,12 +44,17 @@ jobs:
           fi
           others=$(grep -o "<artifactId>[^<]*</artifactId>" $repo/capture/*/capture-*.pom | grep -v -e ">capture<" -e ">capture-core<" || true)
           if [ -n "$others" ]; then echo "capture depends on: $others"; exit 1; fi
-      - name: Release builds carry no capture code
+      - name: Release builds carry no capture code, and the plain build none of ours at all
         run: |
           apk=sample-app/build/outputs/apk/release/sample-app-release.apk
           unzip -q -o "$apk" 'classes*.dex' -d release-dex
           if grep -a -q "Lio/trafficpolice/capture/" release-dex/classes*.dex; then
             echo "the release APK contains capture classes"; exit 1
+          fi
+          apk=sample-app/build/outputs/apk/plain/sample-app-plain.apk
+          unzip -q -o "$apk" 'classes*.dex' -d plain-dex
+          if grep -a -o "Lio/trafficpolice/[a-z]*/" plain-dex/classes*.dex | grep -v "/sample/"; then
+            echo "the plain APK contains traffic-police classes"; exit 1
           fi
 
   # The sample app on emulators, driven by the host's end-to-end test: every scenario, both

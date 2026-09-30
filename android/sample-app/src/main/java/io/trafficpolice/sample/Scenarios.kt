@@ -2,7 +2,6 @@ package io.trafficpolice.sample
 
 import android.content.Context
 import android.content.Intent
-import io.trafficpolice.TrafficPolice
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -52,10 +51,8 @@ interface SdkApi {
 class Scenarios(private val context: Context, private val log: (String) -> Unit) {
     private val jsonType = "application/json; charset=utf-8".toMediaType()
 
-    /** The app's client: our network interceptor and listener, as the README shows. */
-    val client: OkHttpClient = OkHttpClient.Builder()
-        .addNetworkInterceptor(TrafficPolice.networkInterceptor())
-        .eventListenerFactory(TrafficPolice.eventListenerFactory())
+    /** The app's client: with the library, our network interceptor and listener, as the README shows. */
+    val client: OkHttpClient = Capture.instrument(OkHttpClient.Builder())
         .readTimeout(10, TimeUnit.SECONDS)
         .build()
 
@@ -139,9 +136,9 @@ class Scenarios(private val context: Context, private val log: (String) -> Unit)
     }
 
     private suspend fun huc() = withContext<Unit>(Dispatchers.IO) {
-        val get = TrafficPolice.wrap(URL(base.resolve("/huc/config").toString()).openConnection() as HttpURLConnection)
+        val get = Capture.wrap(URL(base.resolve("/huc/config").toString()).openConnection() as HttpURLConnection)
         get.inputStream.use { it.readBytes() }
-        val post = TrafficPolice.wrap(URL(base.resolve("/huc/submit").toString()).openConnection() as HttpURLConnection)
+        val post = Capture.wrap(URL(base.resolve("/huc/submit").toString()).openConnection() as HttpURLConnection)
         post.requestMethod = "POST"
         post.doOutput = true
         post.setRequestProperty("Content-Type", "application/json")
@@ -226,7 +223,7 @@ class Scenarios(private val context: Context, private val log: (String) -> Unit)
         val trust = Backend.trust
         val tls = client.newBuilder().sslSocketFactory(trust.sslSocketFactory(), trust.trustManager).build()
         tls.newCall(Request.Builder().url(Backend.https.url("/secure")).build()).execute().use { it.body.string() }
-        val conn = TrafficPolice.wrap(URL(Backend.https.url("/secure").toString()).openConnection() as HttpURLConnection)
+        val conn = Capture.wrap(URL(Backend.https.url("/secure").toString()).openConnection() as HttpURLConnection)
         (conn as HttpsURLConnection).sslSocketFactory = trust.sslSocketFactory()
         conn.hostnameVerifier = javax.net.ssl.HostnameVerifier { host, _ -> host == "127.0.0.1" || host == "localhost" }
         conn.inputStream.use { it.readBytes() }
