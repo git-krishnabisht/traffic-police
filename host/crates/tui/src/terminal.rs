@@ -391,7 +391,8 @@ fn resume_terminal(term: &mut Term) -> anyhow::Result<()> {
 /// goodbye, which removes the adb forward.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum StopSignal {
-    /// SIGTERM.
+    /// SIGTERM (Unix).
+    #[cfg(unix)]
     Terminate,
     /// SIGHUP, or the console window closed (Windows): the terminal is gone.
     HangUp,

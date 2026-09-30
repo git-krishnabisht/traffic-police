@@ -634,7 +634,8 @@ name = "stub"
 
     #[test]
     fn the_readme_example_is_valid() {
-        let readme = include_str!("../../../../README.md");
+        // a Windows checkout may have CRLF line endings
+        let readme = include_str!("../../../../README.md").replace("\r\n", "\n");
         let section = &readme[readme.find("\n## Rules\n").expect("the README's Rules section")..];
         let start = section.find("```toml\n").expect("its example") + "```toml\n".len();
         let end = start + section[start..].find("```").expect("the example's end");
@@ -648,7 +649,7 @@ name = "stub"
 
     #[test]
     fn the_protocol_example_is_valid() {
-        let doc = include_str!("../../../../docs/PROTOCOL.md");
+        let doc = include_str!("../../../../docs/PROTOCOL.md").replace("\r\n", "\n");
         let section = &doc[doc.find("### 8.1 File format").expect("PROTOCOL.md §8.1")..];
         let start = section.find("```toml\n").expect("its example") + "```toml\n".len();
         let end = start + section[start..].find("```").expect("the example's end");

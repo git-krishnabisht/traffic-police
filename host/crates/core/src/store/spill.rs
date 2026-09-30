@@ -101,6 +101,7 @@ fn private_dir_in(parent: &Path) -> io::Result<PathBuf> {
     let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
     let n = COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let dir = parent.join(format!("{PREFIX}{}-{:x}{n:x}", std::process::id(), nanos & 0xffff_ffff_ffff));
+    #[cfg_attr(not(unix), allow(unused_mut))] // only Unix sets a mode
     let mut builder = fs::DirBuilder::new();
     #[cfg(unix)]
     std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);

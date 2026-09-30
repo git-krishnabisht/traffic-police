@@ -44,7 +44,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: host
-      - run: cargo test --locked
+      # every test target runs, so one failure does not hide the next
+      - run: cargo test --locked --no-fail-fast
 
   frame-time:
     runs-on: ubuntu-latest
