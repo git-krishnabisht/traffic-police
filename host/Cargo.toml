@@ -6,6 +6,8 @@ members = ["crates/proto", "crates/core", "crates/adb", "crates/backends", "crat
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.90"
+license = "Apache-2.0"
+repository = "https://github.com/git-krishnabisht/traffic-police"
 publish = false
 
 [workspace.dependencies]

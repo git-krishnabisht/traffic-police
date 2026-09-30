@@ -4,6 +4,8 @@ description = "Event sources for traffic-police: the demo device and live device
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
 publish.workspace = true
 
 [dependencies]

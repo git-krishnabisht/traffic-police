@@ -4,6 +4,8 @@ description = "Watch an Android app's HTTP traffic from the terminal"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
 publish.workspace = true
 
 [[bin]]
