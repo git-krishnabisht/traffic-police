@@ -58,6 +58,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         Overlay::Prompt => draw_prompt(f, app, footer),
         Overlay::Diff => crate::diffview::draw(app, area, f.buffer_mut()),
         Overlay::Decoded => crate::values::draw(app, area, f.buffer_mut()),
+        Overlay::Palette => crate::palette::draw(f, app, area),
         Overlay::None => {}
     }
 }
@@ -101,7 +102,7 @@ fn border_labels(buf: &mut Buffer, r: Rect, y: u16, right: bool, labels: Vec<Vec
     out
 }
 
-fn fill(buf: &mut Buffer, r: Rect, style: Style) {
+pub(crate) fn fill(buf: &mut Buffer, r: Rect, style: Style) {
     for y in r.y..r.y + r.height {
         for x in r.x..r.x + r.width {
             if let Some(c) = buf.cell_mut((x, y)) {
@@ -1291,6 +1292,7 @@ fn hints(app: &App) -> Vec<(&'static [Action], &'static str)> {
         }
         (Overlay::ConfirmClear | Overlay::Filter | Overlay::Jq | Overlay::Search | Overlay::Prompt, ..) => vec![],
         (Overlay::Menu, ..) => vec![(&[A::Up, A::Down], "move"), (&[A::Activate], "choose"), (&[A::Back], "close")],
+        (Overlay::Palette, ..) => vec![],
         (Overlay::Decoded, ..) => vec![(&[A::Up, A::Down], "scroll"), (&[A::Copy], "copy"), (&[A::Back], "close")],
         (Overlay::Diff, ..) => vec![
             (&[A::Up, A::Down], "scroll"),

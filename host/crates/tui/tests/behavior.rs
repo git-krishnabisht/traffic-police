@@ -502,6 +502,27 @@ fn enter_on_a_value_decodes_it_or_filters_by_it() {
 }
 
 #[test]
+fn the_palette_finds_and_runs_commands() {
+    let mut app = app_at(40.0);
+    let text = press(&mut app, MEDIUM, ":");
+    assert_eq!(app.overlay, Overlay::Palette);
+    assert!(text.contains("commands") && text.contains("Export"), "{text}");
+    // a setting without a key of its own
+    press(&mut app, MEDIUM, "braille<Enter>");
+    assert_eq!(app.overlay, Overlay::None);
+    assert_eq!(app.graph_style, traffic_police_tui::graph::GraphStyle::Braille);
+    // an action runs as its key would: pin the selected request
+    let to = goto(&mut app, MEDIUM, path_is("/api/sdk/init"));
+    press(&mut app, MEDIUM, &format!("{to}:pin<Enter>"));
+    assert!(app.view_store().txn(app.selected.unwrap()).pinned);
+    // nothing matches: Enter says so; Esc closes without running anything
+    press(&mut app, MEDIUM, ":zzzz<Enter>");
+    assert_eq!(app.overlay, Overlay::None);
+    press(&mut app, MEDIUM, ":pin<Esc>");
+    assert!(app.view_store().txn(app.selected.unwrap()).pinned, "Esc ran nothing");
+}
+
+#[test]
 fn body_filters_fill_in_from_the_background() {
     let mut app = app_at(40.0);
     press(&mut app, MEDIUM, "/body:\"simBinding\"<Enter>");

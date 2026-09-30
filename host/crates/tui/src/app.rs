@@ -86,6 +86,8 @@ pub enum Overlay {
     Diff,
     /// A decoded value (JWT, base64, URL encoding): `App::decoded`.
     Decoded,
+    /// The command palette (`:`): `App::palette`.
+    Palette,
 }
 
 /// A search match in the detail pane: a row, and display columns in it.
@@ -313,6 +315,7 @@ pub struct App {
     pub diff_mark: Option<traffic_police_core::model::TxnKey>,
     pub diff: Option<crate::diffview::DiffView>,
     pub decoded: Option<crate::values::Decoded>,
+    pub palette: Option<crate::palette::Palette>,
     /// The captured stream, for saving the session (`e`).
     pub session_log: Option<Arc<traffic_police_core::session::SessionLog>>,
     pub search_input: Input,
@@ -387,6 +390,7 @@ impl App {
             diff_mark: None,
             diff: None,
             decoded: None,
+            palette: None,
             search_input: Input::default(),
             search_before: None,
             filter_error: None,
@@ -815,6 +819,11 @@ impl App {
                     }
                 }
             }
+            Event::Paste(s) if self.overlay == Overlay::Palette => {
+                if let Some(p) = &mut self.palette {
+                    p.insert(&s);
+                }
+            }
             Event::Paste(s) if self.overlay == Overlay::Filter => {
                 for c in s.chars().filter(|c| !c.is_control()) {
                     self.filter_input.handle_event(&Event::Key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE)));
@@ -845,6 +854,10 @@ impl App {
             }
             Overlay::Decoded => {
                 self.decoded_key(k);
+                return;
+            }
+            Overlay::Palette => {
+                self.palette_key(k);
                 return;
             }
             Overlay::ConfirmClear => {
@@ -1085,9 +1098,7 @@ impl App {
             Action::Save => self.open_save_prompt(),
             Action::Export => self.open_export_menu(),
             Action::Diff => self.diff_action(),
-            Action::Palette => {
-                self.flash(format!("{}: coming later in Phase 2", a.info().title));
-            }
+            Action::Palette => self.open_palette(),
             _ => match self.focus {
                 Focus::Graph => self.graph_action(a),
                 Focus::List => match self.view {
@@ -1673,7 +1684,9 @@ impl App {
                 self.overlay = Overlay::None;
                 return;
             }
-            Overlay::Help | Overlay::Menu | Overlay::Columns { .. } | Overlay::ConfirmClear => return,
+            Overlay::Help | Overlay::Menu | Overlay::Columns { .. } | Overlay::ConfirmClear | Overlay::Palette => {
+                return;
+            }
             _ => {}
         }
         let (x, y) = (m.column, m.row);
