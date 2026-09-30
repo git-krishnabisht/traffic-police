@@ -8,7 +8,7 @@ use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, Mou
 use ratatui::layout::Rect;
 use tokio::sync::mpsc;
 use traffic_police_core::SessionEvent;
-use traffic_police_core::backend::{BackendCommand, Capabilities};
+use traffic_police_core::backend::{BackendCommand, Capabilities, ConnectionStatus};
 use traffic_police_core::event::MarkerKind;
 use traffic_police_core::fmt::{NS_PER_MS, NS_PER_SEC, Ts};
 use traffic_police_core::model::{BodyDir, TxnIdx};
@@ -242,8 +242,8 @@ pub struct App {
     jq_jobs: Vec<JqJob>,
     jq_running: usize,
     pub source_roots: Vec<PathBuf>,
-    /// What the backend says about the connection ("waiting for the app…"), for the header.
-    pub connection: Option<String>,
+    /// What a live backend says about its connection, for the header.
+    pub connection: Option<ConnectionStatus>,
     /// Set by input; the terminal loop suspends the UI and opens `$EDITOR`.
     pub editor_request: Option<(PathBuf, u32)>,
     pub area: Rect,
@@ -347,10 +347,13 @@ impl App {
         if let Some(t) = self.now_override {
             return t;
         }
-        // Between batches, extrapolate from the last event so live bars grow smoothly; stop after
-        // 1.5 s without events so a quiet or detached app does not drift ahead of its data.
+        // Between batches, extrapolate from the last event or clock reading so live bars grow
+        // smoothly. A connected app reports its clock at least every 5 s (pongs), so allow a
+        // little more than that; once no source is connected, time stops with the data.
+        let connected = self.store.sources().any(|s| s.ended.is_none());
+        let limit = if connected { Duration::from_secs(7) } else { Duration::ZERO };
         match self.live_anchor {
-            Some((ts, at)) => ts + at.elapsed().min(Duration::from_millis(1500)).as_nanos() as u64,
+            Some((ts, at)) => ts + at.elapsed().min(limit).as_nanos() as u64,
             None => self.store.latest(),
         }
         .max(self.store.latest())

@@ -1,0 +1,5 @@
+---
+source: crates/tui/tests/snapshots.rs
+expression: "header(&mut app_at(0.0), waiting)"
+---
+ traffic-police   ● WAITING  waiting for com.example.app on Pixel 8 [emulator-5554] (start the app; it needs a debug build with the traffic-

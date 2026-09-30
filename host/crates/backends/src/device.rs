@@ -13,7 +13,7 @@ use tokio::sync::{mpsc, watch};
 use tokio::time::Instant;
 use traffic_police_adb::{Adb, AdbError, Device, RuntimeSocket};
 use traffic_police_core::SessionEvent;
-use traffic_police_core::backend::BackendCommand;
+use traffic_police_core::backend::{BackendCommand, ConnectionStatus};
 use traffic_police_core::model::{SourceId, SourceInfo};
 use traffic_police_core::normalize::{Control, Normalizer};
 use traffic_police_core::store::SourceIds;
@@ -33,24 +33,22 @@ pub struct DeviceTarget {
     pub follow: bool,
 }
 
-/// What the UI shows about the connection.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DeviceStatus {
-    /// Looking for the device or the app; the text says what is missing.
-    Waiting(String),
-    /// Streaming from this process.
-    Live(String),
-    /// The session ended; data stays.
-    Detached(String),
-    /// Cannot continue (protocol mismatch, adb gone).
-    Failed(String),
+/// Whether Android's cached-apps freezer holds the process (it then runs no code at all).
+async fn is_frozen(adb: &Adb, device: &Device, pid: u32) -> bool {
+    adb.frozen_pids(device.transport_id, &[pid]).await.is_ok_and(|f| f.contains(&pid))
 }
 
-impl DeviceStatus {
-    pub fn text(&self) -> &str {
-        match self {
-            DeviceStatus::Waiting(s) | DeviceStatus::Live(s) | DeviceStatus::Detached(s) | DeviceStatus::Failed(s) => s,
-        }
+fn frozen_text(process: &str, pid: u32) -> String {
+    format!(
+        "{process} (pid {pid}) is frozen by Android: it is cached in the background and runs no code. Capture continues when the app runs again."
+    )
+}
+
+/// Publishes a status change (and logs it, for troubleshooting).
+fn set_status(status: &watch::Sender<ConnectionStatus>, s: ConnectionStatus) {
+    if *status.borrow() != s {
+        tracing::info!("connection: {s:?}");
+        status.send_replace(s);
     }
 }
 
@@ -67,6 +65,8 @@ struct Resume {
     last_seq: u64,
     /// The device clock at a known host instant (from `hello`, refreshed by `pong`).
     clock: (u64, Instant),
+    /// Its source has been ended on the timeline (it gets a new segment if it comes back).
+    closed: bool,
 }
 
 impl Resume {
@@ -96,10 +96,12 @@ pub async fn run_device(
     ids: SourceIds,
     events: mpsc::Sender<Vec<SessionEvent>>,
     mut commands: mpsc::UnboundedReceiver<BackendCommand>,
-    status: watch::Sender<DeviceStatus>,
+    status: watch::Sender<ConnectionStatus>,
 ) {
+    // the process we attach to (kept across hiccups and device disconnects, to resume it)
     let mut resume: Option<Resume> = None;
     let mut config = CaptureConfig::default();
+    // with --follow, the process that exited (its socket may linger for a moment)
     let mut followed_away_from: Option<u32> = None;
     loop {
         // a quit while waiting ends the backend
@@ -116,7 +118,12 @@ pub async fn run_device(
         let device = match find_device(&adb, target.serial.as_deref()).await {
             Ok(d) => d,
             Err(msg) => {
-                let _ = status.send(DeviceStatus::Waiting(msg));
+                let msg = if resume.is_some() {
+                    format!("the device was disconnected; reconnect it to continue ({msg})")
+                } else {
+                    msg
+                };
+                set_status(&status, ConnectionStatus::Waiting(msg));
                 if wait_or_quit(&mut commands, POLL).await {
                     return;
                 }
@@ -126,27 +133,32 @@ pub async fn run_device(
         let socket = match find_socket(&adb, &device, &target, resume.as_ref(), followed_away_from).await {
             Ok(Some(s)) => s,
             Ok(None) => {
-                let what = match &resume {
-                    Some(_) if target.follow => format!("{} exited; waiting for it to start again (--follow)", target.package),
-                    Some(_) => format!("{} exited", target.package),
-                    None => format!(
+                if let Some(mut r) = resume.take() {
+                    // the process we were attached to is gone
+                    close_source(&events, &mut r, "the app exited").await;
+                    if !target.follow {
+                        set_status(&status, ConnectionStatus::Detached("the app exited · data kept".into()));
+                        return;
+                    }
+                    followed_away_from = Some(r.pid);
+                }
+                let what = if followed_away_from.is_some() {
+                    format!("{} exited; waiting for it to start again (--follow)", target.package)
+                } else {
+                    format!(
                         "waiting for {} on {} (start the app; it needs a debug build with the traffic-police library)",
                         target.process.as_deref().unwrap_or(&target.package),
                         device.label()
-                    ),
+                    )
                 };
-                if resume.is_some() && !target.follow {
-                    let _ = status.send(DeviceStatus::Detached(what));
-                    return;
-                }
-                let _ = status.send(DeviceStatus::Waiting(what));
+                set_status(&status, ConnectionStatus::Waiting(what));
                 if wait_or_quit(&mut commands, POLL).await {
                     return;
                 }
                 continue;
             }
             Err(e) => {
-                let _ = status.send(DeviceStatus::Waiting(format!("{}: {e}", device.label())));
+                set_status(&status, ConnectionStatus::Waiting(format!("{}: {e}", device.label())));
                 if wait_or_quit(&mut commands, POLL).await {
                     return;
                 }
@@ -154,27 +166,44 @@ pub async fn run_device(
             }
         };
 
-        let same_process = resume.as_ref().is_some_and(|r| r.pid == socket.pid);
-        let end = connect(&adb, &device, &socket, &ids, &events, &mut commands, &status, &mut resume, &mut config).await;
+        // a frozen process would leave our connection unanswered in its backlog: wait for it to thaw
+        if is_frozen(&adb, &device, socket.pid).await {
+            let name = target.process.as_deref().unwrap_or(&target.package);
+            set_status(&status, ConnectionStatus::Waiting(frozen_text(name, socket.pid)));
+            if wait_or_quit(&mut commands, POLL).await {
+                return;
+            }
+            continue;
+        }
+
+        let end =
+            connect(&adb, &device, &socket, &ids, &events, &mut commands, &status, &mut resume, &mut config).await;
         let reason = match end {
             End::Shutdown => {
-                close_source(&events, &resume, "traffic-police quit").await;
+                if let Some(r) = resume.as_mut() {
+                    close_source(&events, r, "traffic-police quit").await;
+                }
                 return;
             }
             End::Mismatch(msg) => {
-                let _ = status.send(DeviceStatus::Failed(msg));
+                set_status(&status, ConnectionStatus::Failed(msg));
                 return;
             }
             End::Bye(reason, message) if reason == "replaced" => {
-                close_source(&events, &resume, "another traffic-police connected to the app").await;
-                let _ = status.send(DeviceStatus::Detached(format!("another traffic-police took over ({message})")));
+                if let Some(r) = resume.as_mut() {
+                    close_source(&events, r, "another traffic-police connected to the app").await;
+                }
+                set_status(
+                    &status,
+                    ConnectionStatus::Detached(format!("another traffic-police took over ({message})")),
+                );
                 return;
             }
             End::Bye(reason, message) => {
                 let detail = if message.is_empty() { String::new() } else { format!(": {message}") };
                 format!("the app closed the connection ({reason}{detail})")
             }
-            End::NoRuntime if !same_process && resume.is_none() => {
+            End::NoRuntime if resume.is_none() => {
                 // a socket without a runtime behind it (it just exited): look again
                 if wait_or_quit(&mut commands, POLL).await {
                     return;
@@ -194,34 +223,32 @@ pub async fn run_device(
             None => false,
         };
         if alive {
-            let _ = status.send(DeviceStatus::Waiting(format!("{reason}; reconnecting")));
+            set_status(&status, ConnectionStatus::Waiting(format!("{reason}; reconnecting")));
             if wait_or_quit(&mut commands, Duration::from_millis(300)).await {
                 return;
             }
             continue;
         }
-        let gone = if find_device(&adb, target.serial.as_deref()).await.is_err() {
-            "the device was disconnected".to_string()
-        } else {
-            "the app exited".to_string()
-        };
-        close_source(&events, &resume, &gone).await;
-        if target.follow {
-            followed_away_from = resume.as_ref().map(|r| r.pid);
-            resume = None;
-            let _ = status.send(DeviceStatus::Waiting(format!("{gone}; waiting for {} to start again (--follow)", target.package)));
-            continue;
-        }
-        if gone.starts_with("the device") {
-            // keep watching: when the device returns with the same process alive, resume it
-            let _ = status.send(DeviceStatus::Waiting(format!("{gone}; reconnect it to continue")));
-            if wait_or_quit(&mut commands, POLL).await {
-                return;
+        if find_device(&adb, target.serial.as_deref()).await.is_err() {
+            // keep `resume`: when the device returns with the process alive, it continues
+            if let Some(r) = resume.as_mut() {
+                close_source(&events, r, "the device was disconnected").await;
             }
             continue;
         }
-        let _ = status.send(DeviceStatus::Detached(format!("{gone} · data kept")));
-        return;
+        // the process is gone
+        if let Some(mut r) = resume.take() {
+            close_source(&events, &mut r, "the app exited").await;
+            followed_away_from = Some(r.pid);
+        }
+        if !target.follow {
+            set_status(&status, ConnectionStatus::Detached("the app exited · data kept".into()));
+            return;
+        }
+        set_status(
+            &status,
+            ConnectionStatus::Waiting(format!("{} exited; waiting for it to start again (--follow)", target.package)),
+        );
     }
 }
 
@@ -239,8 +266,10 @@ async fn wait_or_quit(commands: &mut mpsc::UnboundedReceiver<BackendCommand>, d:
     }
 }
 
-async fn close_source(events: &mpsc::Sender<Vec<SessionEvent>>, resume: &Option<Resume>, reason: &str) {
-    if let Some(r) = resume {
+/// Ends the process's source on the timeline (once).
+async fn close_source(events: &mpsc::Sender<Vec<SessionEvent>>, r: &mut Resume, reason: &str) {
+    if !r.closed {
+        r.closed = true;
         let _ = events
             .send(vec![SessionEvent::SourceDown { source: r.source, at: r.device_now(), reason: reason.to_string() }])
             .await;
@@ -310,7 +339,7 @@ async fn connect(
     ids: &SourceIds,
     events: &mpsc::Sender<Vec<SessionEvent>>,
     commands: &mut mpsc::UnboundedReceiver<BackendCommand>,
-    status: &watch::Sender<DeviceStatus>,
+    status: &watch::Sender<ConnectionStatus>,
     resume: &mut Option<Resume>,
     config: &mut CaptureConfig,
 ) -> End {
@@ -318,7 +347,7 @@ async fn connect(
         Ok(p) => p,
         Err(e) => return End::Lost(format!("adb forward failed: {e}")),
     };
-    let end = stream(port, device, socket, ids, events, commands, status, resume, config).await;
+    let end = stream(adb, port, device, socket, ids, events, commands, status, resume, config).await;
     if let Err(e) = adb.kill_forward(device.transport_id, port).await {
         tracing::debug!("removing forward tcp:{port}: {e}");
     }
@@ -327,13 +356,14 @@ async fn connect(
 
 #[allow(clippy::too_many_arguments)]
 async fn stream(
+    adb: &Adb,
     port: u16,
     device: &Device,
     socket: &RuntimeSocket,
     ids: &SourceIds,
     events: &mpsc::Sender<Vec<SessionEvent>>,
     commands: &mut mpsc::UnboundedReceiver<BackendCommand>,
-    status: &watch::Sender<DeviceStatus>,
+    status: &watch::Sender<ConnectionStatus>,
     resume: &mut Option<Resume>,
     config: &mut CaptureConfig,
 ) -> End {
@@ -346,11 +376,27 @@ async fn stream(
     let mut decoder = Decoder::new();
     let mut buf = vec![0u8; 64 * 1024];
 
-    // hello, within a few seconds (a forward to a vanished socket connects and then reads EOF)
-    let hello = match tokio::time::timeout(HELLO_TIMEOUT, read_hello(&mut rd, &mut decoder, &mut buf)).await {
-        Ok(Ok(Some(h))) => h,
-        Ok(Ok(None)) | Err(_) => return End::NoRuntime,
-        Ok(Err(e)) => return End::Lost(e),
+    // hello, within a few seconds (a forward to a vanished socket connects and then reads EOF);
+    // a process that froze meanwhile answers once Android thaws it, so keep this connection
+    let hello = loop {
+        tokio::select! {
+            r = read_hello(&mut rd, &mut decoder, &mut buf) => match r {
+                Ok(Some(h)) => break h,
+                Ok(None) => return End::NoRuntime,
+                Err(e) => return End::Lost(e),
+            },
+            cmd = commands.recv() => match cmd {
+                Some(BackendCommand::Shutdown) | None => return End::Shutdown,
+                Some(BackendCommand::SetRecording(on)) => config.recording = on,
+                Some(_) => {}
+            },
+            _ = tokio::time::sleep(HELLO_TIMEOUT) => {
+                if !is_frozen(adb, device, socket.pid).await {
+                    return End::NoRuntime;
+                }
+                set_status(status, ConnectionStatus::Waiting(frozen_text(&socket.package_part, socket.pid)));
+            }
+        }
     };
     if hello.protocol != PROTOCOL_VERSION {
         let bye = HostMsg::Bye(msg::Bye {
@@ -359,7 +405,11 @@ async fn stream(
             supported: vec![PROTOCOL_VERSION],
         });
         let _ = send(&mut wr, &bye).await;
-        let (older, update) = if hello.protocol > PROTOCOL_VERSION { ("host", "traffic-police") } else { ("library", "the capture library in the app") };
+        let (older, update) = if hello.protocol > PROTOCOL_VERSION {
+            ("host", "traffic-police")
+        } else {
+            ("library", "the capture library in the app")
+        };
         return End::Mismatch(format!(
             "the capture runtime in {} speaks protocol {}; this traffic-police supports {PROTOCOL_VERSION}. The {older} is older: update {update}.",
             hello.app.process, hello.protocol
@@ -367,6 +417,12 @@ async fn stream(
     }
 
     let resumed = resume.as_ref().filter(|r| r.instance == hello.instance).map(|r| (r.source, r.last_seq));
+    if resumed.is_none()
+        && let Some(old) = resume.as_mut()
+    {
+        // same pid, different runtime instance: the old process is gone
+        close_source(events, old, "the app restarted").await;
+    }
     let (source, resume_after) = resumed.unwrap_or_else(|| (ids.next(), 0));
     let ack = HostMsg::HelloAck(msg::HelloAck {
         id: 1,
@@ -393,10 +449,14 @@ async fn stream(
         pid: socket.pid,
         last_seq: resume_after,
         clock: (hello.clock.ts, Instant::now()),
+        closed: false,
     });
-    let _ = status.send(DeviceStatus::Live(format!("{} · {} (pid {})", device.label(), hello.app.process, hello.app.pid)));
+    let live = format!("{} · {} (pid {})", device.label(), hello.app.process, hello.app.pid);
+    set_status(status, ConnectionStatus::Live(live.clone()));
+    let mut frozen = false;
 
-    let mut normalizer = if resume_after > 0 { Normalizer::resume_after(source, resume_after) } else { Normalizer::new(source) };
+    let mut normalizer =
+        if resume_after > 0 { Normalizer::resume_after(source, resume_after) } else { Normalizer::new(source) };
     let mut next_id = 2u64;
     let mut ping = tokio::time::interval(PING_EVERY);
     ping.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -426,6 +486,10 @@ async fn stream(
                 Ok(0) => return End::Lost("the app closed the connection".into()),
                 Ok(n) => {
                     last_frame = Instant::now();
+                    if frozen {
+                        frozen = false;
+                        set_status(status, ConnectionStatus::Live(live.clone()));
+                    }
                     decoder.push(&buf[..n]);
                     if let Some(end) = drain(&mut decoder, &mut normalizer, &mut batch) {
                         if let Some(r) = resume.as_mut() {
@@ -463,8 +527,25 @@ async fn stream(
                 }
             },
             _ = ping.tick() => {
-                if last_frame.elapsed() > STALL_AFTER {
-                    return End::Lost("no response from the app for 15 s".into());
+                // pongs come back within milliseconds; silence past the next ping means trouble
+                let quiet = last_frame.elapsed();
+                if quiet > PING_EVERY + Duration::from_secs(2) {
+                    if is_frozen(adb, device, socket.pid).await {
+                        // the connection survives the freeze; the app answers once thawed
+                        if !frozen {
+                            frozen = true;
+                            set_status(status, ConnectionStatus::Waiting(frozen_text(&hello.app.process, hello.app.pid)));
+                        }
+                        continue;
+                    }
+                    if frozen {
+                        // thawed: it answers this ping, or stalls from here on
+                        frozen = false;
+                        last_frame = Instant::now();
+                        set_status(status, ConnectionStatus::Live(live.clone()));
+                    } else if quiet > STALL_AFTER {
+                        return End::Lost("no response from the app for 15 s".into());
+                    }
                 }
                 if let Err(e) = send(&mut wr, &HostMsg::Ping(msg::Ping { id: next_id })).await {
                     return End::Lost(e);
@@ -479,12 +560,8 @@ async fn stream(
 fn drain(decoder: &mut Decoder, normalizer: &mut Normalizer, batch: &mut Vec<SessionEvent>) -> Option<End> {
     loop {
         match decoder.next_frame() {
+            // pongs become Clock events in the batch (the normalizer adds them)
             Ok(Some(frame)) => match normalizer.frame(frame, batch) {
-                Ok(Some(Control::Pong(p))) => batch.push(SessionEvent::Clock {
-                    source: normalizer.source(),
-                    ts: p.clock.ts,
-                    wall_ms: p.clock.wall_ms,
-                }),
                 Ok(Some(Control::Bye(b))) => return Some(End::Bye(b.reason, b.message.unwrap_or_default())),
                 Ok(_) => {}
                 Err(e) => tracing::warn!("undecodable message from the device: {e}"),

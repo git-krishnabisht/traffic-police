@@ -1,0 +1,5 @@
+---
+source: crates/tui/tests/snapshots.rs
+expression: "header(&mut app_at(12.0),\nConnectionStatus::Waiting(\"com.example.app exited; waiting for it to start again (--follow)\".into()))"
+---
+ traffic-police  Pixel 8 [demo]  com.example.deepid_example  pid 4312  ● WAITING  com.example.app exited; waiting for it to start again (--f

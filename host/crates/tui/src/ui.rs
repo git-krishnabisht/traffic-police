@@ -6,7 +6,8 @@ use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::symbols::Marker;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Axis, Chart, Dataset, GraphType, Widget};
+use ratatui::widgets::{Axis, Chart, Dataset, GraphType, Paragraph, Widget, Wrap};
+use traffic_police_core::backend::ConnectionStatus;
 use traffic_police_core::event::MarkerKind;
 use traffic_police_core::fmt::{self, NS_PER_MS, NS_PER_SEC, Ts};
 use traffic_police_core::model::{Transaction, TxnIdx};
@@ -98,7 +99,10 @@ fn too_small(app: &App, area: Rect, buf: &mut Buffer) {
 fn draw_header(app: &App, r: Rect, buf: &mut Buffer) {
     let t = &app.theme;
     let store = app.view_store();
-    let mut spans = vec![Span::styled(" traffic-police ", t.title().add_modifier(Modifier::REVERSED)), Span::raw(" ")];
+    let mut spans = vec![Span::styled(" traffic-police ", t.title().add_modifier(Modifier::REVERSED))];
+    if store.current_source().is_some() || app.connection.is_none() {
+        spans.push(Span::raw(" "));
+    }
     match store.current_source() {
         Some(s) => {
             spans.push(Span::styled(s.device_label.clone(), t.text()));
@@ -109,25 +113,26 @@ fn draw_header(app: &App, r: Rect, buf: &mut Buffer) {
                 spans.push(Span::styled("  attach", t.dim()));
             }
         }
-        None => spans.push(Span::styled(app.connection.clone().unwrap_or_else(|| "waiting for the app…".into()), t.dim())),
+        None if app.connection.is_none() => spans.push(Span::styled("waiting for the app…", t.dim())),
+        None => {}
     }
     spans.push(Span::raw("  "));
     let waiting = store.current_source().is_none();
     let detached = store.current_source().is_some_and(|s| s.ended.is_some());
-    let (label, style) = if app.is_frozen() {
-        ("FROZEN", t.accent())
-    } else if waiting {
-        ("WAITING", t.dim())
-    } else if detached {
-        ("DETACHED", t.error())
-    } else if !app.recording {
-        ("PAUSED", t.warn())
-    } else {
-        ("LIVE", t.ok())
+    // a live backend's own account of the connection comes first
+    let (label, style, note) = match &app.connection {
+        _ if app.is_frozen() => ("FROZEN", t.accent(), None),
+        Some(ConnectionStatus::Failed(m)) => ("FAILED", t.error(), Some(m)),
+        Some(ConnectionStatus::Waiting(m)) => ("WAITING", t.warn(), Some(m)),
+        Some(ConnectionStatus::Detached(m)) => ("DETACHED", t.error(), Some(m)),
+        _ if waiting => ("WAITING", t.dim(), None),
+        _ if detached => ("DETACHED", t.error(), None),
+        _ if !app.recording => ("PAUSED", t.warn(), None),
+        _ => ("LIVE", t.ok(), None),
     };
     spans.push(Span::styled(format!("● {label}"), style.add_modifier(Modifier::BOLD)));
-    if detached && let Some(c) = &app.connection {
-        spans.push(Span::styled(format!("  {c}"), t.dim()));
+    if let Some(note) = note {
+        spans.push(Span::styled(format!("  {note}"), t.dim()));
     }
     if let Some(rules) = &app.rules {
         let n = rules.rules.iter().filter(|r| r.enabled).count();
@@ -241,24 +246,27 @@ fn draw_graph(app: &mut App, r: Rect, buf: &mut Buffer) {
             t.accent(),
         ));
     }
-    text(buf, r.x, r.y, r.width, spans);
     let last = |v: &[f64]| {
         let k = (v.len() / 20).max(1);
         v[v.len().saturating_sub(k)..].iter().sum::<f64>() / k as f64
     };
     let (rx_now, tx_now) = if app.is_live() { (last(&b.rx), last(&b.tx)) } else { (0.0, 0.0) };
-    right_text(
-        buf,
-        r,
-        r.y,
-        vec![
-            Span::styled("━ ", Style::default().fg(t.recv())),
-            Span::styled(format!("Receiving {}", if app.is_live() { fmt::rate(rx_now) } else { "—".into() }), t.text()),
-            Span::raw("   "),
-            Span::styled("━ ", Style::default().fg(t.send())),
-            Span::styled(format!("Sending {}", if app.is_live() { fmt::rate(tx_now) } else { "—".into() }), t.text()),
-        ],
-    );
+    let legend = vec![
+        Span::styled("━ ", Style::default().fg(t.recv())),
+        Span::styled(format!("Receiving {}", if app.is_live() { fmt::rate(rx_now) } else { "—".into() }), t.text()),
+        Span::raw("   "),
+        Span::styled("━ ", Style::default().fg(t.send())),
+        Span::styled(format!("Sending {}", if app.is_live() { fmt::rate(tx_now) } else { "—".into() }), t.text()),
+    ];
+    // the title yields to the legend (it keeps at least its first word)
+    let legend_w: u16 = legend.iter().map(|s| s.content.width() as u16).sum();
+    let title_w = r.width.saturating_sub(legend_w + 3);
+    if title_w >= 9 {
+        text(buf, r.x, r.y, title_w, spans);
+        right_text(buf, r, r.y, legend);
+    } else {
+        text(buf, r.x, r.y, r.width, spans);
+    }
     // selection / in-progress range shading
     let x_of = |ts: Ts| -> u16 {
         let span = right.saturating_sub(left).max(1);
@@ -618,13 +626,26 @@ fn draw_connections(app: &mut App, r: Rect, buf: &mut Buffer, tabs_row: Rect) {
     }
     app.hits.add(body, Target::List);
     if rows_len == 0 {
-        text(
-            buf,
-            body.x + 1,
-            body.y + 1,
-            body.width.saturating_sub(2),
-            vec![Span::styled("No requests yet. Traffic appears here as the app makes calls.", t.dim())],
-        );
+        // the connection's full story (the header may cut it short), then the usual hint
+        let mut lines = Vec::new();
+        match &app.connection {
+            Some(ConnectionStatus::Failed(m)) => lines.push(Line::styled(m.clone(), t.error())),
+            Some(ConnectionStatus::Waiting(m) | ConnectionStatus::Detached(m)) => {
+                lines.push(Line::styled(m.clone(), t.warn()))
+            }
+            _ => {}
+        }
+        if !lines.is_empty() {
+            lines.push(Line::default());
+        }
+        lines.push(Line::styled("No requests yet. Traffic appears here as the app makes calls.", t.dim()));
+        let area = Rect {
+            x: body.x + 1,
+            y: body.y + 1,
+            width: body.width.saturating_sub(2),
+            height: body.height.saturating_sub(1),
+        };
+        Paragraph::new(lines).wrap(Wrap { trim: false }).render(area, buf);
         return;
     }
     let focused = app.focus == Focus::List;

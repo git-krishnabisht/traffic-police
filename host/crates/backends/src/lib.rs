@@ -13,7 +13,7 @@ use traffic_police_core::backend::BackendCommand;
 use traffic_police_core::store::SourceIds;
 
 pub use demo::{DemoConfig, DemoSession};
-pub use device::{DeviceStatus, DeviceTarget, run_device};
+pub use device::{DeviceTarget, run_device};
 
 /// Run the demo device in real time (scaled by `speed`) until the event receiver is dropped or
 /// `Shutdown` arrives.

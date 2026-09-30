@@ -21,6 +21,7 @@ use tokio::sync::mpsc;
 use tokio::time::MissedTickBehavior;
 use tokio_stream::StreamExt;
 use traffic_police_core::SessionEvent;
+use traffic_police_core::backend::ConnectionStatus;
 
 use crate::app::{App, JqJob, JqResult};
 use crate::bodycache::BodyJob;
@@ -67,7 +68,7 @@ pub struct RunOptions {
     /// Probe the terminal for a graphics protocol (otherwise half-blocks).
     pub detect_images: bool,
     /// Connection status from the backend, shown in the header.
-    pub status: Option<tokio::sync::watch::Receiver<String>>,
+    pub status: Option<tokio::sync::watch::Receiver<ConnectionStatus>>,
 }
 
 /// Run the UI until the user quits. `events` carries batches from the backend; when it closes
@@ -95,7 +96,7 @@ async fn event_loop(
     term: &mut Term,
     app: &mut App,
     events: &mut mpsc::Receiver<Vec<SessionEvent>>,
-    mut status: Option<tokio::sync::watch::Receiver<String>>,
+    mut status: Option<tokio::sync::watch::Receiver<ConnectionStatus>>,
 ) -> anyhow::Result<()> {
     if let Some(s) = &status {
         app.connection = Some(s.borrow().clone());
@@ -150,10 +151,9 @@ async fn event_loop(
             changed = async { status.as_mut().expect("guarded").changed().await }, if status.is_some() => {
                 match changed {
                     Ok(()) => {
-                        let text = status.as_ref().expect("guarded").borrow().clone();
-                        app.connection = Some(text);
+                        app.connection = Some(status.as_ref().expect("guarded").borrow().clone());
                     }
-                    Err(_) => status = None, // the backend is gone; keep the last text
+                    Err(_) => status = None, // the backend is gone; keep the last status
                 }
                 input_dirty = true;
             }

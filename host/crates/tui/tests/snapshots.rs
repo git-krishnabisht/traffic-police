@@ -8,6 +8,7 @@ mod common;
 
 use common::*;
 use traffic_police_backends::demo::DemoConfig;
+use traffic_police_core::backend::ConnectionStatus;
 use traffic_police_tui::Theme;
 
 macro_rules! snap {
@@ -50,6 +51,55 @@ fn connections_sorted_and_extra_columns() {
     snap!("connections_sorted_by_size_desc", frame(12.0, MEDIUM, "ssS"));
     snap!("connections_extra_columns", frame(12.0, LARGE, "C<Enter>j<Enter>jjj<Enter><Esc>"));
     snap!("columns_menu", frame(12.0, MEDIUM, "C<Enter>j"));
+}
+
+// --- header: what a device backend says about the connection ------------------------------
+
+fn header(app: &mut traffic_police_tui::App, status: ConnectionStatus) -> String {
+    app.connection = Some(status);
+    press(app, MEDIUM, "").lines().next().unwrap_or_default().trim_end().to_string()
+}
+
+#[test]
+fn header_connection_states() {
+    let waiting = ConnectionStatus::Waiting(
+        "waiting for com.example.app on Pixel 8 [emulator-5554] (start the app; it needs a debug build with the traffic-police library)"
+            .into(),
+    );
+    snap!("header_waiting_for_the_app", header(&mut app_at(0.0), waiting));
+    snap!(
+        "header_following",
+        header(
+            &mut app_at(12.0),
+            ConnectionStatus::Waiting("com.example.app exited; waiting for it to start again (--follow)".into())
+        )
+    );
+    snap!(
+        "header_detached",
+        header(&mut app_at(12.0), ConnectionStatus::Detached("the app exited · data kept".into()))
+    );
+    snap!(
+        "header_failed",
+        header(
+            &mut app_at(0.0),
+            ConnectionStatus::Failed("the capture runtime in com.example.app speaks protocol 2; this traffic-police supports 1. The host is older: update traffic-police.".into())
+        )
+    );
+    // before any traffic, the list tells the whole story
+    let mut app = app_at(0.0);
+    app.connection = Some(ConnectionStatus::Failed(
+        "the capture runtime in com.example.app speaks protocol 2; this traffic-police supports 1. The host is older: update traffic-police."
+            .into(),
+    ));
+    snap!("connections_failed_before_traffic", press(&mut app, SMALL, ""));
+    // live: the store decides (LIVE, PAUSED, …)
+    snap!(
+        "header_live",
+        header(
+            &mut app_at(12.0),
+            ConnectionStatus::Live("Pixel 8 [emulator-5554] · com.example.app (pid 4242)".into())
+        )
+    );
 }
 
 // --- graph -----------------------------------------------------------------------------------

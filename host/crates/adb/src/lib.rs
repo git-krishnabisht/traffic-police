@@ -308,6 +308,23 @@ impl Adb {
             .filter(|(_, n)| !n.is_empty())
             .collect())
     }
+
+    /// Which of the given pids Android's cached-apps freezer has frozen (Android 11+, cgroup
+    /// v2: `frozen 1` in the process cgroup's `cgroup.events`). A frozen process runs no code, so
+    /// its capture runtime cannot answer until Android thaws it.
+    pub async fn frozen_pids(&self, id: TransportId, pids: &[u32]) -> Result<Vec<u32>> {
+        if pids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let list: Vec<String> = pids.iter().map(u32::to_string).collect();
+        let cmd = format!(
+            "for p in {}; do c=$(sed -n 's/^0:://p' /proc/$p/cgroup 2>/dev/null); \
+             [ -n \"$c\" ] && grep -qs '^frozen 1' /sys/fs/cgroup$c/cgroup.events && echo $p; done; true",
+            list.join(" ")
+        );
+        let out = self.shell(id, &cmd).await?;
+        Ok(out.stdout_text().lines().filter_map(|l| l.trim().parse().ok()).collect())
+    }
 }
 
 /// Where to find the adb binary to start a server: the SDK first, then PATH.

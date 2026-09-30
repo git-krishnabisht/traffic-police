@@ -258,6 +258,10 @@ impl SessionStore {
         match event {
             SessionEvent::SourceUp(info) => {
                 self.see(info.started);
+                // the device's clock at the handshake is device time that has certainly passed
+                if let Some((ts, _)) = info.clock {
+                    self.see(ts);
+                }
                 self.markers.push(Marker {
                     at: info.started,
                     source: Some(info.id),
@@ -288,6 +292,10 @@ impl SessionStore {
             SessionEvent::Clock { source, ts, wall_ms } => {
                 if let Some(s) = self.sources.get_mut(&source) {
                     s.clock = Some((ts, wall_ms));
+                    // a live app's clock keeps time moving even when it sends nothing else
+                    if s.ended.is_none() {
+                        self.see(ts);
+                    }
                 }
             }
             SessionEvent::Request(r) => {
@@ -499,5 +507,46 @@ impl SessionStore {
                 self.markers.push(Marker { at, source, kind, label });
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn source(id: SourceId, started: Ts, clock: Ts) -> SourceInfo {
+        SourceInfo {
+            id,
+            device_label: "Pixel [emulator-5554]".into(),
+            serial: Some("emulator-5554".into()),
+            package: "com.example".into(),
+            process: "com.example".into(),
+            pid: 4242,
+            instance: "i".into(),
+            mode: "library".into(),
+            api: Some(37),
+            runtime_version: None,
+            capabilities: Vec::new(),
+            hooks: Vec::new(),
+            okhttp_version: None,
+            clock: Some((clock, 1_000)),
+            started,
+            ended: None,
+        }
+    }
+
+    #[test]
+    fn a_quiet_live_app_still_moves_time_forward() {
+        let mut s = SessionStore::new();
+        // the process started at 1 s; we attached at 60 s
+        s.apply(SessionEvent::SourceUp(Box::new(source(1, 1_000_000_000, 60_000_000_000))));
+        assert_eq!(s.latest(), 60_000_000_000);
+        // a pong 5 s later, with no traffic in between
+        s.apply(SessionEvent::Clock { source: 1, ts: 65_000_000_000, wall_ms: 6_000 });
+        assert_eq!(s.latest(), 65_000_000_000);
+        // after the app is gone, late clock readings do not move time
+        s.apply(SessionEvent::SourceDown { source: 1, at: 66_000_000_000, reason: "the app exited".into() });
+        s.apply(SessionEvent::Clock { source: 1, ts: 90_000_000_000, wall_ms: 31_000 });
+        assert_eq!(s.latest(), 66_000_000_000);
     }
 }

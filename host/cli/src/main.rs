@@ -10,8 +10,8 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use tokio::sync::{mpsc, watch};
 use traffic_police_adb::Adb;
 use traffic_police_backends::demo::{DemoConfig, DemoSession, demo_rules};
-use traffic_police_backends::{DeviceStatus, DeviceTarget, run_device};
-use traffic_police_core::backend::Capabilities;
+use traffic_police_backends::{DeviceTarget, run_device};
+use traffic_police_core::backend::{Capabilities, ConnectionStatus};
 use traffic_police_core::fmt::{NS_PER_MS, NS_PER_SEC};
 use traffic_police_core::store::SessionStore;
 use traffic_police_tui::app::{App, JqResult};
@@ -135,7 +135,9 @@ fn main() -> anyhow::Result<()> {
         }
         None => {
             if cli.target.mode == Mode::Attach {
-                eprintln!("Attach mode arrives in Phase 4. Use library mode: add the traffic-police library to the app's debug build (see the README).");
+                eprintln!(
+                    "Attach mode arrives in Phase 4. Use library mode: add the traffic-police library to the app's debug build (see the README)."
+                );
                 std::process::exit(2);
             }
             let theme = theme(cli.theme);
@@ -250,9 +252,13 @@ async fn run_device_mode(args: TargetArgs, theme: Theme, detect_images: bool) ->
             follow: args.follow,
         },
         None => match traffic_police_tui::picker::pick(adb.clone(), theme.clone()).await? {
-            Some(p) => {
-                DeviceTarget { serial: Some(p.serial), package: p.package, process: Some(p.process), pid: None, follow: args.follow }
-            }
+            Some(p) => DeviceTarget {
+                serial: Some(p.serial),
+                package: p.package,
+                process: Some(p.process),
+                pid: None,
+                follow: args.follow,
+            },
             None => return Ok(()),
         },
     };
@@ -269,19 +275,9 @@ async fn run_device_mode(args: TargetArgs, theme: Theme, detect_images: bool) ->
     let (event_tx, event_rx) = mpsc::channel(256);
     let (command_tx, command_rx) = mpsc::unbounded_channel();
     app.commands = Some(command_tx);
-    let (status_tx, mut status_rx) = watch::channel(DeviceStatus::Waiting("looking for the device…".into()));
-    let (text_tx, text_rx) = watch::channel("looking for the device…".to_string());
-    tokio::spawn(async move {
-        while status_rx.changed().await.is_ok() {
-            let text = status_rx.borrow().text().to_string();
-            tracing::info!("connection: {text}");
-            if text_tx.send(text).is_err() {
-                break;
-            }
-        }
-    });
+    let (status_tx, status_rx) = watch::channel(ConnectionStatus::Waiting("looking for the device…".into()));
     let backend = tokio::spawn(run_device(adb, target, ids, event_tx, command_rx, status_tx));
-    let result = terminal::run(app, event_rx, RunOptions { detect_images, status: Some(text_rx) }).await;
+    let result = terminal::run(app, event_rx, RunOptions { detect_images, status: Some(status_rx) }).await;
     // the UI dropped its command sender: the backend says goodbye and removes its forward
     let _ = tokio::time::timeout(Duration::from_secs(3), backend).await;
     result
@@ -297,13 +293,17 @@ async fn launch_app(adb: &Adb, serial: Option<&str>, package: &str) -> anyhow::R
         .context("no online device to launch the app on")?;
     let q = traffic_police_adb::quote(package);
     let resolved = adb
-        .shell(device.transport_id, &format!("cmd package resolve-activity --brief -c android.intent.category.LAUNCHER {q}"))
+        .shell(
+            device.transport_id,
+            &format!("cmd package resolve-activity --brief -c android.intent.category.LAUNCHER {q}"),
+        )
         .await?;
     let component = resolved.stdout_text().lines().last().unwrap_or("").trim().to_string();
     if !component.contains('/') {
         bail!("{package} has no launcher activity on {} (is it installed?)", device.label());
     }
-    let started = adb.shell(device.transport_id, &format!("am start -n {}", traffic_police_adb::quote(&component))).await?;
+    let started =
+        adb.shell(device.transport_id, &format!("am start -n {}", traffic_police_adb::quote(&component))).await?;
     if started.exit != 0 {
         bail!("could not start {component}: {}", String::from_utf8_lossy(&started.stderr).trim());
     }

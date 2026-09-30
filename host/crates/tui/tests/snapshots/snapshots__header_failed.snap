@@ -1,0 +1,5 @@
+---
+source: crates/tui/tests/snapshots.rs
+expression: "header(&mut app_at(0.0),\nConnectionStatus::Failed(\"the capture runtime in com.example.app speaks protocol 2; this traffic-police supports 1. The host is older: update traffic-police.\".into()))"
+---
+ traffic-police   ● FAILED  the capture runtime in com.example.app speaks protocol 2; this traffic-police supports 1. The host is older: upd

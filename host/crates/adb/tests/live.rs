@@ -20,8 +20,16 @@ async fn inspect_devices() {
         println!("  features: {} (track_app: {})", features.len(), features.iter().any(|f| f == "track_app"));
         let out = adb.shell(d.transport_id, "getprop ro.build.version.sdk").await.unwrap();
         println!("  sdk {} exit {}", out.stdout_text().trim(), out.exit);
-        for s in adb.runtime_sockets(d.transport_id).await.unwrap() {
-            println!("  runtime socket @{} (pid {})", s.name, s.pid);
+        let sockets = adb.runtime_sockets(d.transport_id).await.unwrap();
+        let pids: Vec<u32> = sockets.iter().map(|s| s.pid).collect();
+        let frozen = adb.frozen_pids(d.transport_id, &pids).await.unwrap();
+        for s in &sockets {
+            println!(
+                "  runtime socket @{} (pid {}){}",
+                s.name,
+                s.pid,
+                if frozen.contains(&s.pid) { " frozen" } else { "" }
+            );
         }
         for p in adb.app_processes(d.transport_id, &features).await.unwrap().iter().take(8) {
             println!("  process {} {:?} debuggable={} arch={:?}", p.pid, p.process_name, p.debuggable, p.architecture);

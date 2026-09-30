@@ -12,6 +12,7 @@ use ratatui::widgets::{Block, Paragraph, Widget};
 use tokio::sync::mpsc;
 use tokio_stream::StreamExt;
 use traffic_police_adb::{Adb, Device, TransportId};
+use unicode_width::UnicodeWidthStr;
 
 use crate::terminal;
 use crate::theme::Theme;
@@ -31,12 +32,24 @@ struct ProcessRow {
     name: String,
     package: String,
     capturing: bool,
+    /// Held by Android's cached-apps freezer.
+    frozen: bool,
     arch: Option<String>,
 }
 
 enum Snapshot {
     Devices(Result<Vec<Device>, String>),
+    /// "Android 16 · API 36", read once per device.
+    About(TransportId, String),
     Processes(TransportId, Result<Vec<ProcessRow>, String>),
+}
+
+async fn about(adb: &Adb, id: TransportId) -> Option<String> {
+    let out = adb.shell(id, "getprop ro.build.version.release; getprop ro.build.version.sdk").await.ok()?;
+    let text = out.stdout_text();
+    let mut lines = text.lines().map(str::trim);
+    let (release, sdk) = (lines.next()?, lines.next()?);
+    Some(format!("Android {release} · API {sdk}"))
 }
 
 /// Runs the pickers; `None` when the user quits.
@@ -57,9 +70,10 @@ async fn fetch_processes(adb: &Adb, id: TransportId) -> Result<Vec<ProcessRow>, 
         .filter(|p| p.debuggable)
         .map(|p| {
             let name = p.process_name.clone().unwrap_or_else(|| format!("pid {}", p.pid));
-            let package = p.package_names.first().cloned().unwrap_or_else(|| name.split(':').next().unwrap_or("").to_string());
+            let package =
+                p.package_names.first().cloned().unwrap_or_else(|| name.split(':').next().unwrap_or("").to_string());
             let capturing = sockets.iter().any(|s| s.pid == p.pid);
-            ProcessRow { pid: p.pid, name, package, capturing, arch: p.architecture }
+            ProcessRow { pid: p.pid, name, package, capturing, frozen: false, arch: p.architecture }
         })
         .collect();
     // a runtime socket whose process the tracker did not list
@@ -70,8 +84,15 @@ async fn fetch_processes(adb: &Adb, id: TransportId) -> Result<Vec<ProcessRow>, 
                 name: s.package_part.clone(),
                 package: s.package_part.clone(),
                 capturing: true,
+                frozen: false,
                 arch: None,
             });
+        }
+    }
+    let pids: Vec<u32> = rows.iter().map(|r| r.pid).collect();
+    if let Ok(frozen) = adb.frozen_pids(id, &pids).await {
+        for r in &mut rows {
+            r.frozen = frozen.contains(&r.pid);
         }
     }
     rows.sort_by(|a, b| b.capturing.cmp(&a.capturing).then(a.name.cmp(&b.name)));
@@ -85,10 +106,21 @@ async fn run(term: &mut terminal::Term, adb: Adb, theme: Theme) -> anyhow::Resul
     let fetch_adb = adb.clone();
     let fetcher = tokio::spawn(async move {
         let mut device: Option<TransportId> = None;
+        let mut asked = std::collections::HashSet::new();
         loop {
             let devices = fetch_adb.devices().await.map_err(|e| e.to_string());
+            let online: Vec<TransportId> =
+                devices.iter().flatten().filter(|d| d.is_online()).map(|d| d.transport_id).collect();
             if tx.send(Snapshot::Devices(devices)).is_err() {
                 return;
+            }
+            for id in online {
+                if asked.insert(id)
+                    && let Some(text) = about(&fetch_adb, id).await
+                    && tx.send(Snapshot::About(id, text)).is_err()
+                {
+                    return;
+                }
             }
             if let Some(id) = device {
                 let procs = fetch_processes(&fetch_adb, id).await;
@@ -108,6 +140,7 @@ async fn run(term: &mut terminal::Term, adb: Adb, theme: Theme) -> anyhow::Resul
 
     let mut input = EventStream::new();
     let mut devices: Result<Vec<Device>, String> = Ok(Vec::new());
+    let mut abouts: std::collections::HashMap<TransportId, String> = std::collections::HashMap::new();
     let mut loaded = false;
     let mut chosen: Option<Device> = None;
     let mut auto_chosen = false;
@@ -118,7 +151,16 @@ async fn run(term: &mut terminal::Term, adb: Adb, theme: Theme) -> anyhow::Resul
         term.draw(|f| {
             let area = f.area();
             let buf = f.buffer_mut();
-            draw(buf, area, &theme, loaded, &devices, chosen.as_ref(), processes.as_ref(), cursor, message.as_deref());
+            let view = View {
+                loaded,
+                devices: &devices,
+                abouts: &abouts,
+                chosen: chosen.as_ref(),
+                processes: processes.as_ref(),
+                cursor,
+                message: message.as_deref(),
+            };
+            draw(buf, area, &theme, &view);
         })?;
         tokio::select! {
             snap = rx.recv() => match snap {
@@ -135,6 +177,9 @@ async fn run(term: &mut terminal::Term, adb: Adb, theme: Theme) -> anyhow::Resul
                             let _ = want_tx.send(Some(online[0].transport_id));
                         }
                     }
+                }
+                Some(Snapshot::About(id, text)) => {
+                    abouts.insert(id, text);
                 }
                 Some(Snapshot::Processes(id, p)) => {
                     if chosen.as_ref().is_some_and(|d| d.transport_id == id) {
@@ -211,18 +256,19 @@ async fn run(term: &mut terminal::Term, adb: Adb, theme: Theme) -> anyhow::Resul
     Ok(None)
 }
 
-#[allow(clippy::too_many_arguments)]
-fn draw(
-    buf: &mut ratatui::buffer::Buffer,
-    area: Rect,
-    t: &Theme,
+/// What the pickers show.
+struct View<'a> {
     loaded: bool,
-    devices: &Result<Vec<Device>, String>,
-    chosen: Option<&Device>,
-    processes: Option<&Result<Vec<ProcessRow>, String>>,
+    devices: &'a Result<Vec<Device>, String>,
+    abouts: &'a std::collections::HashMap<TransportId, String>,
+    chosen: Option<&'a Device>,
+    processes: Option<&'a Result<Vec<ProcessRow>, String>>,
     cursor: usize,
-    message: Option<&str>,
-) {
+    message: Option<&'a str>,
+}
+
+fn draw(buf: &mut ratatui::buffer::Buffer, area: Rect, t: &Theme, v: &View) {
+    let View { loaded, devices, abouts, chosen, processes, cursor, message } = *v;
     let mut lines: Vec<Line> = Vec::new();
     let title = match chosen {
         None => " Choose a device ".to_string(),
@@ -233,16 +279,21 @@ fn draw(
         (None, _) => match devices {
             _ if !loaded => lines.push(Line::styled("Asking adb for devices…", t.dim())),
             Err(e) => lines.push(Line::styled(format!("adb: {e}"), t.error())),
-            Ok(list) if list.is_empty() => {
-                lines.push(Line::styled("No devices. Connect a phone with USB debugging on, or start an emulator.", t.dim()))
-            }
+            Ok(list) if list.is_empty() => lines.push(Line::styled(
+                "No devices. Connect a phone with USB debugging on, or start an emulator.",
+                t.dim(),
+            )),
             Ok(list) => {
+                let width = list.iter().map(|d| d.label().width()).max().unwrap_or(0) + 3;
                 for (i, d) in list.iter().enumerate() {
                     let style = if i == cursor { selected } else { Style::default() };
                     let state = if d.is_online() { t.ok() } else { t.warn() };
+                    let label = d.label();
+                    let pad = " ".repeat(width.saturating_sub(label.width()));
                     lines.push(Line::from(vec![
-                        Span::styled(format!(" {:<34}", d.label()), t.text().patch(style)),
+                        Span::styled(format!(" {label}{pad}"), t.text().patch(style)),
                         Span::styled(format!("{:<16}", d.state), state.patch(style)),
+                        Span::styled(abouts.get(&d.transport_id).cloned().unwrap_or_default(), t.dim().patch(style)),
                     ]));
                 }
             }
@@ -260,7 +311,9 @@ fn draw(
             ));
             for (i, r) in rows.iter().enumerate() {
                 let style = if i == cursor { selected } else { Style::default() };
-                let (mark, note, st) = if r.capturing {
+                let (mark, note, st) = if r.capturing && r.frozen {
+                    ("◐", "library running · frozen by Android (cached): connects when it runs", t.warn())
+                } else if r.capturing {
                     ("●", "library running: ready", t.ok())
                 } else {
                     ("○", "debuggable, no library (attach: Phase 4)", t.dim())
@@ -280,7 +333,11 @@ fn draw(
         lines.push(Line::styled(m.to_string(), t.warn()));
         lines.push(Line::default());
     }
-    let help = if chosen.is_some() { "↑↓ choose · Enter open · Esc back to devices · q quit" } else { "↑↓ choose · Enter open · q quit" };
+    let help = if chosen.is_some() {
+        "↑↓ choose · Enter open · Esc back to devices · q quit"
+    } else {
+        "↑↓ choose · Enter open · q quit"
+    };
     lines.push(Line::styled(help, t.faint()));
     let block = Block::bordered().title(title).border_style(t.accent());
     Paragraph::new(lines).wrap(ratatui::widgets::Wrap { trim: false }).block(block).render(area, buf);
