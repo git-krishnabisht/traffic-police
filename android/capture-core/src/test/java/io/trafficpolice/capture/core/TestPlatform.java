@@ -72,6 +72,27 @@ public final class TestPlatform implements Platform {
         return CaptureRuntime.start(platform, o);
     }
 
+    /** Waits until the writer thread has taken everything queued so far. */
+    public static void awaitWriter(final CaptureRuntime rt) throws InterruptedException {
+        while (true) {
+            final java.util.concurrent.CountDownLatch done = new java.util.concurrent.CountDownLatch(1);
+            final boolean[] idle = new boolean[1];
+            rt.writer.post(new Runnable() {
+                @Override
+                public void run() {
+                    idle[0] = rt.queue.isEmpty();
+                    done.countDown();
+                }
+            });
+            if (!done.await(10, java.util.concurrent.TimeUnit.SECONDS)) {
+                throw new AssertionError("the writer thread is stuck");
+            }
+            if (idle[0]) {
+                return;
+            }
+        }
+    }
+
     /** Parses a JSON object (tests use the runtime's own parser). */
     public static java.util.Map<String, Object> json(String text) {
         return JsonParser.parseObject(text);

@@ -106,6 +106,18 @@ tasks.register<Test>("updateProtocolGoldens") {
     outputs.upToDateWhen { false }
 }
 
+// What capture costs per request on the JVM (ARCHITECTURE.md §6); prints a table.
+tasks.register<Test>("benchmarkOverhead") {
+    description = "Measures the capture's cost per request on the JVM."
+    val test = testing.suites.named<JvmTestSuite>("test").get()
+    testClassesDirs = test.sources.output.classesDirs
+    classpath = test.sources.runtimeClasspath
+    systemProperty("trafficpolice.bench", "true")
+    filter { includeTestsMatching("*OverheadBenchmark*") }
+    testLogging { showStandardStreams = true }
+    outputs.upToDateWhen { false }
+}
+
 tasks.withType<Test>().configureEach {
     systemProperty("trafficpolice.testdata", rootProject.projectDir.parentFile.resolve("testdata").absolutePath)
     testLogging {

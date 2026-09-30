@@ -219,6 +219,13 @@ public final class TestHost implements Closeable {
         out.flush();
     }
 
+    /** Forgets what was received so far (long benchmarks). */
+    public void clearReceived() {
+        synchronized (received) {
+            received.clear();
+        }
+    }
+
     /** Everything received after the replay so far. */
     public List<Msg> received() {
         synchronized (received) {

@@ -130,6 +130,61 @@ object Backend {
 
     private val model: ByteArray by lazy { Random(7).nextBytes(5 * 1024 * 1024) }
 
+    /** About 2 KB of JSON for the overhead measurement. */
+    private val benchBody: String by lazy {
+        (0 until 60).joinToString(",", "{\"items\":[", "]}") { """{"id":$it,"ok":true,"name":"item-$it"}""" }
+    }
+
+    /** The overhead measurement's server; started on first use. */
+    val bench: BenchServer by lazy { BenchServer(benchBody.toByteArray(), InetAddress.getByName("127.0.0.1")).apply { start() } }
+
+    /**
+     * A keep-alive HTTP server that sends each response in one write. MockWebServer writes the
+     * headers and the body separately, which on loopback can stall a request for the 40 ms of a
+     * delayed ACK and would hide the few microseconds being measured.
+     */
+    class BenchServer(body: ByteArray, address: InetAddress) {
+        private val server = java.net.ServerSocket(0, 50, address)
+        private val response = ("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: ${body.size}\r\n\r\n")
+            .toByteArray() + body
+        val port: Int get() = server.localPort
+
+        fun url(path: String): HttpUrl = "http://127.0.0.1:$port$path".toHttpUrl()
+
+        fun start() {
+            Thread({
+                while (true) {
+                    val socket = try {
+                        server.accept()
+                    } catch (e: IOException) {
+                        return@Thread
+                    }
+                    Thread({ serve(socket) }, "sample-bench").apply { isDaemon = true }.start()
+                }
+            }, "sample-bench-accept").apply { isDaemon = true }.start()
+        }
+
+        private fun serve(socket: Socket) {
+            try {
+                socket.use {
+                    it.tcpNoDelay = true
+                    val input = it.getInputStream().bufferedReader(Charsets.ISO_8859_1)
+                    val out = it.getOutputStream()
+                    while (true) {
+                        input.readLine() ?: return
+                        while (input.readLine()?.isNotEmpty() == true) {
+                            // request headers; GET has no body
+                        }
+                        out.write(response)
+                        out.flush()
+                    }
+                }
+            } catch (e: IOException) {
+                // the client went away
+            }
+        }
+    }
+
     /** A tiny protobuf message: field 1 = 4 (varint), field 2 = "ok". */
     private val protobufAck = byteArrayOf(0x08, 0x04, 0x12, 0x02, 'o'.code.toByte(), 'k'.code.toByte())
 

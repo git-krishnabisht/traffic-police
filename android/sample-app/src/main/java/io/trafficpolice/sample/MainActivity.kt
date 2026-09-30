@@ -66,11 +66,12 @@ class MainActivity : Activity() {
         handle(intent)
     }
 
-    /** `--es run all` runs every scenario; `--es run poll` starts polling. */
+    /** `--es run all` runs every scenario; `poll` starts polling; `overhead` measures capture's cost. */
     private fun handle(intent: android.content.Intent?) {
         when (intent?.getStringExtra("run")) {
             "all" -> runAll()
             "poll" -> startPolling()
+            "overhead" -> launchScenario("overhead measurement") { scenarios.overhead() }
         }
     }
 

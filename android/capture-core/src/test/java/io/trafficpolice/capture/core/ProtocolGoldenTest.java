@@ -24,8 +24,6 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
 import java.util.zip.CRC32;
 import org.junit.After;
 import org.junit.Before;
@@ -463,21 +461,7 @@ public class ProtocolGoldenTest {
 
     /** Waits until the writer has taken everything queued so far (encoded, in the ring). */
     private void awaitWriter() throws InterruptedException {
-        while (true) {
-            final CountDownLatch done = new CountDownLatch(1);
-            final boolean[] idle = new boolean[1];
-            rt.writer.post(new Runnable() {
-                @Override
-                public void run() {
-                    idle[0] = rt.queue.isEmpty();
-                    done.countDown();
-                }
-            });
-            assertTrue(done.await(5, TimeUnit.SECONDS));
-            if (idle[0]) {
-                return;
-            }
-        }
+        TestPlatform.awaitWriter(rt);
     }
 
     private void golden(String name, GoldenHost host) throws Exception {

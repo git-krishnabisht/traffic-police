@@ -555,7 +555,7 @@ A CI step (`cargo tree -e features`) fails if a C library sneaks back in through
 
 | Where | Budget | How |
 |---|---|---|
-| App thread, per request (excluding body copies) | < 1 ms added; target < 150 µs typical | Event objects are small; JSON encoding, ring-buffer accounting and socket writes happen on the writer thread. The stack capture (`Throwable.getStackTrace()`) is the largest cost and is bounded by a depth cap (default 64 frames). Measured by a JVM microbenchmark and by an instrumented test on a device that compares request latency with and without capture. |
+| App thread, per request (excluding body copies) | < 1 ms added; target < 150 µs typical | Event objects are small; JSON encoding, ring-buffer accounting and socket writes happen on the writer thread. The stack capture (`Throwable.getStackTrace()`) is the largest cost and is bounded by a depth cap (default 64 frames). Measured in Phase 1. JVM (`./gradlew :capture-core:benchmarkOverhead`, Apple M5 Pro): the hooks for one 2 KB GET cost 5.4 µs at the median, 19.5 µs at p99; a real OkHttp request to a loopback server gains 10 µs at the median. Device (the sample app's `--es run overhead`: the same 2 KB GET through a plain and a captured client, alternating, 1,000 each): +63 µs at the median and +108 µs at p90 on the API 37 emulator, +67 µs and +122 µs on the API 26 emulator; with traffic-police attached and receiving every event, +59 µs and +88 µs (API 37), +20 µs and +31 µs (API 26). Emulator figures vary by a few tens of µs between runs. |
 | App thread, body bytes | One `System.arraycopy` per read/write chunk into a pooled `byte[]` | Tee sources/sinks copy what the app already read; no extra reads, no pre-buffering. Over the cap, only a byte counter advances. |
 | Device memory | Queue ≤ 8 MiB; ring buffer ≤ 1,000 transactions and 32 MiB of bodies (defaults) | Drop oldest on overflow; evict whole transactions from the ring. |
 | Host frame time | ≤ 33 ms at 50,000 transactions (target < 8 ms) | Virtualized rows; cached, incrementally re-sorted row keys; windowed graph buckets; cached body views; heavy work off the UI task. `tests/perf.rs` renders a 50,000-transaction store into `TestBackend` at 200×50 (release build) and fails above 33 ms. Measured in Phase 0b on an Apple M5 Pro: 0.2 ms per frame when nothing changes, 1.1 ms with a new request every frame, 1.7 ms with repeats collapsed, 2.6 ms sorted by name, 0.4 ms for the Thread View. |
@@ -638,7 +638,7 @@ No questions are open.
 - **Shaded or duplicate OkHttp copies** (an SDK that repackages OkHttp, or a second class loader) are not captured in v1.
 - **HttpURLConnection wrappers** must delegate every method of `HttpsURLConnection`; a missed method changes app behaviour. Studio's wrapper is the reference, and the JVM tests call every method through the wrapper.
 - **ART is an updatable module from API 31**, so JVMTI behaviour tracks the module version, not only the OS version; the emulator matrix includes updated images.
-- **Performance targets:** the host side was measured in Phase 0b (section 6); the device side (< 1 ms per request) is measured in Phase 1.
+- **Performance targets:** the host side was measured in Phase 0b and the device side in Phase 1 (section 6).
 - **Terminal variance.** Graphics protocols, OSC 52 and mouse support differ across terminals, tmux and SSH; everything degrades to half-blocks, copy-to-file and keyboard.
 - **Coexistence with Android Studio.** If Studio's inspector is attached too, both interceptors run; we detect Studio's interceptor in the chain and warn.
 

@@ -238,6 +238,37 @@ class Scenarios(private val context: Context, private val log: (String) -> Unit)
         }
     }
 
+    /**
+     * Capture's cost on this device: the same 2 KB GET through a plain client and through the
+     * captured one, alternating, after a warm-up. Not part of [runAll].
+     */
+    suspend fun overhead() = withContext(Dispatchers.IO) {
+        val plain = OkHttpClient.Builder().build()
+        val url = Backend.bench.url("/bench")
+        fun once(c: OkHttpClient): Long {
+            val t0 = System.nanoTime()
+            c.newCall(Request.Builder().url(url).build()).execute().use { it.body.bytes() }
+            return System.nanoTime() - t0
+        }
+        repeat(300) {
+            once(plain)
+            once(client)
+        }
+        val n = 1000
+        val without = LongArray(n)
+        val with = LongArray(n)
+        for (i in 0 until n) {
+            without[i] = once(plain)
+            with[i] = once(client)
+        }
+        without.sort()
+        with.sort()
+        fun us(v: Long) = "%.1f µs".format(v / 1000.0)
+        log("overhead (n=$n, 2 KB GET): without capture median ${us(without[n / 2])}, p90 ${us(without[n * 9 / 10])}; " +
+            "with capture median ${us(with[n / 2])}, p90 ${us(with[n * 9 / 10])}; " +
+            "added ${us(with[n / 2] - without[n / 2])} at the median, ${us(with[n * 9 / 10] - without[n * 9 / 10])} at p90")
+    }
+
     private suspend fun secondProcess() {
         context.startService(Intent(context, WorkerService::class.java).putExtra("port", Backend.http.port))
         delay(1500)
