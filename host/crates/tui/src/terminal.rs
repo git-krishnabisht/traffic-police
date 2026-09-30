@@ -109,6 +109,7 @@ async fn event_loop(
     let mut editor: Option<Editor> = None;
     let (jq_tx, mut jq_rx) = mpsc::unbounded_channel::<(JqJob, JqResult)>();
     let (body_tx, mut body_rx) = mpsc::unbounded_channel::<(BodyJob, BodyView)>();
+    let (search_tx, mut search_rx) = mpsc::unbounded_channel::<(crate::app::SearchJob, bool)>();
     let mut backend_open = true;
     let mut stop = StopSignals::new()?;
     let mut input_dirty = true;
@@ -176,6 +177,10 @@ async fn event_loop(
                 app.finish_body(job, view);
                 input_dirty = true;
             }
+            Some((job, hit)) = search_rx.recv() => {
+                app.finish_search(&job, hit);
+                data_dirty = true;
+            }
             _ = stop.recv() => {
                 // SIGTERM or SIGHUP: leave the loop so the terminal is restored
                 if let Some(Editor { mut child, .. }) = editor.take() {
@@ -189,21 +194,7 @@ async fn event_loop(
         if app.should_quit {
             return Ok(());
         }
-        for job in app.take_body_jobs() {
-            let tx = body_tx.clone();
-            tokio::task::spawn_blocking(move || {
-                let view = job.run();
-                let _ = tx.send((job, view));
-            });
-        }
-        for job in app.take_jq_jobs() {
-            let runner = app.jq_runner;
-            let tx = jq_tx.clone();
-            tokio::task::spawn_blocking(move || {
-                let result = runner(&job.filter, &job.bytes);
-                let _ = tx.send((job, result));
-            });
-        }
+        dispatch_jobs(app, &body_tx, &jq_tx, &search_tx);
         if let Some((path, line)) = app.editor_request.take()
             && editor.is_none()
         {
@@ -234,7 +225,46 @@ async fn event_loop(
             last_draw = Some(started);
             input_dirty = false;
             data_dirty = false;
+            // drawing refreshes the rows, which can ask for body searches
+            dispatch_jobs(app, &body_tx, &jq_tx, &search_tx);
         }
+    }
+}
+
+/// Starts queued work off the UI task: body decodes, jq filters, and body searches.
+fn dispatch_jobs(
+    app: &mut App,
+    body_tx: &mpsc::UnboundedSender<(BodyJob, BodyView)>,
+    jq_tx: &mpsc::UnboundedSender<(JqJob, JqResult)>,
+    search_tx: &mpsc::UnboundedSender<(crate::app::SearchJob, bool)>,
+) {
+    for job in app.take_body_jobs() {
+        let tx = body_tx.clone();
+        tokio::task::spawn_blocking(move || {
+            let view = job.run();
+            let _ = tx.send((job, view));
+        });
+    }
+    for job in app.take_jq_jobs() {
+        let runner = app.jq_runner;
+        let tx = jq_tx.clone();
+        tokio::task::spawn_blocking(move || {
+            let result = runner(&job.filter, &job.bytes);
+            let _ = tx.send((job, result));
+        });
+    }
+    let searches = app.take_search_jobs();
+    if !searches.is_empty() {
+        // one blocking task works through a batch, so a big session does not flood the pool
+        let tx = search_tx.clone();
+        tokio::task::spawn_blocking(move || {
+            for job in searches {
+                let hit = job.search.run();
+                if tx.send((job, hit)).is_err() {
+                    return;
+                }
+            }
+        });
     }
 }
 

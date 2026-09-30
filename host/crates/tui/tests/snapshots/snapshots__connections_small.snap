@@ -31,4 +31,4 @@ expression: "frame(12.0, SMALL, \"\")"
 │ fonts.json                                          canceled     380 ms                        ▏▐│
 │ monitor                                             ···          500 ms                        ▐ │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
- Enter open   Space pause   c collapse   s sort   ? help                 ⚠ studio inspector present
+ Enter open   / filter   Space pause   m pin   c collapse   ? help       ⚠ studio inspector present

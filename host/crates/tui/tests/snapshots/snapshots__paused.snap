@@ -41,4 +41,4 @@ expression: "frame(12.0, MEDIUM, \"<Space>\")"
 │ fonts.json                                                                canceled     380 ms                                         ▕▍▐│
 │ monitor                                                                   ···          500 ms                                          █ │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
- Enter open   Space resume   c collapse   s sort   Tab next panel   q quit   ? help                                        recording paused
+ Enter open   / filter   Space resume   m pin   c collapse   s sort   Tab next panel   q quit   ? help                     recording paused

@@ -41,4 +41,4 @@ expression: "frame(40.0, MEDIUM, \"--\")"
 │ monitor                                                                   ···          500 ms                                          ▕▐│
 │ enroll                                                                    ···          228 ms                                          ▕ │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
- Enter open   Space pause   c collapse   s sort   Tab next panel   q quit   ? help                                          window 2 m 00 s
+ Enter open   / filter   Space pause   m pin   c collapse   s sort   Tab next panel   q quit   ? help                       window 2 m 00 s

@@ -1,7 +1,9 @@
 //! The Connection View's rows: time-range filter, sort, and collapse repeats (ARCHITECTURE.md §5.7).
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
+use crate::filter::Filter;
 use crate::fmt::Ts;
 use crate::model::{Transaction, TxnIdx, TxnState};
 use crate::store::SessionStore;
@@ -100,6 +102,12 @@ pub struct RowModel {
     pub collapse: bool,
     /// Show only transactions overlapping this time range (graph selection).
     pub range: Option<(Ts, Ts)>,
+    /// The filter bar's filter.
+    pub filter: Option<Arc<Filter>>,
+    /// `body:` results per (transaction, needle index), with the revision they were found for.
+    body_hits: HashMap<(TxnIdx, usize), (u64, bool)>,
+    /// `body:` searches the filter needs and nobody has run yet.
+    body_wanted: HashSet<(TxnIdx, usize)>,
     expanded: HashSet<TxnIdx>,
     rows: Vec<Row>,
     order: Vec<TxnIdx>,
@@ -155,6 +163,11 @@ impl RowModel {
         self.rows.is_empty()
     }
 
+    /// Transactions that pass the range and the filter.
+    pub fn matched(&self) -> usize {
+        self.order.len()
+    }
+
     /// Index of the row that shows `txn` (a group counts if it contains it).
     pub fn position(&self, txn: TxnIdx) -> Option<usize> {
         self.rows.iter().position(|r| match r {
@@ -179,6 +192,39 @@ impl RowModel {
             self.collapse = on;
             self.dirty = true;
         }
+    }
+
+    pub fn set_filter(&mut self, filter: Option<Arc<Filter>>) {
+        let same = match (&self.filter, &filter) {
+            (Some(a), Some(b)) => a.source == b.source,
+            (None, None) => true,
+            _ => false,
+        };
+        if !same {
+            self.filter = filter;
+            self.body_hits.clear();
+            self.body_wanted.clear();
+            self.dirty = true;
+        }
+    }
+
+    /// The `body:` searches the filter is waiting for: `(transaction, needle index)`. Each is
+    /// handed out once; report the result with [`RowModel::set_body_hit`].
+    pub fn take_body_wanted(&mut self) -> Vec<(TxnIdx, usize)> {
+        let mut v: Vec<_> = self.body_wanted.drain().collect();
+        v.sort_unstable();
+        v
+    }
+
+    /// Whether `body:` searches are waiting to be handed out.
+    pub fn has_body_wanted(&self) -> bool {
+        !self.body_wanted.is_empty()
+    }
+
+    /// A finished `body:` search, for the transaction revision it looked at.
+    pub fn set_body_hit(&mut self, txn: TxnIdx, needle: usize, rev: u64, hit: bool) {
+        self.body_hits.insert((txn, needle), (rev, hit));
+        self.dirty = true;
     }
 
     pub fn set_range(&mut self, range: Option<(Ts, Ts)>) {
@@ -208,23 +254,28 @@ impl RowModel {
         self.seen_now = now;
         self.dirty = false;
         let range = self.range;
-        let in_range = |t: &Transaction| match range {
-            Some((a, b)) => t.start <= b && t.end.unwrap_or(if t.state.is_open() { now } else { t.start }) >= a,
-            None => true,
-        };
-        self.order.clear();
+        let filter = self.filter.clone();
+        let mut order = std::mem::take(&mut self.order);
+        order.clear();
         if self.sort != Sort::default() {
             self.sort_by_key(store, now);
-            self.order.extend(self.sorted.iter().copied().filter(|&i| in_range(store.txn(i))));
+            for &i in &self.sorted {
+                if passes(i, store.txn(i), range, filter.as_deref(), now, &self.body_hits, &mut self.body_wanted) {
+                    order.push(i);
+                }
+            }
         } else {
-            let mut keyed: Vec<(u64, u64, TxnIdx)> = (0..store.len() as TxnIdx)
-                .map(|i| (store.txn(i), i))
-                .filter(|(t, _)| in_range(t))
-                .map(|(t, i)| (t.start, t.key.txn, i))
-                .collect();
+            let mut keyed: Vec<(u64, u64, TxnIdx)> = Vec::new();
+            for i in 0..store.len() as TxnIdx {
+                let t = store.txn(i);
+                if passes(i, t, range, filter.as_deref(), now, &self.body_hits, &mut self.body_wanted) {
+                    keyed.push((t.start, t.key.txn, i));
+                }
+            }
             keyed.sort_unstable();
-            self.order.extend(keyed.into_iter().map(|(_, _, i)| i));
+            order.extend(keyed.into_iter().map(|(_, _, i)| i));
         }
+        self.order = order;
         self.rows.clear();
         if !self.collapse {
             self.rows.extend(self.order.iter().map(|&i| Row::Txn(i)));
@@ -289,6 +340,33 @@ impl RowModel {
             if sort.descending { o.reverse() } else { o }
         });
     }
+}
+
+/// The time range and the filter; `body:` terms without a result yet are queued in `wanted`
+/// and hide the row until the result arrives.
+fn passes(
+    i: TxnIdx,
+    t: &Transaction,
+    range: Option<(Ts, Ts)>,
+    filter: Option<&Filter>,
+    now: Ts,
+    hits: &HashMap<(TxnIdx, usize), (u64, bool)>,
+    wanted: &mut HashSet<(TxnIdx, usize)>,
+) -> bool {
+    if let Some((a, b)) = range
+        && !(t.start <= b && t.end.unwrap_or(if t.state.is_open() { now } else { t.start }) >= a)
+    {
+        return false;
+    }
+    filter.is_none_or(|f| {
+        f.matches(t, now, &mut |needle| match hits.get(&(i, needle)) {
+            Some(&(rev, hit)) if rev == t.rev => Some(hit),
+            _ => {
+                wanted.insert((i, needle));
+                None
+            }
+        })
+    })
 }
 
 fn same_endpoint(a: &Transaction, b: &Transaction) -> bool {

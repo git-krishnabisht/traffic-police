@@ -2639,6 +2639,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "proptest",
+ "regex",
  "ruzstd",
  "serde",
  "serde_json",

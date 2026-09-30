@@ -2,6 +2,7 @@
 
 use std::collections::HashSet;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
@@ -10,6 +11,7 @@ use tokio::sync::mpsc;
 use traffic_police_core::SessionEvent;
 use traffic_police_core::backend::{BackendCommand, Capabilities, ConnectionStatus};
 use traffic_police_core::event::MarkerKind;
+use traffic_police_core::filter::{BodySearch, Filter, ParseError};
 use traffic_police_core::fmt::{NS_PER_MS, NS_PER_SEC, Ts};
 use traffic_police_core::model::{BodyDir, TxnIdx};
 use traffic_police_core::rows::{Column, Row, RowModel, Sort};
@@ -66,9 +68,13 @@ impl Tab {
 pub enum Overlay {
     None,
     Help,
-    Columns { cursor: usize },
+    Columns {
+        cursor: usize,
+    },
     ConfirmClear,
     Jq,
+    /// Typing a filter in the bottom line.
+    Filter,
 }
 
 /// Graph zoom levels (visible window width).
@@ -198,6 +204,15 @@ struct Frozen {
     events_since: u64,
 }
 
+/// A `body:` search for the filter, run off the UI task.
+#[derive(Debug, Clone)]
+pub struct SearchJob {
+    pub txn: TxnIdx,
+    pub needle: usize,
+    pub rev: u64,
+    pub search: BodySearch,
+}
+
 /// Recent frames, for the optional frame-rate readout.
 #[derive(Debug, Clone, Default)]
 pub struct FrameStats {
@@ -254,6 +269,11 @@ pub struct App {
     pub split_pct: u16,
     pub overlay: Overlay,
     pub jq_input: Input,
+    pub filter_input: Input,
+    /// Where the text being typed stops parsing (the previous filter stays active meanwhile).
+    pub filter_error: Option<ParseError>,
+    /// The filter before editing started, for Esc.
+    filter_before: Option<String>,
     pub message: Option<(String, Instant)>,
     pub rules: Option<RuleSet>,
     pub rules_cursor: usize,
@@ -309,6 +329,9 @@ impl App {
             split_pct: 55,
             overlay: Overlay::None,
             jq_input: Input::default(),
+            filter_input: Input::default(),
+            filter_error: None,
+            filter_before: None,
             message: None,
             rules: None,
             rules_cursor: 0,
@@ -709,6 +732,13 @@ impl App {
                     self.jq_input.handle_event(&Event::Key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE)));
                 }
             }
+            Event::Paste(s) if self.overlay == Overlay::Filter => {
+                for c in s.chars().filter(|c| !c.is_control()) {
+                    self.filter_input.handle_event(&Event::Key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE)));
+                }
+                let text = self.filter_input.value().to_string();
+                self.apply_filter(&text);
+            }
             _ => {}
         }
     }
@@ -763,6 +793,32 @@ impl App {
                     }
                     _ => {
                         self.jq_input.handle_event(&Event::Key(k));
+                    }
+                }
+                return;
+            }
+            Overlay::Filter => {
+                match k.code {
+                    KeyCode::Esc => {
+                        let before = self.filter_before.take().unwrap_or_default();
+                        self.filter_input = Input::new(before.clone());
+                        self.apply_filter(&before);
+                        self.filter_error = None;
+                        self.overlay = Overlay::None;
+                    }
+                    KeyCode::Enter => {
+                        self.filter_before = None;
+                        self.filter_error = None;
+                        self.overlay = Overlay::None;
+                        let text = self.filter_input.value().trim().to_string();
+                        if text.is_empty() {
+                            self.flash("filter cleared");
+                        }
+                    }
+                    _ => {
+                        self.filter_input.handle_event(&Event::Key(k));
+                        let text = self.filter_input.value().to_string();
+                        self.apply_filter(&text);
                     }
                 }
                 return;
@@ -849,11 +905,19 @@ impl App {
                 }
             }
             Action::Back => self.back(),
+            Action::Find if self.focus != Focus::Detail => {
+                self.filter_before = Some(self.filter_input.value().to_string());
+                self.filter_error = None;
+                self.overlay = Overlay::Filter;
+                if self.focus == Focus::Graph {
+                    self.focus = Focus::List;
+                }
+            }
+            Action::Pin => self.toggle_pin(),
             Action::Palette
             | Action::Find
             | Action::FindNext
             | Action::FindPrev
-            | Action::Pin
             | Action::Diff
             | Action::Copy
             | Action::Save
@@ -869,6 +933,69 @@ impl App {
                 },
                 Focus::Detail => self.detail_action(a),
             },
+        }
+    }
+
+    /// Applies filter text as it is typed: a filter that parses replaces the active one; one
+    /// that does not is marked where it breaks and the active filter stays.
+    pub fn apply_filter(&mut self, text: &str) {
+        match Filter::parse(text) {
+            Ok(f) => {
+                let f = f.map(Arc::new);
+                self.rows.set_filter(f.clone());
+                if let Some(fr) = &mut self.frozen {
+                    fr.rows.set_filter(f);
+                }
+                self.filter_error = None;
+                self.follow_list = self.is_live() && !self.detail_open;
+            }
+            Err(e) => self.filter_error = Some(e),
+        }
+    }
+
+    fn toggle_pin(&mut self) {
+        let Some(txn) = self.selected else {
+            self.flash("select a request to pin it");
+            return;
+        };
+        let on = !self.view_store().txn(txn).pinned;
+        self.store.set_pinned(txn, on);
+        if let Some(f) = &mut self.frozen {
+            f.store.set_pinned(txn, on);
+        }
+        self.flash(if on { "pinned · is:pinned filters pinned requests" } else { "unpinned" });
+    }
+
+    /// `body:` searches the filter is waiting for, ready to run off the UI task.
+    pub fn take_search_jobs(&mut self) -> Vec<SearchJob> {
+        let mut jobs = Vec::new();
+        let mut collect = |rows: &mut RowModel, store: &SessionStore| {
+            let Some(filter) = rows.filter.clone() else {
+                rows.take_body_wanted();
+                return;
+            };
+            for (txn, needle) in rows.take_body_wanted() {
+                let t = store.txn(txn);
+                let mut bodies = vec![(store.body_bytes(&t.req_body), Some(t.req_headers.clone()))];
+                bodies.push((store.body_bytes(&t.resp_body), t.resp.as_ref().map(|r| r.headers.clone())));
+                if let Some(d) = &t.delivered_body {
+                    bodies.push((store.body_bytes(d), t.delivered.as_ref().map(|x| x.headers.clone())));
+                }
+                let needle_text = filter.needles().get(needle).cloned().unwrap_or_default();
+                jobs.push(SearchJob { txn, needle, rev: t.rev, search: BodySearch { bodies, needle: needle_text } });
+            }
+        };
+        collect(&mut self.rows, &self.store);
+        if let Some(f) = &mut self.frozen {
+            collect(&mut f.rows, &f.store);
+        }
+        jobs
+    }
+
+    pub fn finish_search(&mut self, job: &SearchJob, hit: bool) {
+        self.rows.set_body_hit(job.txn, job.needle, job.rev, hit);
+        if let Some(f) = &mut self.frozen {
+            f.rows.set_body_hit(job.txn, job.needle, job.rev, hit);
         }
     }
 
@@ -1190,11 +1317,18 @@ impl App {
 
     /// Whether filters or body decodes are waiting to be run.
     pub fn has_queued_jobs(&self) -> bool {
-        !self.jq_jobs.is_empty() || self.bodies.has_queued()
+        !self.jq_jobs.is_empty()
+            || self.bodies.has_queued()
+            || self.rows.has_body_wanted()
+            || self.frozen.as_ref().is_some_and(|f| f.rows.has_body_wanted())
     }
 
     /// Run queued filters and body decodes on this thread (tests and single-frame renders).
     pub fn run_jobs_inline(&mut self) {
+        for job in self.take_search_jobs() {
+            let hit = job.search.run();
+            self.finish_search(&job, hit);
+        }
         for job in self.take_body_jobs() {
             let view = job.run();
             self.finish_body(job, view);

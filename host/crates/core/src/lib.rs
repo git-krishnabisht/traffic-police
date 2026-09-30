@@ -7,6 +7,7 @@
 pub mod backend;
 pub mod decode;
 pub mod event;
+pub mod filter;
 pub mod fmt;
 pub mod jq;
 pub mod model;

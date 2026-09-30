@@ -403,3 +403,52 @@ fn shift_wheel_pans_the_graph_and_returns_to_live() {
     app.handle_mouse(mouse(MouseEventKind::ScrollDown, g.x + 5, g.y + 1));
     assert!(app.graph.span > span);
 }
+
+#[test]
+fn the_filter_applies_as_typed_and_esc_restores_it() {
+    let mut app = app_at(40.0);
+    render_text(&mut app, MEDIUM.0, MEDIUM.1);
+    let all = app.view_rows().matched();
+    press(&mut app, MEDIUM, "/method:POST<Enter>");
+    let posts = app.view_rows().matched();
+    assert!(posts > 0 && posts < all, "{posts} of {all}");
+    let store = app.view_store();
+    assert!(app.view_rows().rows().iter().all(|r| store.txn(r.txn()).method == "POST"));
+    // a broken edit keeps the previous filter; Esc goes back to it
+    press(&mut app, MEDIUM, "/ status:9");
+    press(&mut app, MEDIUM, "x");
+    assert!(app.filter_error.is_some());
+    press(&mut app, MEDIUM, "<Esc>");
+    assert!(app.filter_error.is_none());
+    assert_eq!(app.view_rows().filter.as_ref().map(|f| f.source.as_str()), Some("method:POST"));
+    assert_eq!(app.view_rows().matched(), posts);
+    // an empty filter clears it
+    press(&mut app, MEDIUM, &format!("/{}<Enter>", "<BS>".repeat("method:POST".len())));
+    assert_eq!(app.view_rows().matched(), all);
+}
+
+#[test]
+fn pins_mark_rows_and_filter_with_is_pinned() {
+    let mut app = app_at(40.0);
+    let to = goto(&mut app, MEDIUM, path_is("/api/sdk/init"));
+    let text = press(&mut app, MEDIUM, &format!("{to}m"));
+    let init = app.selected.expect("selected");
+    assert!(app.view_store().txn(init).pinned);
+    assert!(text.contains("★ init"), "{text}");
+    press(&mut app, MEDIUM, "/is:pinned<Enter>");
+    assert_eq!(app.view_rows().matched(), 1);
+    press(&mut app, MEDIUM, "m");
+    assert!(!app.view_store().txn(init).pinned);
+}
+
+#[test]
+fn body_filters_fill_in_from_the_background() {
+    let mut app = app_at(40.0);
+    press(&mut app, MEDIUM, "/body:\"simBinding\"<Enter>");
+    // render_keys runs queued jobs inline, as the event loop would run them on workers
+    render_text(&mut app, MEDIUM.0, MEDIUM.1);
+    let store = app.view_store();
+    let paths: Vec<&str> = app.view_rows().rows().iter().map(|r| store.txn(r.txn()).url.path.as_str()).collect();
+    assert!(!paths.is_empty());
+    assert!(paths.iter().all(|p| *p == "/api/sdk/init"), "{paths:?}");
+}

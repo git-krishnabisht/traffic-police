@@ -22,6 +22,7 @@ jaq-std.workspace = true
 jaq-json.workspace = true
 toml.workspace = true
 tracing.workspace = true
+regex.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true

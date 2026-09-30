@@ -214,6 +214,12 @@ impl SessionStore {
         idx
     }
 
+    /// Pin or unpin a transaction (a user annotation, not an event from the device).
+    pub fn set_pinned(&mut self, idx: TxnIdx, on: bool) {
+        self.generation += 1;
+        self.touch(idx).pinned = on;
+    }
+
     fn touch(&mut self, idx: TxnIdx) -> &mut Transaction {
         let t = Arc::make_mut(&mut self.txns[idx as usize]);
         t.rev = self.generation;

@@ -52,6 +52,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         Overlay::Columns { cursor } => draw_columns_menu(app, area, buf, cursor),
         Overlay::ConfirmClear => draw_confirm(app, area, buf),
         Overlay::Jq => draw_jq(f, app, footer),
+        Overlay::Filter => draw_filter(f, app, footer),
         Overlay::None => {}
     }
 }
@@ -576,6 +577,21 @@ fn draw_views(app: &mut App, r: Rect, buf: &mut Buffer) {
             );
         }
     }
+    // bottom border: the active filter, and how many requests pass it
+    if app.view == View::Connections
+        && let Some(f) = app.view_rows().filter.as_ref().map(|f| f.source.clone())
+    {
+        let bottom = r.y + r.height.saturating_sub(1);
+        let (matched, total) = (app.view_rows().matched(), app.view_store().len());
+        let at =
+            border_labels(buf, r, bottom, true, vec![vec![Span::styled(format!("{matched} of {total}"), t.dim())]]);
+        let room = at.first().map_or(r, |c| Rect { width: c.x.saturating_sub(r.x), ..r });
+        let label = vec![
+            Span::styled("filter ", t.dim()),
+            Span::styled(truncate(&f, (room.width as usize).saturating_sub(14)), t.accent()),
+        ];
+        border_labels(buf, room, bottom, false, vec![label]);
+    }
     // a column of air between the border and the text
     let inner = Rect { x: inner.x + 1, width: inner.width.saturating_sub(1), ..inner };
     match app.view {
@@ -786,6 +802,9 @@ fn draw_connections(app: &mut App, r: Rect, buf: &mut Buffer) {
             let mut spans = Vec::new();
             if c == Column::Name {
                 let mut marks = prefix.clone();
+                if tx.pinned {
+                    marks.push_str("★ ");
+                }
                 if tx.rule_modified() {
                     marks.push_str("✎ ");
                 }
@@ -1148,7 +1167,7 @@ fn hints(app: &App) -> Vec<(&'static [Action], &'static str)> {
         (Overlay::Columns { .. }, _, _) => {
             vec![(&[A::Up, A::Down], "move"), (&[A::Activate], "toggle"), (&[A::Back], "close")]
         }
-        (Overlay::ConfirmClear, ..) => vec![],
+        (Overlay::ConfirmClear | Overlay::Filter | Overlay::Jq, ..) => vec![],
         (_, Focus::Graph, _) => vec![
             (&[A::Left, A::Right], "move"),
             (&[A::ZoomIn, A::ZoomOut], "zoom"),
@@ -1180,7 +1199,9 @@ fn hints(app: &App) -> Vec<(&'static [Action], &'static str)> {
         }
         (_, Focus::List, View::Connections) => vec![
             (&[A::Activate], "open"),
+            (&[A::Find], "filter"),
             (&[A::Pause], pause),
+            (&[A::Pin], "pin"),
             (&[A::Collapse], "collapse"),
             (&[A::Sort], "sort"),
             (&[A::FocusNext], "next panel"),
@@ -1341,6 +1362,46 @@ fn draw_confirm(app: &App, area: Rect, buf: &mut Buffer) {
             Span::styled(" / n", t.dim()),
         ],
     );
+}
+
+/// The filter being typed, in the bottom line: where it stops parsing is underlined, with the
+/// reason on the right; otherwise how many requests pass.
+fn draw_filter(f: &mut Frame, app: &mut App, r: Rect) {
+    let t = app.theme.clone();
+    let (matched, total) = (app.view_rows().matched(), app.view_store().len());
+    let buf = f.buffer_mut();
+    fill(buf, r, t.selected());
+    let prompt = " filter ▸ ";
+    let pw = prompt.width() as u16;
+    let value = app.filter_input.value().to_string();
+    let (note, note_style) = match &app.filter_error {
+        Some(e) => (e.message.clone(), t.error()),
+        None => (format!("{matched} of {total} · Enter keep · Esc cancel"), t.dim()),
+    };
+    let note_w = (note.width() as u16 + 2).min(r.width / 2);
+    let width = r.width.saturating_sub(pw + note_w + 1) as usize;
+    let scroll = app.filter_input.visual_scroll(width);
+    // the text, with the broken token underlined
+    let mut spans = vec![Span::styled(prompt, t.accent().patch(t.selected()))];
+    let err = app.filter_error.as_ref().map(|e| e.span.clone());
+    let mut byte = 0usize;
+    for (i, c) in value.chars().enumerate() {
+        if i >= scroll {
+            let bad = err.as_ref().is_some_and(|s| byte >= s.start && byte < s.end);
+            let style = if bad { t.error().add_modifier(Modifier::UNDERLINED) } else { t.text() };
+            spans.push(Span::styled(c.to_string(), style.patch(t.selected())));
+        }
+        byte += c.len_utf8();
+    }
+    text(buf, r.x, r.y, r.width.saturating_sub(note_w), spans);
+    right_text(
+        buf,
+        r,
+        r.y,
+        vec![Span::styled(truncate(&note, note_w.saturating_sub(2) as usize), note_style.patch(t.selected()))],
+    );
+    let cx = (app.filter_input.visual_cursor().max(scroll) - scroll) as u16;
+    f.set_cursor_position((r.x + pw + cx, r.y));
 }
 
 fn draw_jq(f: &mut Frame, app: &mut App, main: Rect) {

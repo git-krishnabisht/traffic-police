@@ -109,6 +109,11 @@ pub fn render_keys(app: &mut App, width: u16, height: u16, keys: &[crossterm::ev
         app.handle_key(k);
         app.run_jobs_inline();
         text = render_text(app, width, height);
+        // drawing can queue work too (body searches), as the live loop dispatches after drawing
+        if app.has_queued_jobs() {
+            app.run_jobs_inline();
+            text = render_text(app, width, height);
+        }
     }
     text
 }

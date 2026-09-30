@@ -309,6 +309,8 @@ pub struct Transaction {
     pub failure: Option<Failure>,
     /// Some events of this transaction were dropped on the device.
     pub lossy: bool,
+    /// Bookmarked by the user (`m`); saved in session files.
+    pub pinned: bool,
     /// Store generation of the last change (lets views cache derived values).
     pub rev: u64,
 }
@@ -342,6 +344,7 @@ impl Transaction {
             state: TxnState::Waiting,
             failure: None,
             lossy: false,
+            pinned: false,
             rev: 0,
         }
     }

@@ -41,4 +41,4 @@ expression: "frame(12.0, MEDIUM, \"F\")"
 │ fonts.json                                                                canceled     380 ms                                         ▕▍▐│
 │ monitor                                                                   ···          500 ms                                          █ │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
- Enter open   Space pause   c collapse   s sort   Tab next panel   ? help       frozen: capture continues in the background · F to unfreeze
+ Enter open   / filter   Space pause   m pin   c collapse   s sort   ? help     frozen: capture continues in the background · F to unfreeze
