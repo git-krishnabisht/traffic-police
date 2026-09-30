@@ -6,13 +6,14 @@ and response details, the thread and call stack that made each request, a thread
 response rewrite rules. No proxy and no certificates: a small runtime inside the (debuggable)
 app hooks OkHttp and HttpURLConnection and streams events to the terminal over adb.
 
-> **Status: Phase 3.** Library mode works: add the library to your app's debug build and watch
-> its traffic live from a device or an emulator, then filter, search, copy as cURL, diff, decode
-> tokens, export HAR, save and reopen sessions, or run without the UI (`tail`, `record`,
-> `export`, `doctor`). [Rules](#rules) change what the app receives: delay or fail a request, or
-> change a response's status, headers or body. Attach mode (any debuggable app, no code
-> changes) arrives in Phase 4. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design
-> and [docs/PROTOCOL.md](docs/PROTOCOL.md) for the device protocol.
+> **Status: Phase 4.** Watch an app's traffic live from a device or an emulator in one of two
+> ways: add the library to its debug build ([library mode](#watch-your-app-library-mode)), or
+> attach to any debuggable build with no changes at all ([attach mode](#watch-any-debuggable-app-attach-mode)).
+> Then filter, search, copy as cURL, diff, decode tokens, export HAR, save and reopen sessions,
+> or run without the UI (`tail`, `record`, `export`, `doctor`). [Rules](#rules) change what the
+> app receives: delay or fail a request, or change a response's status, headers or body. See
+> [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design and
+> [docs/PROTOCOL.md](docs/PROTOCOL.md) for the device protocol.
 
 ## Install
 
@@ -30,6 +31,20 @@ cd host
 cargo build --release
 ./target/release/traffic-police --help
 ```
+
+For [attach mode](#watch-any-debuggable-app-attach-mode) build the agent too. It needs JDK 17 or
+newer and the Android SDK with the NDK 28.2 and CMake 3.22.1 (Android Studio's SDK Manager, SDK
+Tools tab):
+
+```sh
+cd android
+./gradlew :attach-agent:agentArtifacts        # into android/attach-agent/build/outputs/agent
+cd ../host
+TRAFFIC_POLICE_EMBED_AGENT=1 cargo build --release   # optional: the agent inside the binary, so it works anywhere
+```
+
+A binary built without `TRAFFIC_POLICE_EMBED_AGENT` finds the agent in the source tree it was
+built from (or give `--agent-dir`).
 
 Works on macOS, Linux and Windows Terminal, including inside tmux and over SSH. The terminal
 must be at least 100 columns by 30 rows. For devices you also need adb (Android SDK
@@ -137,7 +152,8 @@ decoded for display), one row per network attempt (a redirect is two rows, the s
 HttpURLConnection connections you wrap. **Not captured in library mode:** responses OkHttp
 serves from its cache (they never reach the network), WebSocket frames (Phase 5), other HTTP
 stacks (Cronet, Ktor engines other than OkHttp, ...), and HttpURLConnection connections you do
-not wrap. Attach mode will hook the platform instead of your clients.
+not wrap. [Attach mode](#watch-any-debuggable-app-attach-mode) hooks every HttpURLConnection
+instead of the ones you wrap.
 
 **The sample app** in `android/sample-app` exercises every capture path (Retrofit suspend calls,
 OkHttp `execute` and `enqueue`, HttpURLConnection, streaming, a 5 MB download, a multipart upload,
@@ -153,6 +169,51 @@ adb -s <serial> shell am start -n io.trafficpolice.sample/.MainActivity --es run
 
 Other `--es run` values: `poll` (a status poll every 1.5 s), `overhead` (measures what capture
 costs per request, in logcat), `security` (checks that another uid is refused).
+
+## Watch any debuggable app (attach mode)
+
+No library and no code changes: traffic-police puts a small agent into the running app (a JVMTI
+agent, the way Android Studio's inspectors get in) and captures what library mode captures,
+including the requests of OkHttp clients the app built before you attached. It works with any
+debuggable build (a debug build, or `android:debuggable`) on Android 8.0 (API 26) or newer.
+
+```sh
+traffic-police                                             # pick a process: ○ ones have no library, Enter attaches
+traffic-police --mode attach -p com.example.app            # attach to the running app
+traffic-police --mode attach -p com.example.app --launch   # restart it with the agent: start-up requests too
+traffic-police --mode attach -p com.example.app --follow   # and keep watching across restarts
+traffic-police tail --mode attach -p com.example.app       # the commands without the UI too
+```
+
+- **Start-up requests.** `--launch` stops the app if it runs and starts it with the agent
+  loading first, so the requests it makes while starting are captured: on Android 11 and newer
+  through a startup agent, on Android 10 through `am start --attach-agent` (best effort on
+  Android 8.1 and 9). Android 8.0 cannot load an agent at start: traffic-police attaches right
+  after, and the app's first requests may be missed. With `--follow`, a restarted app is attached
+  again; on Android 11 and newer, from its start.
+- **What changes in the app.** The agent and two small dex files go into the app's
+  `code_cache/traffic-police` (through `run-as`, which works only for debuggable apps). With
+  `--launch` or `--follow` on Android 11 and newer, a copy also sits in
+  `code_cache/startup_agents` while traffic-police runs, and is removed when it quits; if
+  traffic-police is killed, that copy does nothing after 5 minutes, and `doctor` finds it. The
+  agent stays in the app's process until the process exits. After traffic-police quits it keeps
+  a replay buffer, like the library; rules stop applying.
+- **What it captures:** OkHttp 3.9 and newer and everything built on it (Retrofit, Coil, ...),
+  and every HttpURLConnection, with no wrapping. Not captured: an OkHttp whose names a minified
+  (R8) debug build changed (`doctor` shows each hook's status), and a second OkHttp copy in
+  another class loader.
+- **Checks:** `traffic-police doctor --mode attach -p com.example.app` checks the agent, the
+  app's ABI (arm64-v8a, armeabi-v7a and x86_64 are supported), `run-as` and `code_cache`, what
+  `--launch` can do on the device, startup agents left behind, and the hooks of an agent that
+  runs.
+- **The sample app's plain build** has no traffic-police code:
+
+  ```sh
+  cd android && ./gradlew :sample-app:assemblePlain :attach-agent:agentArtifacts
+  adb -s <serial> install -r sample-app/build/outputs/apk/plain/sample-app-plain.apk
+  traffic-police -s <serial> --mode attach -p io.trafficpolice.sample.plain --launch
+  adb -s <serial> shell am start -n io.trafficpolice.sample.plain/io.trafficpolice.sample.MainActivity --es run all
+  ```
 
 ## Keys
 
@@ -209,15 +270,17 @@ traffic-police export --har out.har --input login.trafficpolice --filter 'host:a
 traffic-police export --har out.har -p com.example.app --duration 60s
 traffic-police open login.trafficpolice                       # or a .har from any tool
 traffic-police doctor -p com.example.app                      # what is wrong, and how to fix it
+traffic-police tail --mode attach -p com.example.app --launch # attach mode, from the app's start
 ```
 
 `tail` runs until Ctrl+C, `--duration`, or the app's exit (`--follow` waits for it to start
 again); `--bodies` adds bodies to `--json` lines. `record` writes the file as it captures (with
 `--filter`, only matching requests, at the end). Like the UI, both begin with the requests the
 app made before they connected (the app keeps its last 1,000). Status goes to stderr, data to
-stdout. `doctor` checks adb, the config, the terminal and clipboard, the project's `rules.toml`,
-each device, and with `--package` that the app is installed, debuggable and capturing; it
-changes nothing and exits with 1 when a check fails.
+stdout; a capture that fails (the app cannot be attached to, say) exits with 1. `doctor` checks
+adb, the config, the terminal and clipboard, the project's `rules.toml`, each device, and with
+`--package` that the app is installed, debuggable and capturing (with `--mode attach`, what
+attach mode needs); it changes nothing and exits with 1 when a check fails.
 
 Session files keep everything as captured (timings, threads, stacks, bodies, pins), so `open`
 shows a session as it was. HAR files from browsers and other tools open too; their bodies are
@@ -346,13 +409,6 @@ field, and exactly what each action does with OkHttp and HttpURLConnection.
   they run; stderr says when the file is read again, and what is wrong with it.
 - The demo shows two built-in rules.
 
-## Attach mode (Phase 4)
-
-For any debuggable app on Android 8.0 (API 26) or newer, with no code changes. Capturing
-requests made during app start-up works fully from Android 11 and on Android 10, is best effort
-on Android 8.1 and 9, and is not possible on Android 8.0 (the platform has no way to attach at
-launch there).
-
 ## Troubleshooting
 
 - **Logs:** `~/.local/state/traffic-police/traffic-police.log` (or `$XDG_STATE_HOME`;
@@ -366,9 +422,20 @@ launch there).
 - **The UI lags in a slow terminal or over SSH, or uses more CPU than you like:** lower
   `[ui] fps` (10 is the least), so fewer frames are drawn and sent.
 - **WAITING "waiting for com.example.app on ...":** the app is not running, or this build has no
-  traffic-police library. On the device, `adb logcat -s TrafficPolice` shows `capturing in
-  <process>; socket @traffic-police_...` when capture starts, or why it did not (`... is not
-  debuggable`).
+  traffic-police library (then use `--mode attach`). On the device, `adb logcat -s TrafficPolice`
+  shows `capturing in <process>; socket @traffic-police_...` when capture starts, or why it did
+  not (`... is not debuggable`).
+- **FAILED "... is not debuggable (run-as refused)":** attach mode works only with debuggable
+  builds. A release build cannot be attached to, and neither can apps on a device where `run-as`
+  is disabled.
+- **FAILED "the agent did not start in ...":** the reason after the colon comes from the app's
+  log (`adb logcat --pid=<pid>` shows all of it). An agent stays in a process until it exits, so
+  restart the app (or use `--launch`) before trying again.
+- **WAITING "the agent was sent to ... but has not opened its socket":** the agent loads on the
+  app's main thread, so a busy or stopped main thread (a long task, or a debugger waiting)
+  delays it; capture starts once it runs.
+- **"attach mode needs the agent, and this build has none":** build it (see
+  [Install](#install)), or give `--agent-dir`.
 - **WAITING "... is frozen by Android":** Android 11 and later freeze apps cached in the
   background; they run no code, so capture cannot answer until the app runs again. Bring it to
   the foreground. On a test device you can turn freezing off in Developer options ("Suspend
@@ -400,12 +467,14 @@ cargo test --release -p traffic-police-tui --test perf -- --ignored --nocapture 
 cargo run -- demo --dump-frame 140x40@12 --keys 'g<Enter>l'   # print one frame as text
 TRAFFIC_POLICE_FPS=1 cargo run --release -- demo   # the footer shows the frames drawn a second and the time one takes
 cargo run -- tail --demo --duration 5s --json   # the commands without the UI, on the demo app (hidden --demo)
-# drives the sample app on a device (installed debug build): every scenario, both processes, kill and relaunch
+# drives the sample app on a device (installed debug and plain builds, and the agent built): every
+# scenario, both processes, kill and relaunch; in attach mode also --follow from the start and --launch
 TP_E2E_SERIAL=emulator-5554 cargo test -p traffic-police-backends --test device_e2e -- --ignored --nocapture
 
 cd android
 ./gradlew :capture-core:check                 # JVM tests against eight OkHttp versions, 3.9 to 5.5
-./gradlew :sample-app:assembleDebug           # the sample app (assembleNondebuggable: release-like, with capture)
+./gradlew :sample-app:assembleDebug           # the sample app (assembleNondebuggable: release-like, with capture; assemblePlain: no traffic-police code)
+./gradlew :attach-agent:agentArtifacts        # the attach-mode agent (JVMTI .so per ABI, boot and runtime dex)
 ./gradlew :capture-core:benchmarkOverhead     # what capture costs per request on the JVM
 ./gradlew publishAllPublicationsToBuildRepository   # the artifacts in android/build/repo, not ~/.m2
 ```

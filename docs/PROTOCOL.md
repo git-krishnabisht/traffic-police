@@ -662,6 +662,18 @@ Verified against `platform/packages/modules/adb` (Android 17), older `system/cor
 | Debuggable processes (fallback) | `track-jdwp` | `<hex4>` + `pid\n` lines per change. Names come from `cat /proc/<pid>/cmdline` over shell |
 | Push a file | `sync:` | `SEND le32(len) "<path>,<decimal mode>"`, then `DATA le32(n ≤ 65,536) <bytes>`…, then `DONE le32(mtime)`; reply `OKAY 00000000` or `FAIL le32(n) <msg>` (after a FAIL, drop the connection). `QUIT 00000000` ends the session. `STAT` checks existence (16 bytes, all zero when missing) |
 
+**Attach mode's shell commands** (ARCHITECTURE.md §4.7.6), all over `shell,v2`:
+
+| Purpose | Command |
+|---|---|
+| Debuggable, and `run-as` works | `run-as <package> true` (exit 0) |
+| The process's ABI when `track-app` has none | `dumpsys package <package> \| grep primaryCpuAbi`, else `getprop ro.product.cpu.abi` |
+| Install | the files pushed (sync) to `/data/local/tmp/traffic-police/<host pid>-<n>/`, then `run-as <package> sh -c '<script>'`, which copies them into `code_cache/traffic-police/` (and the agent into `code_cache/startup_agents/`), prints the data directory, and is followed by `rm -rf` of the staging directory |
+| Attach at run time | `cmd activity attach-agent <pid> '<data>/code_cache/traffic-police/libtrafficpolice_agent.so=dir=<data>/code_cache/traffic-police;package=<package>'` (no output on success) |
+| Start with the agent (`--launch`) | `cmd package resolve-activity --brief -c android.intent.category.LAUNCHER <package>`, then `am start -S -n <component>`, with `--attach-agent '<so>=<options>'` on API 27–29 |
+| The startup agent's stamp | `date +%s` (the device's clock), then `agent.conf` rewritten through `run-as` |
+| Why an agent did not start, or a process died | `logcat -d -v tag -t 2000 --pid=<pid>` (with `-b main -b crash` for a crash) |
+
 **Forwarding to the capture runtime.**
 
 ```

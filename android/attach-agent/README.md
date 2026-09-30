@@ -24,3 +24,8 @@ traffic-police-runtime.dex
 
 The native targets use NDK r28.2 and explicitly request 16 KB ELF segment alignment for all three
 ABIs, including `armeabi-v7a`. Slicer and the JVMTI declaration are pinned under `third_party/`.
+
+The host (`traffic-police --mode attach`) finds this directory in the source tree it was built
+from, or takes `--agent-dir`; `TRAFFIC_POLICE_EMBED_AGENT=1 cargo build --release` in `host/`
+builds the files into the binary, as the release workflow does. How the host installs and
+attaches them is in `docs/ARCHITECTURE.md` §4.7.6.
