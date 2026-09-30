@@ -61,8 +61,9 @@ jobs:
             echo "the plain APK contains traffic-police classes"; exit 1
           fi
 
-  # The sample app on emulators, driven by the host's end-to-end test: every scenario, both
-  # processes, kill and relaunch, the same-uid refusal. Slow, so on demand and nightly.
+  # The sample app on emulators, driven by the host's end-to-end tests: every scenario, both
+  # processes, kill and relaunch, the same-uid refusal; and in attach mode the plain build
+  # (attach while it runs, --follow, --launch). Slow, so on demand and nightly.
   device:
     if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
     strategy:
@@ -85,9 +86,12 @@ jobs:
       # its default also asks for "tools", which the SDK repository no longer has
       - uses: android-actions/setup-android@v3
         with:
-          packages: platform-tools
+          packages: |
+            platform-tools
+            ndk;28.2.13676358
+            cmake;3.22.1
       - uses: gradle/actions/setup-gradle@v4
-      - run: ./gradlew :sample-app:assembleDebug
+      - run: ./gradlew :sample-app:assembleDebug :sample-app:assemblePlain :attach-agent:agentArtifacts
       - working-directory: host
         run: rustup toolchain install 1.98.1 --profile minimal
       - uses: Swatinem/rust-cache@v2
@@ -102,6 +106,8 @@ jobs:
           target: google_apis
           disable-animations: true
           working-directory: host
+          # one test at a time: both drive the same emulator
           script: |
             adb install -r ../android/sample-app/build/outputs/apk/debug/sample-app-debug.apk
-            TP_E2E_SERIAL=emulator-5554 cargo test --locked -p traffic-police-backends --test device_e2e -- --ignored --nocapture
+            adb install -r ../android/sample-app/build/outputs/apk/plain/sample-app-plain.apk
+            TP_E2E_SERIAL=emulator-5554 cargo test --locked -p traffic-police-backends --test device_e2e -- --ignored --nocapture --test-threads=1
