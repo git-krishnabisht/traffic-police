@@ -204,7 +204,11 @@ fn host_goldens() -> Vec<(&'static str, HostMsg)> {
                         exception: "java.net.UnknownHostException".into(),
                         message: Some("offline (rule)".into()),
                     },
-                    RuleAction::Body { text: None, base64: Some("iVBORw0KGgo=".into()), content_type: Some("image/png".into()) },
+                    RuleAction::Body {
+                        text: None,
+                        base64: Some("iVBORw0KGgo=".into()),
+                        content_type: Some("image/png".into()),
+                    },
                 ],
                 cache_rewrites: true,
             },
@@ -244,7 +248,11 @@ fn host_goldens() -> Vec<(&'static str, HostMsg)> {
         ("ping", HostMsg::Ping(Ping { id: 7 })),
         (
             "bye",
-            HostMsg::Bye(Bye { reason: "shutdown".into(), message: Some("traffic-police quit".into()), supported: Vec::new() }),
+            HostMsg::Bye(Bye {
+                reason: "shutdown".into(),
+                message: Some("traffic-police quit".into()),
+                supported: Vec::new(),
+            }),
         ),
     ]
 }
@@ -263,7 +271,11 @@ fn host_goldens_are_current() {
         let on_disk = std::fs::read(&path).unwrap_or_else(|e| {
             panic!("{}: {e} (run cargo test -p traffic-police-proto -- --ignored update_goldens)", path.display())
         });
-        assert_eq!(on_disk, encode(&m), "{name}: the encoding changed; regenerate the goldens and rerun the Java tests");
+        assert_eq!(
+            on_disk,
+            encode(&m),
+            "{name}: the encoding changed; regenerate the goldens and rerun the Java tests"
+        );
         // and it reads back as the same message
         let frames = decode_all(name, &on_disk);
         let [Frame::Json(json)] = frames.as_slice() else { panic!("{name}: expected one JSON frame") };

@@ -56,16 +56,31 @@ fn summarize(name: &str) -> String {
                 let _ = writeln!(
                     out,
                     "hello: {} pid {} on API {}, runtime {} ({}), protocol {}, capabilities {:?}",
-                    h.app.process, h.app.pid, h.device.api, h.runtime.version, h.runtime.mode, h.protocol, h.capabilities
+                    h.app.process,
+                    h.app.pid,
+                    h.device.api,
+                    h.runtime.version,
+                    h.runtime.mode,
+                    h.protocol,
+                    h.capabilities
                 );
-                let info = SourceInfo::from_hello(source, &h, "Pixel 8 [emulator-5554]".into(), Some("emulator-5554".into()));
+                let info =
+                    SourceInfo::from_hello(source, &h, "Pixel 8 [emulator-5554]".into(), Some("emulator-5554".into()));
                 events.push(SessionEvent::SourceUp(Box::new(info)));
             }
             Ok(Some(Control::Replay(r))) => {
-                let _ = writeln!(out, "replay {}: seq {:?}..{:?}, {:?} events", r.phase, r.from_seq, r.to_seq, r.events);
+                let _ =
+                    writeln!(out, "replay {}: seq {:?}..{:?}, {:?} events", r.phase, r.from_seq, r.to_seq, r.events);
             }
             Ok(Some(Control::RulesAck(a))) => {
-                let _ = writeln!(out, "rules_ack {}: version {:?}, active {:?}, {} errors", a.id, a.version, a.active, a.errors.len());
+                let _ = writeln!(
+                    out,
+                    "rules_ack {}: version {:?}, active {:?}, {} errors",
+                    a.id,
+                    a.version,
+                    a.active,
+                    a.errors.len()
+                );
             }
             Ok(Some(Control::ConfigAck(a))) => {
                 let _ = writeln!(out, "config_ack {}: {:?}", a.id, a.config);
@@ -92,7 +107,12 @@ fn summarize(name: &str) -> String {
         let client = t.client.as_ref().map_or("?".into(), |c| c.label());
         let thread = t.thread.as_ref().map_or("?".into(), |th| format!("{} #{} ({:?})", th.name, th.id, th.origin));
         let top = t.stack.first().map_or(String::new(), |f| format!(", top {}.{}:{:?}", f.c, f.m, f.l));
-        let _ = writeln!(out, "  {client} · {thread} · {} frames{}{top}", t.stack.len(), if t.stack_truncated { " (truncated)" } else { "" });
+        let _ = writeln!(
+            out,
+            "  {client} · {thread} · {} frames{}{top}",
+            t.stack.len(),
+            if t.stack_truncated { " (truncated)" } else { "" }
+        );
         let _ = writeln!(out, "  request: {}", headers(&t.req_headers));
         if let Some(r) = &t.resp {
             let _ = writeln!(out, "  response: {} {} {:?} · {}", r.status, r.message, r.protocol, headers(&r.headers));
@@ -114,9 +134,10 @@ fn summarize(name: &str) -> String {
             let _ = writeln!(out, "  marks: {}", marks.join(", "));
         }
         if let Some(c) = &t.conn {
-            let tls = c.tls.as_ref().map_or(String::new(), |x| {
-                format!(" · {:?} {:?} · {} certs", x.version, x.cipher, x.peer.len())
-            });
+            let tls = c
+                .tls
+                .as_ref()
+                .map_or(String::new(), |x| format!(" · {:?} {:?} · {} certs", x.version, x.cipher, x.peer.len()));
             let remote = c.remote.as_ref().map_or("?".into(), |a| format!("{}:{}", a.ip, a.port));
             let _ = writeln!(out, "  conn {:?} reused {:?} {:?} {remote}{tls}", c.id, c.reused, c.protocol);
         }

@@ -174,9 +174,13 @@ pub async fn run_device(
                 let what = if followed_away_from.is_some() {
                     format!("{} exited; waiting for it to start again (--follow)", target.package)
                 } else {
+                    let name = target.process.as_deref().unwrap_or(&target.package);
+                    let name = match target.pid {
+                        Some(pid) => format!("{name} pid {pid}"),
+                        None => name.to_string(),
+                    };
                     format!(
-                        "waiting for {} on {} (start the app; it needs a debug build with the traffic-police library)",
-                        target.process.as_deref().unwrap_or(&target.package),
+                        "waiting for {name} on {} (start the app; it needs a debug build with the traffic-police library)",
                         device.label()
                     )
                 };
