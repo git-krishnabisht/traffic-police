@@ -31,6 +31,8 @@ public final class CaptureRuntime {
         public String instance;
         /** Start the whole-app traffic sampler. */
         public boolean sampleTraffic = true;
+        /** Attach mode: the agent's hooks, read for every hello; null in library mode. */
+        public AttachState attach;
         public long trafficIntervalMillis = 500;
     }
 
@@ -61,10 +63,6 @@ public final class CaptureRuntime {
         this.ring = new ReplayRing(options.ringTxns, options.ringBodyBytes);
         this.writer = new EventWriter(this, queue, ring);
         this.recorder = new Recorder(this);
-        if (options.okhttp) {
-            capabilities.add("okhttp");
-            capabilities.add("okhttp_events");
-        }
         capabilities.add("huc");
         capabilities.add("rules");
         capabilities.add("pause");
@@ -93,7 +91,8 @@ public final class CaptureRuntime {
         Platform.AppInfo app = platform.app();
         rt.diag("info", "started", "traffic-police " + VERSION + " (" + options.mode + ") started in "
                 + app.processName + " (pid " + app.pid + ")", null);
-        if (!options.okhttp) {
+        // in attach mode OkHttp can load later; hello.hooks says whether it did
+        if (!options.okhttp && options.attach == null) {
             rt.diag("info", "okhttp_missing", "OkHttp is not in this process; HttpURLConnection capture only", null);
         }
         return rt;
@@ -243,16 +242,35 @@ public final class CaptureRuntime {
         j.endArr().endObj();
         writeClock(j);
         j.kv("started_ts", startedTs);
+        AttachState attach = options.attach;
         j.key("capabilities").arr();
+        if (options.okhttp || (attach != null && attach.okhttp())) {
+            j.str("okhttp").str("okhttp_events");
+        }
         for (String c : capabilities) {
             j.str(c);
         }
         j.endArr();
+        Map<String, String> clients = new LinkedHashMap<>(options.clients);
+        if (attach != null) {
+            attach.clients(clients);
+        }
         j.key("clients").obj();
-        for (Map.Entry<String, String> e : options.clients.entrySet()) {
+        for (Map.Entry<String, String> e : clients.entrySet()) {
             j.kv(e.getKey(), e.getValue());
         }
         j.endObj();
+        if (attach != null) {
+            j.key("hooks").arr();
+            for (AttachState.Hook h : attach.hooks()) {
+                j.obj().kv("id", h.id).kv("target", h.target).kv("status", h.status).kv("hits", h.hits);
+                if (h.detail != null) {
+                    j.kv("detail", h.detail);
+                }
+                j.endObj();
+            }
+            j.endArr();
+        }
         j.key("buffer");
         ring.writeStats(j);
         j.key("config");
