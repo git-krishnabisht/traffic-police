@@ -36,3 +36,11 @@ async fn inspect_devices() {
         }
     }
 }
+
+#[tokio::test]
+#[ignore = "needs a running adb server"]
+async fn list_forwards() {
+    for (serial, local, remote) in Adb::from_env().list_forwards().await.unwrap() {
+        println!("{serial} {local} {remote}");
+    }
+}

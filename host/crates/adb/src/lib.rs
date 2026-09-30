@@ -245,6 +245,20 @@ impl Adb {
         }
     }
 
+    /// All forwards the server holds, as `(serial, local, remote)`, e.g.
+    /// `("emulator-5554", "tcp:51234", "localabstract:traffic-police_com.example_4312")`.
+    pub async fn list_forwards(&self) -> Result<Vec<(String, String, String)>> {
+        let mut s = self.request("host:list-forward").await?;
+        let v = self.timed("host:list-forward", read_hex4_payload(&mut s)).await?;
+        Ok(String::from_utf8_lossy(&v)
+            .lines()
+            .filter_map(|l| {
+                let mut f = l.split_whitespace();
+                Some((f.next()?.to_string(), f.next()?.to_string(), f.next()?.to_string()))
+            })
+            .collect())
+    }
+
     /// Listening capture-runtime sockets on the device.
     pub async fn runtime_sockets(&self, id: TransportId) -> Result<Vec<RuntimeSocket>> {
         let out = self.shell(id, "cat /proc/net/unix").await?;
