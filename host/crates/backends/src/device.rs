@@ -11,7 +11,7 @@ use tokio::net::TcpStream;
 use tokio::net::tcp::OwnedWriteHalf;
 use tokio::sync::{mpsc, watch};
 use tokio::time::Instant;
-use traffic_police_adb::{Adb, AdbError, Device, RuntimeSocket};
+use traffic_police_adb::{Adb, AdbError, Device, DeviceList, RuntimeSocket};
 use traffic_police_core::SessionEvent;
 use traffic_police_core::backend::{BackendCommand, ConnectionStatus};
 use traffic_police_core::model::{SourceId, SourceInfo};
@@ -123,6 +123,7 @@ pub async fn run_device(
 ) {
     // the process we attach to (kept across hiccups and device disconnects, to resume it)
     let mut resume: Option<Resume> = None;
+    let mut devices = adb.watch_devices();
     let mut config = CaptureConfig::default();
     // with --follow, the process that exited (its socket may linger for a moment)
     let mut followed_away_from: Option<u32> = None;
@@ -139,7 +140,8 @@ pub async fn run_device(
         if events.is_closed() {
             return;
         }
-        let device = match find_device(&adb, target.serial.as_deref()).await {
+        let snapshot = devices.borrow_and_update().clone();
+        let device = match choose_device(&snapshot, target.serial.as_deref()) {
             Ok(d) => d,
             Err(msg) => {
                 let msg = if resume.is_some() {
@@ -148,7 +150,7 @@ pub async fn run_device(
                     msg
                 };
                 set_status(&status, ConnectionStatus::Waiting(msg));
-                if wait_or_quit(&mut commands, POLL).await {
+                if wait_or_quit(&mut commands, &mut config, &mut devices, POLL).await {
                     return;
                 }
                 continue;
@@ -179,14 +181,14 @@ pub async fn run_device(
                     )
                 };
                 set_status(&status, ConnectionStatus::Waiting(what));
-                if wait_or_quit(&mut commands, POLL).await {
+                if wait_or_quit(&mut commands, &mut config, &mut devices, POLL).await {
                     return;
                 }
                 continue;
             }
             Err(e) => {
                 set_status(&status, ConnectionStatus::Waiting(format!("{}: {e}", device.label())));
-                if wait_or_quit(&mut commands, POLL).await {
+                if wait_or_quit(&mut commands, &mut config, &mut devices, POLL).await {
                     return;
                 }
                 continue;
@@ -197,7 +199,7 @@ pub async fn run_device(
         if is_frozen(&adb, &device, socket.pid).await {
             let name = target.process.as_deref().unwrap_or(&target.package);
             set_status(&status, ConnectionStatus::Waiting(frozen_text(name, socket.pid)));
-            if wait_or_quit(&mut commands, POLL).await {
+            if wait_or_quit(&mut commands, &mut config, &mut devices, POLL).await {
                 return;
             }
             continue;
@@ -232,7 +234,7 @@ pub async fn run_device(
             }
             End::NoRuntime if resume.is_none() => {
                 // a socket without a runtime behind it (it just exited): look again
-                if wait_or_quit(&mut commands, POLL).await {
+                if wait_or_quit(&mut commands, &mut config, &mut devices, POLL).await {
                     return;
                 }
                 continue;
@@ -251,7 +253,7 @@ pub async fn run_device(
         };
         if alive {
             set_status(&status, ConnectionStatus::Waiting(format!("{reason}; reconnecting")));
-            if wait_or_quit(&mut commands, Duration::from_millis(300)).await {
+            if wait_or_quit(&mut commands, &mut config, &mut devices, Duration::from_millis(300)).await {
                 return;
             }
             continue;
@@ -279,15 +281,28 @@ pub async fn run_device(
     }
 }
 
-/// Sleeps, returning true if a shutdown arrived meanwhile.
-async fn wait_or_quit(commands: &mut mpsc::UnboundedReceiver<BackendCommand>, d: Duration) -> bool {
+/// Waits up to `d`, or until the device list changes; true if a shutdown arrived meanwhile.
+/// Pause and resume that arrive while waiting apply to the next connection's configuration.
+async fn wait_or_quit(
+    commands: &mut mpsc::UnboundedReceiver<BackendCommand>,
+    config: &mut CaptureConfig,
+    devices: &mut watch::Receiver<DeviceList>,
+    d: Duration,
+) -> bool {
     let deadline = Instant::now() + d;
     loop {
         tokio::select! {
             cmd = commands.recv() => match cmd {
                 Some(BackendCommand::Shutdown) | None => return true,
+                Some(BackendCommand::SetRecording(on)) => config.recording = on,
                 Some(_) => {}
             },
+            changed = devices.changed() => {
+                if changed.is_err() {
+                    tokio::time::sleep_until(deadline).await;
+                }
+                return false;
+            }
             _ = tokio::time::sleep_until(deadline) => return false,
         }
     }
@@ -303,9 +318,18 @@ async fn close_source(events: &mpsc::Sender<Vec<SessionEvent>>, r: &mut Resume, 
     }
 }
 
-/// The online device to use: the given serial, or the only online one.
+/// The online device to use, asking adb now (the tracker can lag a disconnect by a moment).
 async fn find_device(adb: &Adb, serial: Option<&str>) -> Result<Device, String> {
-    let devices = adb.devices().await.map_err(|e| e.to_string())?;
+    choose_device(&Some(adb.devices().await.map_err(|e| e.to_string())), serial)
+}
+
+/// The online device to use from a device list: the given serial, or the only online one.
+fn choose_device(list: &DeviceList, serial: Option<&str>) -> Result<Device, String> {
+    let devices = match list {
+        None => return Err("asking adb for devices…".into()),
+        Some(Err(e)) => return Err(format!("cannot reach the adb server: {e}")),
+        Some(Ok(d)) => d.clone(),
+    };
     match serial {
         Some(s) => match devices.into_iter().find(|d| d.serial == s) {
             Some(d) if d.is_online() => Ok(d),

@@ -38,7 +38,6 @@ struct ProcessRow {
 }
 
 enum Snapshot {
-    Devices(Result<Vec<Device>, String>),
     /// "Android 16 · API 36", read once per device.
     About(TransportId, String),
     Processes(TransportId, Result<Vec<ProcessRow>, String>),
@@ -102,18 +101,20 @@ async fn fetch_processes(adb: &Adb, id: TransportId) -> Result<Vec<ProcessRow>, 
 async fn run(term: &mut terminal::Term, adb: Adb, theme: Theme) -> anyhow::Result<Option<Picked>> {
     let (tx, mut rx) = mpsc::unbounded_channel::<Snapshot>();
     let (want_tx, mut want_rx) = mpsc::unbounded_channel::<Option<TransportId>>();
-    // background refresh: the device list, and the processes of the chosen device, every second
+    // devices as adb reports them (pushed on every change)
+    let mut device_watch = adb.watch_devices();
+    // background refresh: each device's Android version once, and the chosen device's processes
+    // every second
     let fetch_adb = adb.clone();
+    let mut fetch_watch = device_watch.clone();
     let fetcher = tokio::spawn(async move {
         let mut device: Option<TransportId> = None;
         let mut asked = std::collections::HashSet::new();
         loop {
-            let devices = fetch_adb.devices().await.map_err(|e| e.to_string());
-            let online: Vec<TransportId> =
-                devices.iter().flatten().filter(|d| d.is_online()).map(|d| d.transport_id).collect();
-            if tx.send(Snapshot::Devices(devices)).is_err() {
-                return;
-            }
+            let online: Vec<TransportId> = match &*fetch_watch.borrow_and_update() {
+                Some(Ok(list)) => list.iter().filter(|d| d.is_online()).map(|d| d.transport_id).collect(),
+                _ => Vec::new(),
+            };
             for id in online {
                 if asked.insert(id)
                     && let Some(text) = about(&fetch_adb, id).await
@@ -133,6 +134,7 @@ async fn run(term: &mut terminal::Term, adb: Adb, theme: Theme) -> anyhow::Resul
                     Some(d) => device = d,
                     None => return,
                 },
+                _ = fetch_watch.changed() => {}
                 _ = tokio::time::sleep(Duration::from_secs(1)) => {}
             }
         }
@@ -163,8 +165,12 @@ async fn run(term: &mut terminal::Term, adb: Adb, theme: Theme) -> anyhow::Resul
             draw(buf, area, &theme, &view);
         })?;
         tokio::select! {
-            snap = rx.recv() => match snap {
-                Some(Snapshot::Devices(d)) => {
+            changed = device_watch.changed() => {
+                if changed.is_err() {
+                    break;
+                }
+                let latest = device_watch.borrow_and_update().clone();
+                if let Some(d) = latest {
                     loaded = true;
                     devices = d;
                     // with one online device, go straight to its processes (once)
@@ -178,6 +184,8 @@ async fn run(term: &mut terminal::Term, adb: Adb, theme: Theme) -> anyhow::Resul
                         }
                     }
                 }
+            }
+            snap = rx.recv() => match snap {
                 Some(Snapshot::About(id, text)) => {
                     abouts.insert(id, text);
                 }

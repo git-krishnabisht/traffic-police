@@ -12,6 +12,7 @@ use std::time::Duration;
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
+use tokio::sync::watch;
 
 pub use apps::AppProcess;
 pub use devices::{Device, TransportId};
@@ -33,6 +34,10 @@ pub enum AdbError {
 }
 
 pub type Result<T> = std::result::Result<T, AdbError>;
+
+/// The latest device list from [`Adb::watch_devices`]: `None` until the first one arrives,
+/// `Err` while the adb server cannot be reached.
+pub type DeviceList = Option<std::result::Result<Vec<Device>, String>>;
 
 /// Output of a `shell,v2` command.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -173,6 +178,50 @@ impl Adb {
         let mut s = self.request("host:devices-l").await?;
         let v = self.timed("host:devices-l", read_hex4_payload(&mut s)).await?;
         Ok(devices::parse_long(&String::from_utf8_lossy(&v)))
+    }
+
+    /// The device list, kept current by `host:track-devices` in a background task that
+    /// reconnects if the adb server restarts. The task stops when every receiver is dropped.
+    pub fn watch_devices(&self) -> watch::Receiver<DeviceList> {
+        let (tx, rx) = watch::channel(None);
+        let adb = self.clone();
+        tokio::spawn(async move {
+            let mut backoff = Duration::from_millis(250);
+            loop {
+                match adb.track_devices().await {
+                    Ok(mut tracker) => {
+                        backoff = Duration::from_millis(250);
+                        loop {
+                            tokio::select! {
+                                r = tracker.next() => match r {
+                                    Ok(list) => {
+                                        if tx.send(Some(Ok(list))).is_err() {
+                                            return;
+                                        }
+                                    }
+                                    Err(e) => {
+                                        let _ = tx.send(Some(Err(e.to_string())));
+                                        break;
+                                    }
+                                },
+                                _ = tx.closed() => return,
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        if tx.send(Some(Err(e.to_string()))).is_err() {
+                            return;
+                        }
+                    }
+                }
+                tokio::select! {
+                    _ = tokio::time::sleep(backoff) => {}
+                    _ = tx.closed() => return,
+                }
+                backoff = (backoff * 2).min(Duration::from_secs(2));
+            }
+        });
+        rx
     }
 
     /// A tracker that yields the full device list on every change (binary proto when the
