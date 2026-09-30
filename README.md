@@ -17,8 +17,23 @@ app hooks OkHttp and HttpURLConnection and streams events to the terminal over a
 
 ## Install
 
-Build from source (release binaries come later). You need Rust through rustup; the toolchain
-is pinned in `host/rust-toolchain.toml` (1.98.1).
+**Download** the binary for your system from the
+[releases page](https://github.com/git-krishnabisht/traffic-police/releases): macOS on Apple
+silicon, Linux on x86_64 (glibc 2.35 or newer: Ubuntu 22.04, Debian 12, Fedora 36, RHEL 9 and
+later), or Windows on x86_64. It has the [attach mode](#watch-any-debuggable-app-attach-mode) agent
+built in. The binaries are not code-signed:
+
+```sh
+chmod +x traffic-police-macos-arm64                          # macOS and Linux: make it executable
+xattr -d com.apple.quarantine traffic-police-macos-arm64     # macOS: allow a downloaded file from an unidentified developer
+mv traffic-police-macos-arm64 /usr/local/bin/traffic-police  # or anywhere on your PATH
+```
+
+Windows may warn that the publisher is unknown. `SHA256SUMS.txt` on the releases page has the
+checksums.
+
+**Or build from source.** You need Rust through rustup; the toolchain is pinned in
+`host/rust-toolchain.toml` (1.98.1).
 
 ```sh
 # once, if you do not have Rust yet; then open a new terminal (or run: source "$HOME/.cargo/env")
@@ -485,3 +500,15 @@ purpose: `./gradlew :capture-core:updateProtocolGoldens` (device side) and
 
 Nothing here sends data anywhere: no telemetry, and no network traffic from the host other than
 adb.
+
+Releases: tag `vX.Y.Z` with notes in `docs/releases/vX.Y.Z.md`, and push the tag; the release
+workflow builds the binaries (agent built in), their checksums and `THIRD-PARTY-LICENSES.txt`
+(`python3 host/scripts/third_party_licenses.py`), and publishes them. Run it by hand first to try
+the build without publishing.
+
+## License
+
+traffic-police is licensed under the [Apache License, Version 2.0](LICENSE). The attach-mode agent
+contains slicer from the Android Open Source Project (Apache-2.0) and uses the JVMTI header (GPL-2.0
+with the Classpath exception); their texts are in `android/attach-agent/third_party`. Each release
+lists the licenses of everything in its binaries in `THIRD-PARTY-LICENSES.txt`.

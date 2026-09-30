@@ -1,8 +1,8 @@
 name: release
 
 # Binaries for Linux, macOS and Windows with the attach-mode agent built in, so they need nothing
-# else to attach (ARCHITECTURE.md §4.7.6). By hand: the binaries are this run's artifacts. On a
-# v* tag: also a GitHub release.
+# else to attach (ARCHITECTURE.md §4.7.6), and the license texts of everything in them. By hand:
+# this run's artifacts. On a v* tag: also a GitHub release, with docs/releases/<tag>.md as notes.
 on:
   workflow_dispatch:
   push:
@@ -39,7 +39,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          # built against 22.04's glibc (2.35), so it runs on Linux distributions from 2022 on
+          - os: ubuntu-22.04
             name: traffic-police-linux-x86_64
             exe: traffic-police
           - os: macos-latest
@@ -78,6 +79,19 @@ jobs:
           name: ${{ matrix.name }}
           path: host/${{ matrix.name }}
           if-no-files-found: error
+      # the same crates on every platform (the list covers all targets), so once is enough
+      - name: The licenses of what the binaries contain
+        if: runner.os == 'Linux'
+        working-directory: .
+        run: python3 host/scripts/third_party_licenses.py > THIRD-PARTY-LICENSES.txt
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'Linux'
+        with:
+          name: traffic-police-licenses
+          path: |
+            LICENSE
+            THIRD-PARTY-LICENSES.txt
+          if-no-files-found: error
 
   publish:
     if: startsWith(github.ref, 'refs/tags/v')
@@ -86,11 +100,17 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v7
       - uses: actions/download-artifact@v4
         with:
           pattern: traffic-police-*
           merge-multiple: true
+          path: dist
+      - name: Checksums
+        working-directory: dist
+        run: sha256sum traffic-police-* > SHA256SUMS.txt
       - uses: softprops/action-gh-release@v2
         with:
-          files: traffic-police-*
+          body_path: docs/releases/${{ github.ref_name }}.md
+          files: dist/*
           fail_on_unmatched_files: true

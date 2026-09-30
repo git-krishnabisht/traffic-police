@@ -631,7 +631,7 @@ A CI step (`cargo tree -e features`) fails if a C library sneaks back in through
 
 - Host: `cargo fmt --check`, `cargo clippy -D warnings`, `cargo test` on macOS, Ubuntu and Windows; release artifacts built per OS.
 - Android: build `capture`, `capture-noop`, `attach-agent` (NDK, three ABIs) and `sample-app`; JVM test matrix across OkHttp versions; an emulator job (API 26 and latest) on Linux with KVM, which runs the device end-to-end tests in both modes (the plain build and the agent for attach mode).
-- Release (`release.yml`, on a `v*` tag or by hand): the agent is built once, then the binary for Linux, macOS and Windows with the agent built in (`TRAFFIC_POLICE_EMBED_AGENT=1`); a tag publishes them as a GitHub release.
+- Release (`release.yml`, on a `v*` tag or by hand): the agent is built once, then the binary for Linux (built on Ubuntu 22.04, so glibc 2.35 suffices), macOS (Apple silicon) and Windows with the agent built in (`TRAFFIC_POLICE_EMBED_AGENT=1`), and `THIRD-PARTY-LICENSES.txt` (`host/scripts/third_party_licenses.py`: the license files of the crates the binary links, and the agent's slicer and JVMTI notices). A tag publishes them as a GitHub release with `LICENSE` (Apache-2.0), SHA-256 checksums, and `docs/releases/<tag>.md` as the notes.
 
 ## 9. Decisions to review, deviations, risks
 
