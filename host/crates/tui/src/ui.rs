@@ -1063,13 +1063,17 @@ fn draw_rules(app: &mut App, r: Rect, buf: &mut Buffer) {
         }
         (Some(f), _) => {
             let on = f.set.rules.iter().filter(|x| x.enabled).count();
+            // short: the project's directory name, then the file
+            let project = f
+                .path
+                .parent()
+                .and_then(std::path::Path::parent)
+                .and_then(std::path::Path::file_name)
+                .map(|n| n.to_string_lossy().into_owned());
+            let shown =
+                project.map_or_else(|| f.path.display().to_string(), |p| format!("{p}/.traffic-police/rules.toml"));
             let mut spans = vec![Span::styled(
-                format!(
-                    "{} · {} rule{}, {on} on",
-                    f.path.display(),
-                    f.entries.len(),
-                    if f.entries.len() == 1 { "" } else { "s" }
-                ),
+                format!("{shown} · {} rule{}, {on} on", f.entries.len(), if f.entries.len() == 1 { "" } else { "s" }),
                 t.faint(),
             )];
             if let Some(a) = ack_current {
