@@ -142,6 +142,12 @@ impl Capture {
         let deadline = duration.map(|d| tokio::time::Instant::now() + d);
         let mut status_open = true;
         let mut last = String::new();
+        let status_text = |st: &ConnectionStatus| match st {
+            ConnectionStatus::Live(s) => format!("capturing {s} · Ctrl+C stops"),
+            ConnectionStatus::Waiting(s) => s.clone(),
+            ConnectionStatus::Detached(s) => format!("detached: {s}"),
+            ConnectionStatus::Failed(s) => format!("failed: {s}"),
+        };
         loop {
             tokio::select! {
                 batch = self.events.recv() => match batch {
@@ -151,7 +157,14 @@ impl Capture {
                             return Stop::Done;
                         }
                     }
-                    None => return Stop::Ended,
+                    None => {
+                        // the backend's last word (the app exited, or the connection failed)
+                        let text = status_text(&self.status.borrow());
+                        if text != last {
+                            eprintln!("traffic-police: {text}");
+                        }
+                        return Stop::Ended;
+                    }
                 },
                 changed = self.status.changed(), if status_open => {
                     if changed.is_err() {
@@ -159,12 +172,7 @@ impl Capture {
                         status_open = false;
                         continue;
                     }
-                    let text = match &*self.status.borrow() {
-                        ConnectionStatus::Live(s) => format!("capturing {s} · Ctrl+C stops"),
-                        ConnectionStatus::Waiting(s) => s.clone(),
-                        ConnectionStatus::Detached(s) => format!("detached: {s}"),
-                        ConnectionStatus::Failed(s) => format!("failed: {s}"),
-                    };
+                    let text = status_text(&self.status.borrow());
                     if text != last {
                         eprintln!("traffic-police: {text}");
                         last = text;

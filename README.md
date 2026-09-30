@@ -6,11 +6,12 @@ and response details, the thread and call stack that made each request, a thread
 response rewrite rules. No proxy and no certificates: a small runtime inside the (debuggable)
 app hooks OkHttp and HttpURLConnection and streams events to the terminal over adb.
 
-> **Status: Phase 1.** Library mode works: add the library to your app's debug build and watch
-> its traffic live from a device or an emulator. Attach mode (any debuggable app, no code
-> changes) arrives in Phase 4; exports, filters and `doctor` in Phase 2; editable rules in
-> Phase 3. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design and
-> [docs/PROTOCOL.md](docs/PROTOCOL.md) for the device protocol.
+> **Status: Phase 2.** Library mode works: add the library to your app's debug build and watch
+> its traffic live from a device or an emulator, then filter, search, copy as cURL, diff, decode
+> tokens, export HAR, save and reopen sessions, or run without the UI (`tail`, `record`,
+> `export`, `doctor`). Editable rules arrive in Phase 3; attach mode (any debuggable app, no
+> code changes) in Phase 4. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design
+> and [docs/PROTOCOL.md](docs/PROTOCOL.md) for the device protocol.
 
 ## Install
 
@@ -164,21 +165,102 @@ costs per request, in logcat), `security` (checks that another uid is refused).
 | Live | `Space` pause or resume recording · `F` freeze the view (capture continues) · `L` back to live · `+` `-` zoom · `0` reset zoom · `v` select a time range (`v` or `Enter` again to apply) |
 | Graph | `T` whole-app traffic or captured requests · `t` time since start or wall clock · `←` `→` move when the graph has focus |
 | List | `c` collapse repeated calls · `s` sort by the next column · `S` reverse the sort · `C` choose columns |
-| Session | `x` clear (asks first) · `?` help · `q` quit |
+| Find | `/` in the list: the filter bar ([language below](#filters)) · `/` in the detail pane: search the tab (`n` `N` next and previous match) · `m` pin a request (`is:pinned` lists pins) |
+| Copy and save | `y` copy: as cURL, the URL, headers, one header, a body, the JSON value at the cursor · `w` save a body to a file · `e` export: HAR (all, listed or selected requests) or a session file |
+| Compare | `d` marks a request (◆), `d` on another compares them: request and status lines, headers (`s` in order or as sets), bodies (JSON with keys sorted); `n` `N` step through changes, `y` copies the diff |
+| Decode | `Enter` on a header or a JSON value: copy it, decode a JWT, base64 or URL encoding, or filter by it · the Overview lists JWTs with their expiry (`Enter` decodes) |
+| Session | `:` command palette (every command by name, and the graph styles) · `x` clear (asks first) · `?` help · `q` quit |
 
 Mouse: click rows and tabs, double-click a row to open it, wheel to scroll (on the graph the
 wheel zooms and Shift+wheel moves in time), drag on the graph to select a range, drag the divider
 to resize the panes.
 
-Coming in Phase 2: `/` filter bar and body search (`n`, `N`), `y` copy (including as cURL), `e`
-export (HAR), `w` save a body, `d` diff two requests, `m` pin, `:` command palette. Phase 3 adds
-`r` (new rule from the selected request) and rule editing.
+Every key can be changed in the config file (below). Phase 3 adds `r` (new rule from the
+selected request) and rule editing.
+
+### Filters
+
+Words must all match; `-` in front of one negates it; quotes keep spaces in a word.
+
+| Filter | Matches |
+|---|---|
+| `login`, `"api/v2 users"` | part of the URL (any case) |
+| `/regex/`, `/regex/i` | a regular expression on the URL |
+| `method:GET,POST` | the method |
+| `status:404`, `status:4xx`, `status:>=400`, `status:failed`, `status:pending` | the status, its class, or the state |
+| `host:*.example.com`, `path:/api/**/status` | the host or path (`*` within a segment, `**` across) |
+| `type:json`, `thread:worker`, `header:x-request-id`, `header:"x-request-id=abc"` | type, initiating thread, a header by name or value |
+| `size>10k`, `time>500ms` | response size, duration |
+| `rule:modified`, `rule:<id>`, `is:pinned` | changed by a rule, pinned |
+| `body:"sessionId"` | a request or response body contains the text (searched in the background) |
+
+A filter that does not parse is underlined where it breaks, and the previous one stays active.
+
+## Without the UI
+
+```sh
+traffic-police tail -p com.example.app                        # a line per finished request
+traffic-police tail -p com.example.app --json status:5xx | jq .url   # JSON lines (docs/PROTOCOL.md Appendix B)
+traffic-police tail -p com.example.app --events               # every captured message
+traffic-police record -p com.example.app --out login.trafficpolice --duration 2m
+traffic-police export --har out.har --input login.trafficpolice --filter 'host:api.*'
+traffic-police export --har out.har -p com.example.app --duration 60s
+traffic-police open login.trafficpolice                       # or a .har from any tool
+traffic-police doctor -p com.example.app                      # what is wrong, and how to fix it
+```
+
+`tail` runs until Ctrl+C, `--duration`, or the app's exit (`--follow` waits for it to start
+again); `--bodies` adds bodies to `--json` lines. `record` writes the file as it captures (with
+`--filter`, only matching requests, at the end). Like the UI, both begin with the requests the
+app made before they connected (the app keeps its last 1,000). Status goes to stderr, data to
+stdout. `doctor` checks adb, the config, the terminal and clipboard,
+each device, and with `--package` that the app is installed, debuggable and capturing; it
+changes nothing and exits with 1 when a check fails.
+
+Session files keep everything as captured (timings, threads, stacks, bodies, pins), so `open`
+shows a session as it was. HAR files from browsers and other tools open too; their bodies are
+shown decoded, and the transferred (compressed) sizes are not kept.
 
 ## What you see is what was sent
 
 traffic-police hides nothing: headers such as `Authorization` and `Cookie`, tokens and personal
-data in bodies all appear exactly as the app sent and received them, on screen and (from Phase
-2) in exports. Treat screenshots and exported files like the app's own logs.
+data in bodies all appear exactly as the app sent and received them, on screen, in copies, and in
+HAR, session and `tail` output. Treat screenshots and exported files like the app's own logs.
+
+## Config
+
+Settings go in `~/.config/traffic-police/config.toml` (`$XDG_CONFIG_HOME/traffic-police` if set;
+`%APPDATA%\traffic-police` on Windows; or the file `TRAFFIC_POLICE_CONFIG` names). All of it is
+optional; `traffic-police doctor` reports mistakes with their line.
+
+```toml
+[ui]
+theme = "dark"                # auto, dark, light (--theme wins)
+graph_style = "heavy"         # heavy, lines, area, braille
+time = "wall"                 # relative (since the session started) or wall (clock time)
+columns = ["method", "host"]  # optional columns shown besides the default ones
+divider = 55                  # the list's share of the width, in percent (25-80)
+clipboard = "auto"            # auto, osc52, native, off
+images = true                 # false: half-blocks (as --no-images)
+
+[capture]
+body_cap = "10mb"             # bytes kept of each body
+stack_depth = 64
+request_bodies = true
+response_bodies = true
+
+[keymap]
+pause = "p"                   # an action's name (see : or ?), then a key or a list of keys
+copy = ["y", "ctrl+y"]
+
+[adb]
+server = "127.0.0.1:5037"     # otherwise ADB_SERVER_SOCKET / ANDROID_ADB_SERVER_PORT, as adb reads them
+path = "/opt/android-sdk/platform-tools/adb"   # the adb doctor compares with the server
+
+[storage]
+memory = "256mb"              # body bytes kept in memory before the rest goes to disk
+spill_dir = "/var/tmp"        # where that goes (a private directory, removed on exit)
+```
 
 ## Project config
 
@@ -226,8 +308,10 @@ launch there).
   never touched.
 - **DETACHED "another traffic-police took over":** a second traffic-police connected to the
   same process.
-- **More:** `traffic-police doctor` (Phase 2) will check adb, the device, the app and the
-  connection, and print a fix for each failure.
+- **Anything else:** `traffic-police doctor -p com.example.app` checks adb, the config, the
+  device, the app and its capture runtime, and prints a fix for each failure.
+- **Copy does nothing inside tmux:** tmux passes OSC 52 on only with `set -g set-clipboard on`.
+  `[ui] clipboard = "native"` uses pbcopy, wl-copy, xclip or xsel instead.
 
 ## Development
 
@@ -237,6 +321,7 @@ cargo test                                    # unit, behavior and conformance t
 INSTA_UPDATE=always cargo test -p traffic-police-tui   # after an intended UI change; review the snapshot diff
 cargo test --release -p traffic-police-tui --test perf -- --ignored --nocapture   # frame time at 50,000 requests
 cargo run -- demo --dump-frame 140x40@12 --keys 'g<Enter>l'   # print one frame as text
+cargo run -- tail --demo --duration 5s --json   # the commands without the UI, on the demo app (hidden --demo)
 # drives the sample app on a device (installed debug build): every scenario, both processes, kill and relaunch
 TP_E2E_SERIAL=emulator-5554 cargo test -p traffic-police-backends --test device_e2e -- --ignored --nocapture
 
