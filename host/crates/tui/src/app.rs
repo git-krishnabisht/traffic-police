@@ -82,6 +82,8 @@ pub enum Overlay {
     Menu,
     /// A path typed in the bottom line (save a body, export): `App::prompt`.
     Prompt,
+    /// Two requests compared: `App::diff`.
+    Diff,
 }
 
 /// A search match in the detail pane: a row, and display columns in it.
@@ -305,6 +307,9 @@ pub struct App {
     pub copied: Option<String>,
     /// The file being replayed (`open FILE`), for the header.
     pub replay: Option<String>,
+    /// The request marked for comparison (`d`).
+    pub diff_mark: Option<traffic_police_core::model::TxnKey>,
+    pub diff: Option<crate::diffview::DiffView>,
     /// The captured stream, for saving the session (`e`).
     pub session_log: Option<Arc<traffic_police_core::session::SessionLog>>,
     pub search_input: Input,
@@ -376,6 +381,8 @@ impl App {
             copied: None,
             session_log: None,
             replay: None,
+            diff_mark: None,
+            diff: None,
             search_input: Input::default(),
             search_before: None,
             filter_error: None,
@@ -760,6 +767,7 @@ impl App {
         self.rows = RowModel::new();
         self.frozen = None;
         self.selected = None;
+        self.diff_mark = None;
         self.detail_open = false;
         self.focus = Focus::List;
         self.bodies.clear();
@@ -817,6 +825,10 @@ impl App {
         match self.overlay {
             Overlay::Help => {
                 self.overlay = Overlay::None;
+                return;
+            }
+            Overlay::Diff => {
+                self.diff_key(k);
                 return;
             }
             Overlay::ConfirmClear => {
@@ -1056,7 +1068,8 @@ impl App {
             Action::Copy => self.open_copy_menu(),
             Action::Save => self.open_save_prompt(),
             Action::Export => self.open_export_menu(),
-            Action::Palette | Action::Diff => {
+            Action::Diff => self.diff_action(),
+            Action::Palette => {
                 self.flash(format!("{}: coming later in Phase 2", a.info().title));
             }
             _ => match self.focus {
@@ -1607,6 +1620,25 @@ impl App {
 
     pub fn handle_mouse(&mut self, m: MouseEvent) {
         self.refresh();
+        // boxes over the screen take the mouse
+        match self.overlay {
+            Overlay::Diff => {
+                if let Some(v) = &mut self.diff {
+                    match m.kind {
+                        MouseEventKind::ScrollDown => v.scroll = (v.scroll + 3).min(v.max_scroll()),
+                        MouseEventKind::ScrollUp => v.scroll = v.scroll.saturating_sub(3),
+                        _ => {}
+                    }
+                }
+                return;
+            }
+            Overlay::Help if matches!(m.kind, MouseEventKind::Down(_)) => {
+                self.overlay = Overlay::None;
+                return;
+            }
+            Overlay::Help | Overlay::Menu | Overlay::Columns { .. } | Overlay::ConfirmClear => return,
+            _ => {}
+        }
         let (x, y) = (m.column, m.row);
         match m.kind {
             MouseEventKind::Down(MouseButton::Left) => {

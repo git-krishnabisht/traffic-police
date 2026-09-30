@@ -6,6 +6,7 @@
 
 pub mod backend;
 pub mod decode;
+pub mod diff;
 pub mod event;
 pub mod export;
 pub mod filter;

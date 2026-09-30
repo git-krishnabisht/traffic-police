@@ -13,7 +13,7 @@ use traffic_police_backends::demo::{DemoConfig, DemoSession};
 use traffic_police_core::backend::BackendCommand;
 use traffic_police_core::fmt::NS_PER_SEC;
 use traffic_police_core::rows::Column;
-use traffic_police_tui::app::{Focus, Target};
+use traffic_police_tui::app::{Focus, Overlay, Target};
 use traffic_police_tui::theme::{Depth, Palette};
 use traffic_police_tui::{App, Theme, render_text, ui};
 
@@ -439,6 +439,31 @@ fn pins_mark_rows_and_filter_with_is_pinned() {
     assert_eq!(app.view_rows().matched(), 1);
     press(&mut app, MEDIUM, "m");
     assert!(!app.view_store().txn(init).pinned);
+}
+
+#[test]
+fn d_on_two_requests_compares_them() {
+    let mut app = app_at(40.0);
+    let to = goto(&mut app, MEDIUM, path_is("/api/sdk/init"));
+    let text = press(&mut app, MEDIUM, &format!("{to}d"));
+    assert!(text.contains("◆ init"), "{text}");
+    let to = goto(&mut app, MEDIUM, path_is("/api/sdk/monitor"));
+    let text = press(&mut app, MEDIUM, &format!("{to}d"));
+    assert_eq!(app.overlay, Overlay::Diff);
+    assert!(text.contains("A POST https://deepid.example.app/api/sdk/init"), "{text}");
+    assert!(text.contains("B GET https://deepid.example.app/api/sdk/monitor"), "{text}");
+    assert!(text.contains("differs in request,"), "{text}");
+    assert!(text.contains("- POST https://deepid.example.app/api/sdk/init"), "{text}");
+    // sorted headers, then the next change
+    let text = press(&mut app, MEDIUM, "sn");
+    assert!(text.contains("headers compared as sets"), "{text}");
+    assert!(app.diff.as_ref().unwrap().scroll > 0);
+    let text = press(&mut app, MEDIUM, "<Esc>");
+    assert_eq!(app.overlay, Overlay::None);
+    assert!(!text.contains("◆"), "the mark is used up: {text}");
+    // d twice on one request clears the mark
+    press(&mut app, MEDIUM, "dd");
+    assert_eq!((app.overlay, app.diff_mark), (Overlay::None, None));
 }
 
 #[test]

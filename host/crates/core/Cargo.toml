@@ -23,6 +23,8 @@ jaq-json.workspace = true
 toml.workspace = true
 tracing.workspace = true
 regex.workspace = true
+similar.workspace = true
+sha2.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true

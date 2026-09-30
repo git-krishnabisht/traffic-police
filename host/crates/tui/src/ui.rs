@@ -56,6 +56,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         Overlay::Search => draw_search(f, app, footer),
         Overlay::Menu => draw_menu(app, area, f.buffer_mut()),
         Overlay::Prompt => draw_prompt(f, app, footer),
+        Overlay::Diff => crate::diffview::draw(app, area, f.buffer_mut()),
         Overlay::None => {}
     }
 }
@@ -812,6 +813,9 @@ fn draw_connections(app: &mut App, r: Rect, buf: &mut Buffer) {
                 if tx.pinned {
                     marks.push_str("★ ");
                 }
+                if app.diff_mark == Some(tx.key) {
+                    marks.push_str("◆ ");
+                }
                 if tx.rule_modified() {
                     marks.push_str("✎ ");
                 }
@@ -1286,6 +1290,13 @@ fn hints(app: &App) -> Vec<(&'static [Action], &'static str)> {
         }
         (Overlay::ConfirmClear | Overlay::Filter | Overlay::Jq | Overlay::Search | Overlay::Prompt, ..) => vec![],
         (Overlay::Menu, ..) => vec![(&[A::Up, A::Down], "move"), (&[A::Activate], "choose"), (&[A::Back], "close")],
+        (Overlay::Diff, ..) => vec![
+            (&[A::Up, A::Down], "scroll"),
+            (&[A::FindNext, A::FindPrev], "next/previous change"),
+            (&[A::Sort], "headers in order/as sets"),
+            (&[A::Copy], "copy"),
+            (&[A::Back], "close"),
+        ],
         (_, Focus::Graph, _) => vec![
             (&[A::Left, A::Right], "move"),
             (&[A::ZoomIn, A::ZoomOut], "zoom"),
@@ -1385,7 +1396,7 @@ fn centered(area: Rect, w: u16, h: u16) -> Rect {
     Rect { x: area.x + (area.width - w) / 2, y: area.y + (area.height - h) / 2, width: w, height: h }
 }
 
-fn draw_box(buf: &mut Buffer, r: Rect, title: &str, theme: &Theme) {
+pub(crate) fn draw_box(buf: &mut Buffer, r: Rect, title: &str, theme: &Theme) {
     fill(buf, r, Style::default().bg(theme.selected_bg().map(|_| Color::Reset).unwrap_or(Color::Reset)));
     ratatui::widgets::Block::bordered()
         .border_type(ratatui::widgets::BorderType::Rounded)

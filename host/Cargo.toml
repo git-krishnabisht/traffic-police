@@ -48,6 +48,7 @@ base64 = "0.22.1"
 percent-encoding = "2.3.2"
 regex = { version = "1.13.1", default-features = false, features = ["std", "perf", "unicode-case", "unicode-perl"] }
 similar = "3.2.0"
+sha2 = "0.10.9"
 
 insta = { version = "1.48.0", features = ["filters"] }
 proptest = "1.11.0"
