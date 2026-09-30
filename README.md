@@ -244,6 +244,7 @@ columns = ["method", "host"]  # optional columns shown besides the default ones
 divider = 55                  # the list's share of the width, in percent (25-80)
 clipboard = "auto"            # auto, osc52, native, off
 images = true                 # false: half-blocks (as --no-images)
+fps = 60                      # frames drawn a second at most (10-240); a still screen draws none
 
 [capture]
 body_cap = "10mb"             # bytes kept of each body
@@ -263,6 +264,14 @@ path = "/opt/android-sdk/platform-tools/adb"   # the adb doctor compares with th
 memory = "256mb"              # body bytes kept in memory before the rest goes to disk
 spill_dir = "/var/tmp"        # where that goes (a private directory, removed on exit)
 ```
+
+`fps` is the most frames traffic-police draws in a second: 60 unless you set it, from 10 to 240.
+A live view is drawn that often, because the clock moves the graph and the bars. A still one,
+such as an opened file, is not drawn at all. How many of the frames you see is up to the
+terminal and the screen: a 60 Hz screen shows 60 a second whatever is drawn, and the rest only
+costs CPU. To see what is drawn, press `:`, type `fps` and press `Enter` (or start with
+`TRAFFIC_POLICE_FPS=1`): the footer then shows the frames drawn in the last second and the time
+one took.
 
 ## Project config
 
@@ -354,6 +363,8 @@ launch there).
 - **No colors, or wrong colors:** `NO_COLOR` switches to a monochrome theme; set
   `COLORTERM=truecolor` if your terminal supports 24-bit color but does not advertise it.
 - **"terminal too small":** make the window at least 100×30.
+- **The UI lags in a slow terminal or over SSH, or uses more CPU than you like:** lower
+  `[ui] fps` (10 is the least), so fewer frames are drawn and sent.
 - **WAITING "waiting for com.example.app on ...":** the app is not running, or this build has no
   traffic-police library. On the device, `adb logcat -s TrafficPolice` shows `capturing in
   <process>; socket @traffic-police_...` when capture starts, or why it did not (`... is not
@@ -387,6 +398,7 @@ cargo test                                    # unit, behavior and conformance t
 INSTA_UPDATE=always cargo test -p traffic-police-tui   # after an intended UI change; review the snapshot diff
 cargo test --release -p traffic-police-tui --test perf -- --ignored --nocapture   # frame time at 50,000 requests
 cargo run -- demo --dump-frame 140x40@12 --keys 'g<Enter>l'   # print one frame as text
+TRAFFIC_POLICE_FPS=1 cargo run --release -- demo   # the footer shows the frames drawn a second and the time one takes
 cargo run -- tail --demo --duration 5s --json   # the commands without the UI, on the demo app (hidden --demo)
 # drives the sample app on a device (installed debug build): every scenario, both processes, kill and relaunch
 TP_E2E_SERIAL=emulator-5554 cargo test -p traffic-police-backends --test device_e2e -- --ignored --nocapture

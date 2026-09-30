@@ -515,6 +515,10 @@ fn the_palette_finds_and_runs_commands() {
     let to = goto(&mut app, MEDIUM, path_is("/api/sdk/init"));
     press(&mut app, MEDIUM, &format!("{to}:pin<Enter>"));
     assert!(app.view_store().txn(app.selected.unwrap()).pinned);
+    // a command without a key, found by what people call it
+    let shown = app.frames.visible;
+    press(&mut app, MEDIUM, ":fps<Enter>");
+    assert_ne!(app.frames.visible, shown, "fps finds the frame rate readout");
     // nothing matches: Enter says so; Esc closes without running anything
     press(&mut app, MEDIUM, ":zzzz<Enter>");
     assert_eq!(app.overlay, Overlay::None);

@@ -1,8 +1,8 @@
 //! Terminal lifecycle and the event loop (ARCHITECTURE.md §5.2 and §5.8).
 //!
 //! One task owns the [`App`]: it applies event batches from the backend, handles input, and
-//! redraws with frame pacing. Input redraws at up to 60 Hz, data at up to 30 Hz, and a quiet
-//! live view about 4 times per second so the time axis keeps moving.
+//! redraws with frame pacing: at most `[ui] fps` frames a second, whether input, data or the
+//! clock changed the picture, and none while it stands still.
 
 use std::io::{self, Stdout};
 use std::mem::ManuallyDrop;
@@ -15,30 +15,32 @@ use crossterm::event::{
     DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture, Event, EventStream,
     MouseEventKind,
 };
-use crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
+use crossterm::terminal::{self, EndSynchronizedUpdate, EnterAlternateScreen, LeaveAlternateScreen};
 use crossterm::{cursor, execute};
 use ratatui::Terminal;
-use ratatui::backend::CrosstermBackend;
 use tokio::sync::mpsc;
 use tokio_stream::StreamExt;
 use traffic_police_core::SessionEvent;
 use traffic_police_core::backend::ConnectionStatus;
 
-use crate::app::{App, JqJob, JqResult};
+use crate::app::{App, FPS_RANGE, JqJob, JqResult};
 use crate::bodycache::BodyJob;
 use crate::bodyview::BodyView;
 use crate::images::Images;
+use crate::screen::Screen;
 use crate::ui;
+
+type Tty = Terminal<Screen<Stdout>>;
 
 /// The terminal while a UI owns it. Dropping it puts the terminal back ([`restore_terminal`],
 /// errors ignored) and never runs ratatui's own drop: that one shows the cursor again and reports
 /// a failure with `eprintln!`, which panics once the window is closed, and the panic would skip
 /// the goodbye that removes the adb forward.
-pub(crate) struct Term(ManuallyDrop<Terminal<CrosstermBackend<Stdout>>>);
+pub(crate) struct Term(ManuallyDrop<Tty>);
 
 impl Term {
     /// A fresh ratatui terminal in place of this one (after an editor used the screen).
-    fn replace(&mut self, fresh: Terminal<CrosstermBackend<Stdout>>) {
+    fn replace(&mut self, fresh: Tty) {
         let mut old = std::mem::replace(&mut *self.0, fresh);
         // with the cursor shown, ratatui's drop has nothing to report
         if old.show_cursor().is_ok() {
@@ -50,7 +52,7 @@ impl Term {
 }
 
 impl Deref for Term {
-    type Target = Terminal<CrosstermBackend<Stdout>>;
+    type Target = Tty;
 
     fn deref(&self) -> &Self::Target {
         &self.0
@@ -69,21 +71,65 @@ impl Drop for Term {
     }
 }
 
-/// Redraw pacing: up to 60 frames a second for input and arriving data, 30 while only the
-/// clock moves things (the live graph, growing bars), none when nothing changes.
-const INPUT_FRAME: Duration = Duration::from_millis(16);
-const DATA_FRAME: Duration = Duration::from_millis(16);
-const CLOCK_FRAME: Duration = Duration::from_millis(33);
+/// Redraw pacing: at most `fps` frames a second, and the first one without waiting.
+///
+/// Frames that follow each other keep a beat: each is due one frame time after the one before
+/// was due, not after it was drawn. Tokio's timer rounds up to the millisecond and the loop
+/// wakes a little after that: paced from the drawing, the demo drew 177 frames a second
+/// instead of 240, and 54 instead of 60.
+struct Pacer {
+    frame: Duration,
+    /// When the next frame may be drawn (`None`: now).
+    next: Option<Instant>,
+}
+
+impl Pacer {
+    fn new(fps: u16) -> Self {
+        let fps = fps.clamp(*FPS_RANGE.start(), *FPS_RANGE.end());
+        Pacer { frame: Duration::from_secs(1) / u32::from(fps), next: None }
+    }
+
+    /// When the next frame may be drawn.
+    fn next(&self) -> Instant {
+        self.next.unwrap_or_else(Instant::now)
+    }
+
+    fn due(&self, now: Instant) -> bool {
+        self.next.is_none_or(|t| now >= t)
+    }
+
+    /// A frame was drawn at `now`.
+    fn drawn(&mut self, now: Instant) {
+        self.next = Some(match self.next {
+            Some(due) if now < due + self.frame => due + self.frame,
+            // the first frame, or one that came a whole frame late (after a pause): a new beat
+            _ => now + self.frame,
+        });
+    }
+
+    /// Draw the next frame without waiting.
+    fn reset(&mut self) {
+        self.next = None;
+    }
+}
 
 /// Ctrl+C typed in an editor reaches this process as well, possibly just after the editor has
 /// exited because of it; an interrupt this soon after the editor is the editor's.
 const EDITOR_INTERRUPT: Duration = Duration::from_secs(1);
 
-/// Put the terminal back: raw mode off, main screen, mouse and paste reporting off, cursor on.
-/// Safe to call more than once and from the panic hook.
+/// Put the terminal back: raw mode off, main screen, mouse and paste reporting off, cursor on,
+/// and a frame that was being written (a panic, a failed write) ended. Safe to call more than
+/// once and from the panic hook.
 pub fn restore_terminal() {
     let _ = terminal::disable_raw_mode();
-    let _ = execute!(io::stdout(), DisableMouseCapture, DisableBracketedPaste, LeaveAlternateScreen, cursor::Show);
+    let _ = execute!(
+        io::stdout(),
+        EndSynchronizedUpdate,
+        DisableMouseCapture,
+        DisableBracketedPaste,
+        LeaveAlternateScreen,
+        cursor::Show
+    );
 }
 
 /// Restore the terminal before the default panic message is printed, so it stays readable.
@@ -106,7 +152,7 @@ pub(crate) fn setup() -> io::Result<Term> {
         restore_terminal();
         return Err(e);
     }
-    match Terminal::new(CrosstermBackend::new(out)) {
+    match Terminal::new(Screen::new(out)) {
         Ok(t) => Ok(Term(ManuallyDrop::new(t))),
         Err(e) => {
             restore_terminal();
@@ -175,27 +221,20 @@ async fn event_loop(
     let mut watcher = AbortOnDrop(None);
     let mut backend_open = true;
     let mut stop = StopSignals::new()?;
-    let mut input_dirty = true;
-    let mut data_dirty = false;
-    let mut last_draw: Option<Instant> = None;
+    let mut pacer = Pacer::new(app.fps);
+    // input or data changed what the next frame shows (the clock does that without a flag)
+    let mut dirty = true;
     loop {
-        // wake exactly when the next frame is due (nothing to draw: wait for an event)
-        let pace = if input_dirty {
-            Some(INPUT_FRAME)
-        } else if data_dirty {
-            Some(DATA_FRAME)
-        } else if editor.is_none() && app.is_time_dependent() {
-            Some(CLOCK_FRAME)
-        } else {
-            None
-        };
-        let wake = pace.map(|p| tokio::time::Instant::from_std(last_draw.map_or_else(Instant::now, |t| t + p)));
+        // Wake when the next frame is due. None is due with nothing to draw, and none while an
+        // editor has the terminal: what changes meanwhile is drawn when the editor returns.
+        let pending = editor.is_none() && (dirty || app.is_time_dependent());
+        let wake = pending.then(|| tokio::time::Instant::from_std(pacer.next()));
         tokio::select! {
             ev = async { input.as_mut().expect("guarded").next().await }, if input.is_some() => match ev {
                 Some(Ok(Event::Mouse(m))) if m.kind == MouseEventKind::Moved => {}
                 Some(Ok(ev)) => {
                     app.handle_event(ev);
-                    input_dirty = true;
+                    dirty = true;
                 }
                 Some(Err(e)) => return Err(e.into()),
                 None => return Ok(()),
@@ -210,8 +249,8 @@ async fn event_loop(
                     Ok(s) => app.flash(format!("the editor exited with {s}")),
                     Err(e) => app.flash(format!("could not wait for the editor: {e}")),
                 }
-                input_dirty = true;
-                last_draw = None;
+                dirty = true;
+                pacer.reset();
             }
             batch = events.recv(), if backend_open => match batch {
                 Some(b) => {
@@ -220,7 +259,7 @@ async fn event_loop(
                     while let Ok(b) = events.try_recv() {
                         app.ingest(b);
                     }
-                    data_dirty = true;
+                    dirty = true;
                 }
                 None => backend_open = false,
             },
@@ -231,23 +270,23 @@ async fn event_loop(
                     }
                     Err(_) => status = None, // the backend is gone; keep the last status
                 }
-                input_dirty = true;
+                dirty = true;
             }
             Some((job, result)) = jq_rx.recv() => {
                 app.finish_jq(job, result);
-                input_dirty = true;
+                dirty = true;
             }
             Some((job, view)) = body_rx.recv() => {
                 app.finish_body(job, view);
-                input_dirty = true;
+                dirty = true;
             }
             Some((job, hit)) = search_rx.recv() => {
                 app.finish_search(&job, hit);
-                data_dirty = true;
+                dirty = true;
             }
             Some(f) = rules_rx.recv() => {
                 app.rules_reloaded(f);
-                input_dirty = true;
+                dirty = true;
             }
             signal = stop.recv() => {
                 let near_editor = editor.is_some() || editor_ended.is_some_and(|t| t.elapsed() < EDITOR_INTERRUPT);
@@ -284,25 +323,20 @@ async fn event_loop(
                     resume_terminal(term)?;
                     input = Some(EventStream::new());
                     app.flash(format!("could not open the editor: {e}"));
-                    input_dirty = true;
-                    last_draw = None;
+                    dirty = true;
+                    pacer.reset();
                 }
             }
         }
         if editor.is_some() {
             continue;
         }
-        let since = last_draw.map_or(Duration::MAX, |t| t.elapsed());
-        let due = (input_dirty && since >= INPUT_FRAME)
-            || (data_dirty && since >= DATA_FRAME)
-            || (app.is_time_dependent() && since >= CLOCK_FRAME);
-        if due {
-            let started = Instant::now();
+        let started = Instant::now();
+        if (dirty || app.is_time_dependent()) && pacer.due(started) {
             term.draw(|f| ui::draw(f, app))?;
             app.frames.record(started, started.elapsed());
-            last_draw = Some(started);
-            input_dirty = false;
-            data_dirty = false;
+            pacer.drawn(started);
+            dirty = false;
             // drawing refreshes the rows, which can ask for body searches
             dispatch_jobs(app, &body_tx, &jq_tx, &search_tx);
         }
@@ -383,7 +417,7 @@ fn resume_terminal(term: &mut Term) -> anyhow::Result<()> {
     // A fresh Terminal has empty buffers, so the next frame is drawn in full. (Terminal::clear
     // would ask the terminal for the cursor position first, and that query can fail right
     // after another program used the terminal.)
-    term.replace(Terminal::new(CrosstermBackend::new(io::stdout()))?);
+    term.replace(Terminal::new(Screen::new(io::stdout()))?);
     Ok(())
 }
 
@@ -447,5 +481,66 @@ impl StopSignals {
             _ = self.close.recv() => StopSignal::HangUp,
             _ = self.brk.recv() => StopSignal::Interrupt,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const MS: Duration = Duration::from_millis(1);
+
+    #[test]
+    fn the_first_frame_and_the_first_after_a_pause_are_drawn_at_once() {
+        let t0 = Instant::now();
+        let mut p = Pacer::new(100);
+        assert!(p.due(t0));
+        p.drawn(t0);
+        assert!(!p.due(t0 + 9 * MS) && p.due(t0 + 10 * MS));
+        // a second later nothing has been drawn: due at once, and the beat starts from there
+        let t1 = t0 + Duration::from_secs(1);
+        assert!(p.due(t1));
+        p.drawn(t1);
+        assert!(!p.due(t1 + 9 * MS) && p.due(t1 + 10 * MS));
+        // after an editor had the terminal
+        p.reset();
+        assert!(p.due(t1));
+    }
+
+    #[test]
+    fn frames_keep_their_rate_when_the_timer_wakes_late() {
+        for fps in [10, 60, 120, 240] {
+            let t0 = Instant::now();
+            let mut p = Pacer::new(fps);
+            let (mut now, mut frames) = (t0, 0);
+            while now < t0 + Duration::from_secs(1) {
+                assert!(p.due(now));
+                p.drawn(now);
+                frames += 1;
+                // asleep until the next frame is due, and awake most of a millisecond after that
+                now = p.next() + Duration::from_micros(900);
+            }
+            assert_eq!(frames, fps, "frames in a second at {fps} fps");
+        }
+    }
+
+    #[test]
+    fn a_frame_that_comes_a_whole_frame_late_starts_a_new_beat() {
+        let t0 = Instant::now();
+        let mut p = Pacer::new(100);
+        p.drawn(t0);
+        // late by less than a frame: the next one is due on the beat
+        p.drawn(t0 + 14 * MS);
+        assert!(!p.due(t0 + 19 * MS) && p.due(t0 + 20 * MS));
+        // late by more: no burst of frames to catch up
+        p.drawn(t0 + 45 * MS);
+        assert!(!p.due(t0 + 54 * MS) && p.due(t0 + 55 * MS));
+    }
+
+    #[test]
+    fn the_rate_stays_in_the_range_of_the_setting() {
+        let (min, max) = (u32::from(*FPS_RANGE.start()), u32::from(*FPS_RANGE.end()));
+        assert_eq!(Pacer::new(0).frame, Duration::from_secs(1) / min);
+        assert_eq!(Pacer::new(u16::MAX).frame, Duration::from_secs(1) / max);
     }
 }

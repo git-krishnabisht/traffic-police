@@ -174,7 +174,7 @@ pub const ACTIONS: &[Info] = &[
     info!(Palette, "palette", Session, "commands", "Command palette", [":"]),
     info!(Help, "help", Session, "help", "Help: every key", ["?"]),
     info!(Clear, "clear", Session, "clear", "Clear the session (asks first)", ["x"]),
-    info!(FrameRate, "frame-rate", Session, "fps", "Show or hide the frame rate", []),
+    info!(FrameRate, "frame-rate", Session, "fps", "Show or hide the frame rate (fps)", []),
     info!(Quit, "quit", Session, "quit", "Quit", ["q"]),
 ];
 

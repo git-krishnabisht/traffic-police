@@ -12,6 +12,7 @@
 //! divider = 55                # the list's share of the width, in percent (25-80)
 //! clipboard = "auto"          # auto, osc52, native, off
 //! images = true               # false draws images with half-blocks (as --no-images)
+//! fps = 60                    # frames drawn a second at most (10-240); a still screen draws none
 //!
 //! [capture]
 //! body_cap = "10mb"           # bytes of each body kept (also 1048576)
@@ -41,6 +42,7 @@ use traffic_police_adb::Adb;
 use traffic_police_core::rows::Column;
 use traffic_police_proto::msg::CaptureConfig;
 use traffic_police_tui::App;
+use traffic_police_tui::app::FPS_RANGE;
 use traffic_police_tui::graph::GraphStyle;
 use traffic_police_tui::share::ClipboardMode;
 
@@ -69,6 +71,7 @@ pub struct Ui {
     pub divider: Option<Spanned<u16>>,
     pub clipboard: Option<Spanned<String>>,
     pub images: Option<bool>,
+    pub fps: Option<Spanned<u16>>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -238,6 +241,12 @@ impl Loaded {
         {
             found.push((c.span().start, format!("[ui] clipboard {:?}: use auto, osc52, native or off", c.get_ref())));
         }
+        if let Some(f) = &ui.fps
+            && !FPS_RANGE.contains(f.get_ref())
+        {
+            let (min, max) = (FPS_RANGE.start(), FPS_RANGE.end());
+            found.push((f.span().start, format!("[ui] fps {}: use {min} to {max} (frames a second)", f.get_ref())));
+        }
         for (what, v) in
             [("[capture] body_cap", &self.config.capture.body_cap), ("[storage] memory", &self.config.storage.memory)]
         {
@@ -302,6 +311,9 @@ impl Loaded {
         }
         if let Some(c) = ui.clipboard.as_ref().and_then(|c| ClipboardMode::parse(c.get_ref())) {
             app.clipboard = c;
+        }
+        if let Some(f) = ui.fps.as_ref().map(|f| *f.get_ref()).filter(|f| FPS_RANGE.contains(f)) {
+            app.fps = f;
         }
         for (name, keys) in &self.config.keymap {
             let _ = app.keymap.apply(&[(name.clone(), key_list(keys.get_ref()))]);
@@ -395,6 +407,7 @@ columns = ["method", "req-size"]
 divider = 60
 clipboard = "off"
 images = false
+fps = 120
 
 [capture]
 body_cap = "1mb"
@@ -424,17 +437,22 @@ memory = 1048576
         assert!(app.wall_labels);
         assert!(app.columns.contains(&Column::Method) && app.columns.contains(&Column::ReqSize));
         assert_eq!(app.columns.last(), Some(&Column::Timeline), "extra columns go before the timeline");
-        assert_eq!((app.split_pct, app.clipboard), (60, ClipboardMode::Off));
+        assert_eq!((app.split_pct, app.clipboard, app.fps), (60, ClipboardMode::Off, 120));
         let p = traffic_police_tui::actions::Action::Pause;
         assert_eq!(app.keymap.key_label(p), "p");
     }
 
     #[test]
     fn problems_name_their_line_and_the_rest_still_applies() {
-        let text = "[ui]\ntheme = \"blue\"\ngraph_style = \"heavy\"\n\n[keymap]\npuase = \"p\"\ncopy = \"ctrl+\"\n\n[capture]\nbody_cap = \"lots\"\n";
-        let l = parse(text);
-        assert_eq!(l.problems.len(), 4, "{:?}", l.problems);
+        let (min, max) = (FPS_RANGE.start(), FPS_RANGE.end());
+        let text = format!(
+            "[ui]\ntheme = \"blue\"\ngraph_style = \"heavy\"\nfps = {}\n[keymap]\npuase = \"p\"\ncopy = \"ctrl+\"\n\n[capture]\nbody_cap = \"lots\"\n",
+            max + 1
+        );
+        let l = parse(&text);
+        assert_eq!(l.problems.len(), 5, "{:?}", l.problems);
         assert!(l.problems[0].starts_with("line 2: [ui] theme \"blue\""), "{:?}", l.problems);
+        assert_eq!(l.problems[1], format!("line 4: [ui] fps {}: use {min} to {max} (frames a second)", max + 1));
         assert!(
             l.problems
                 .iter()
@@ -445,7 +463,7 @@ memory = 1048576
         assert_eq!(l.theme(), None);
         let mut app = App::new(traffic_police_core::SessionStore::new(), traffic_police_tui::Theme::default());
         l.apply_ui(&mut app);
-        assert_eq!(app.graph_style, GraphStyle::Heavy);
+        assert_eq!((app.graph_style, app.fps), (GraphStyle::Heavy, traffic_police_tui::app::DEFAULT_FPS));
     }
 
     #[test]

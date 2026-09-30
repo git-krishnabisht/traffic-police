@@ -12,6 +12,7 @@ pub mod images;
 pub mod palette;
 pub mod picker;
 pub mod rules;
+mod screen;
 pub mod share;
 pub mod terminal;
 pub mod theme;

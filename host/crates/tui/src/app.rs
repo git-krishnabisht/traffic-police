@@ -248,6 +248,11 @@ pub struct SearchJob {
     pub search: BodySearch,
 }
 
+/// The most frames drawn a second, unless `[ui] fps` says otherwise.
+pub const DEFAULT_FPS: u16 = 60;
+/// What `[ui] fps` accepts.
+pub const FPS_RANGE: std::ops::RangeInclusive<u16> = 10..=240;
+
 /// Recent frames, for the optional frame-rate readout.
 #[derive(Debug, Clone, Default)]
 pub struct FrameStats {
@@ -299,6 +304,8 @@ pub struct App {
     pub graph_source: GraphSource,
     pub graph_style: crate::graph::GraphStyle,
     pub frames: FrameStats,
+    /// The most frames drawn a second (`[ui] fps`).
+    pub fps: u16,
     pub keymap: Keymap,
     pub wall_labels: bool,
     pub columns: Vec<Column>,
@@ -383,6 +390,7 @@ impl App {
             graph_style: crate::graph::GraphStyle::default(),
             keymap: Keymap::default(),
             frames: FrameStats { visible: std::env::var_os("TRAFFIC_POLICE_FPS").is_some(), ..Default::default() },
+            fps: DEFAULT_FPS,
             wall_labels: false,
             columns: Column::DEFAULT.to_vec(),
             split_pct: 55,
