@@ -152,6 +152,62 @@ fn iso8601_at(unix_ms: i64, off: i64) -> String {
     format!("{y:04}-{m:02}-{d:02}T{h:02}:{min:02}:{s:02}.{ms:03}{zone}")
 }
 
+/// Unix milliseconds (with any fraction) from an ISO 8601 date-time as HAR files write it:
+/// `2026-09-29T07:10:01.123+05:30`, `…Z`, `…+0530`; without a zone, UTC.
+pub fn parse_iso8601(s: &str) -> Option<f64> {
+    let s = s.trim();
+    let b = s.as_bytes();
+    let num = |from: usize, len: usize| -> Option<i64> {
+        let part = s.get(from..from + len)?;
+        part.bytes().all(|c| c.is_ascii_digit()).then(|| part.parse().ok())?
+    };
+    if b.len() < 19 || b[4] != b'-' || b[7] != b'-' || !matches!(b[10], b'T' | b't' | b' ') {
+        return None;
+    }
+    if b[13] != b':' || b[16] != b':' {
+        return None;
+    }
+    let (y, mo, d, h, mi, sec) = (num(0, 4)?, num(5, 2)?, num(8, 2)?, num(11, 2)?, num(14, 2)?, num(17, 2)?);
+    if !(1..=12).contains(&mo) || !(1..=31).contains(&d) || h > 23 || mi > 59 || sec > 60 {
+        return None;
+    }
+    let mut i = 19;
+    let mut frac_ms = 0.0;
+    if b.get(i) == Some(&b'.') {
+        let digits = b[i + 1..].iter().take_while(|c| c.is_ascii_digit()).count();
+        if digits == 0 {
+            return None;
+        }
+        frac_ms = format!("0.{}", &s[i + 1..i + 1 + digits]).parse::<f64>().ok()? * 1000.0;
+        i += 1 + digits;
+    }
+    let zone = &s[i..];
+    let off_secs = match zone {
+        "" | "Z" | "z" => 0,
+        _ => {
+            let sign = match zone.as_bytes()[0] {
+                b'+' => 1,
+                b'-' => -1,
+                _ => return None,
+            };
+            let hm = zone[1..].replace(':', "");
+            if hm.len() != 4 || !hm.bytes().all(|c| c.is_ascii_digit()) {
+                return None;
+            }
+            sign * (hm[..2].parse::<i64>().ok()? * 3600 + hm[2..].parse::<i64>().ok()? * 60)
+        }
+    };
+    // days since 1970-01-01 from a civil date (Howard Hinnant's algorithm)
+    let y = if mo <= 2 { y - 1 } else { y };
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let doy = (153 * (if mo > 2 { mo - 3 } else { mo + 9 }) + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146_097 + doe - 719_468;
+    let secs = days * 86_400 + h * 3600 + mi * 60 + sec - off_secs;
+    Some(secs as f64 * 1000.0 + frac_ms)
+}
+
 /// Set the UTC offset used by [`wall_clock`] (the UI resolves the local zone once at start-up).
 pub fn set_local_offset_secs(offset_secs: i64) {
     jiff_like::set(offset_secs);
@@ -167,6 +223,30 @@ mod tests {
         assert_eq!(iso8601_at(1_790_658_600_600, 19_800), "2026-09-29T10:40:00.600+05:30");
         assert_eq!(iso8601_at(0, -3600), "1969-12-31T23:00:00.000-01:00");
         assert_eq!(iso8601_at(951_782_400_000, 0), "2000-02-29T00:00:00.000Z");
+    }
+
+    #[test]
+    fn iso_dates_read_back() {
+        assert_eq!(parse_iso8601("2026-09-29T05:10:00.600Z"), Some(1_790_658_600_600.0));
+        assert_eq!(parse_iso8601("2026-09-29T10:40:00.600+05:30"), Some(1_790_658_600_600.0));
+        assert_eq!(parse_iso8601("2026-09-29T10:40:00.600+0530"), Some(1_790_658_600_600.0));
+        assert_eq!(parse_iso8601("1969-12-31T23:00:00-01:00"), Some(0.0));
+        assert_eq!(parse_iso8601("2000-02-29T00:00:00Z"), Some(951_782_400_000.0));
+        assert_eq!(parse_iso8601("2026-09-29T05:10:00.123456Z"), Some(1_790_658_600_123.456));
+        assert_eq!(parse_iso8601("2026-09-29T05:10:00"), Some(1_790_658_600_000.0));
+        for ms in [0, 951_782_400_000, 1_790_658_600_600, 4_102_444_800_000] {
+            assert_eq!(parse_iso8601(&iso8601_at(ms, 19_800)), Some(ms as f64), "{ms}");
+        }
+        for bad in [
+            "",
+            "2026-09-29",
+            "2026-13-01T00:00:00Z",
+            "2026-09-29T05:10:00.Z",
+            "2026-09-29T05:10:00+5",
+            "x026-09-29T05:10:00Z",
+        ] {
+            assert_eq!(parse_iso8601(bad), None, "{bad}");
+        }
     }
 
     #[test]

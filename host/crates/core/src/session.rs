@@ -299,6 +299,8 @@ pub struct Opened {
     pub created_wall_ms: Option<i64>,
     /// The file ended mid-stream (a recording that did not finish); everything before is kept.
     pub truncated: bool,
+    /// What could not be read (HAR entries without a date or URL), for a note.
+    pub skipped: Vec<String>,
 }
 
 #[derive(Deserialize)]

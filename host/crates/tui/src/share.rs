@@ -359,7 +359,7 @@ impl App {
             return;
         };
         let raw = self.view_store().body_bytes(meta);
-        let d = decode_body(raw, headers, 256 << 20);
+        let d = decode_body(raw, self.view_store().decoding_headers(t, headers).as_deref(), 256 << 20);
         let ext = extension(headers.and_then(|h| header(h, "content-type")), &d.bytes);
         let stem = safe_name(t.url.path.rsplit('/').find(|s| !s.is_empty()).unwrap_or("body"));
         let stem = stem.rsplit_once('.').filter(|(_, e)| *e == ext).map_or(stem.clone(), |(s, _)| s.to_string());
@@ -468,7 +468,8 @@ impl App {
             BodyDir::Delivered => (t.delivered_body.as_ref(), t.delivered.as_ref().map(|d| &d.headers)),
         };
         let meta = meta.filter(|m| m.id.is_some()).ok_or("no body captured")?;
-        let d = decode_body(self.view_store().body_bytes(meta), headers, 256 << 20);
+        let headers = self.view_store().decoding_headers(t, headers);
+        let d = decode_body(self.view_store().body_bytes(meta), headers.as_deref(), 256 << 20);
         String::from_utf8(d.bytes.to_vec()).map_err(|_| "the body is binary; w saves it to a file".to_string())
     }
 
@@ -553,7 +554,8 @@ impl App {
                 };
                 match meta {
                     Some(m) => {
-                        let d = decode_body(self.view_store().body_bytes(m), headers, 256 << 20);
+                        let headers = self.view_store().decoding_headers(t, headers);
+                        let d = decode_body(self.view_store().body_bytes(m), headers.as_deref(), 256 << 20);
                         std::fs::write(&path, &d.bytes).map(|_| format!("saved {} bytes", d.bytes.len()))
                     }
                     None => Ok("nothing to save".into()),

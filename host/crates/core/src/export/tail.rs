@@ -20,9 +20,9 @@ fn pairs(h: &Headers) -> Value {
     Value::Array(h.iter().map(|(n, v)| json!([n, v])).collect())
 }
 
-fn body(store: &SessionStore, meta: &BodyMeta, headers: Option<&Headers>) -> Option<(Value, usize)> {
+fn body(store: &SessionStore, t: &Transaction, meta: &BodyMeta, headers: Option<&Headers>) -> Option<(Value, usize)> {
     meta.id?;
-    let d = decode_body(store.body_bytes(meta), headers, 256 << 20);
+    let d = decode_body(store.body_bytes(meta), store.decoding_headers(t, headers).as_deref(), 256 << 20);
     let n = d.bytes.len();
     Some(match std::str::from_utf8(&d.bytes) {
         Ok(s) => (json!({ "text": s }), n),
@@ -40,11 +40,11 @@ pub fn json_line(store: &SessionStore, i: TxnIdx, now: Ts, bodies: bool) -> Valu
     let t = store.txn(i);
     let src = store.source(t.key.source);
     let mut request = json!({ "headers": pairs(&t.req_headers), "body_bytes": t.req_body.total });
-    if bodies && let Some((b, _)) = body(store, &t.req_body, Some(&t.req_headers)) {
+    if bodies && let Some((b, _)) = body(store, t, &t.req_body, Some(&t.req_headers)) {
         request["body"] = b;
     }
     let response = t.resp.as_ref().map(|r| {
-        let decoded = body(store, &t.resp_body, Some(&r.headers));
+        let decoded = body(store, t, &t.resp_body, Some(&r.headers));
         let mut v = json!({
             "protocol": r.protocol,
             "headers": pairs(&r.headers),

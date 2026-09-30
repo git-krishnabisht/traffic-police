@@ -144,7 +144,10 @@ fn draw_header(app: &App, r: Rect, buf: &mut Buffer) {
             spans.push(Span::styled(s.device_label.clone(), t.text()));
             spans.push(Span::raw("  "));
             spans.push(Span::styled(s.process.clone(), t.title()));
-            spans.push(Span::styled(format!("  pid {}", s.pid), t.dim()));
+            // a HAR from another tool has no process
+            if s.pid != 0 || s.mode != "har" {
+                spans.push(Span::styled(format!("  pid {}", s.pid), t.dim()));
+            }
             if s.mode == "attach" {
                 spans.push(Span::styled("  attach", t.dim()));
             }

@@ -45,9 +45,14 @@ fn response_cookies(headers: &Headers) -> Value {
 }
 
 /// A body for HAR: decoded; UTF-8 as text, anything else in base64.
-fn body_text(store: &SessionStore, meta: &BodyMeta, headers: Option<&Headers>) -> Option<(String, bool, usize)> {
+fn body_text(
+    store: &SessionStore,
+    t: &Transaction,
+    meta: &BodyMeta,
+    headers: Option<&Headers>,
+) -> Option<(String, bool, usize)> {
     meta.id?;
-    let d = decode_body(store.body_bytes(meta), headers, 256 << 20);
+    let d = decode_body(store.body_bytes(meta), store.decoding_headers(t, headers).as_deref(), 256 << 20);
     let size = d.bytes.len();
     Some(match std::str::from_utf8(&d.bytes) {
         Ok(s) => (s.to_string(), false, size),
@@ -77,7 +82,7 @@ fn entry(store: &SessionStore, t: &Transaction, now: Ts) -> Value {
         "headersSize": -1,
         "bodySize": t.req_body.total,
     });
-    if let Some((text, b64, _)) = body_text(store, &t.req_body, Some(&t.req_headers)) {
+    if let Some((text, b64, _)) = body_text(store, t, &t.req_body, Some(&t.req_headers)) {
         let mut post = json!({ "mimeType": mime(Some(&t.req_headers)), "text": text });
         if b64 {
             post["encoding"] = json!("base64");
@@ -87,7 +92,7 @@ fn entry(store: &SessionStore, t: &Transaction, now: Ts) -> Value {
 
     let resp_headers = t.resp.as_ref().map(|r| &r.headers);
     let mut content = json!({ "size": t.resp_body.total, "mimeType": mime(resp_headers) });
-    if let Some((text, b64, size)) = body_text(store, &t.resp_body, resp_headers) {
+    if let Some((text, b64, size)) = body_text(store, t, &t.resp_body, resp_headers) {
         content["size"] = json!(size);
         content["compression"] = json!(size as i64 - t.resp_body.captured as i64);
         content["text"] = json!(text);

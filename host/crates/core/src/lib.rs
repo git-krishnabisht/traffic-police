@@ -10,6 +10,7 @@ pub mod event;
 pub mod export;
 pub mod filter;
 pub mod fmt;
+pub mod import;
 pub mod jq;
 pub mod model;
 pub mod normalize;

@@ -536,6 +536,7 @@ impl App {
             BodyDir::Delivered => (t.delivered_body.as_ref()?, t.delivered.as_ref().map(|d| &d.headers)),
         };
         meta.id?;
+        let headers = store.decoding_headers(t, headers);
         let key = meta.captured * 16 + meta.state as u64;
         let epoch = self.bodies.epoch();
         let lookup = self.bodies.lookup(txn, dir, key, meta.captured as usize, || BodyJob {
@@ -544,10 +545,10 @@ impl App {
             dir,
             key,
             raw: store.body_bytes(meta),
-            headers: headers.cloned(),
+            headers: headers.as_deref().cloned(),
         });
         if let Lookup::BuildHere = lookup {
-            let view = BodyView::build(store.body_bytes(meta), headers);
+            let view = BodyView::build(store.body_bytes(meta), headers.as_deref());
             self.bodies.insert(txn, dir, key, view);
         }
         self.bodies.get_mut(txn, dir)

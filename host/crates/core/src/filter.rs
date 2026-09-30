@@ -368,10 +368,11 @@ pub struct BodySearch {
 impl BodySearch {
     /// A search of `t`'s request, response and delivered bodies for `needle` (lower-cased).
     pub fn new(store: &SessionStore, t: &Transaction, needle: String) -> BodySearch {
-        let mut bodies = vec![(store.body_bytes(&t.req_body), Some(t.req_headers.clone()))];
-        bodies.push((store.body_bytes(&t.resp_body), t.resp.as_ref().map(|r| r.headers.clone())));
+        let headers = |h: Option<&Headers>| store.decoding_headers(t, h).map(std::borrow::Cow::into_owned);
+        let mut bodies = vec![(store.body_bytes(&t.req_body), headers(Some(&t.req_headers)))];
+        bodies.push((store.body_bytes(&t.resp_body), headers(t.resp.as_ref().map(|r| &r.headers))));
         if let Some(d) = &t.delivered_body {
-            bodies.push((store.body_bytes(d), t.delivered.as_ref().map(|x| x.headers.clone())));
+            bodies.push((store.body_bytes(d), headers(t.delivered.as_ref().map(|x| &x.headers))));
         }
         BodySearch { bodies, needle }
     }

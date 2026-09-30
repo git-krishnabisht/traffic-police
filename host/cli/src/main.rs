@@ -167,7 +167,7 @@ struct ExportArgs {
     /// The HAR file to write.
     #[arg(long, value_name = "FILE")]
     har: PathBuf,
-    /// A saved session to read, instead of capturing live.
+    /// A saved session (.trafficpolice) or HAR file to read, instead of capturing live.
     #[arg(long, short = 'i', value_name = "FILE")]
     input: Option<PathBuf>,
     /// With a live capture: how long to capture (like 60s).
@@ -521,18 +521,22 @@ async fn run_open(file: &Path, theme: Theme, detect_images: bool) -> anyhow::Res
     load_project(&mut app);
     app.jq_runner = jq_in_child;
     let name = file.file_name().map_or_else(|| file.display().to_string(), |n| n.to_string_lossy().into_owned());
-    if !traffic_police_core::session::is_session_file(file) {
-        bail!("{} is not a traffic-police session file (.trafficpolice)", file.display());
+    let opened = traffic_police_core::import::open(file, &app.store.source_ids())
+        .map_err(|e| anyhow::anyhow!("cannot open {}: {e}", file.display()))?;
+    for s in &opened.skipped {
+        tracing::warn!("{}: {s}", file.display());
     }
-    let opened = traffic_police_core::session::open(file, &app.store.source_ids())
-        .with_context(|| format!("cannot read {}", file.display()))?;
     app.ingest(opened.events);
     for key in opened.pins {
         if let Some(i) = app.store.find(key) {
             app.store.set_pinned(i, true);
         }
     }
-    app.replay = Some(if opened.truncated { format!("{name} (the recording was cut short)") } else { name });
+    app.replay = Some(match (opened.truncated, opened.skipped.len()) {
+        (true, _) => format!("{name} (the recording was cut short)"),
+        (false, 0) => name,
+        (false, n) => format!("{name} ({n} entr{} left out; see the log)", if n == 1 { "y" } else { "ies" }),
+    });
     // time stands still at the end of the recording
     app.now_override = Some(app.store.latest());
     let (_event_tx, event_rx) = mpsc::channel(1);

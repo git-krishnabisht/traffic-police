@@ -21,7 +21,7 @@ use traffic_police_core::export::tail::{finished, json_line, text_line};
 use traffic_police_core::filter::{BodySearch, Filter};
 use traffic_police_core::fmt::Ts;
 use traffic_police_core::model::{SourceId, TxnIdx, TxnKey};
-use traffic_police_core::session::{self, DeviceRecord, SessionLog, StreamSink};
+use traffic_police_core::session::{DeviceRecord, SessionLog, StreamSink};
 use traffic_police_core::store::SessionStore;
 use traffic_police_proto::frame::Frame;
 
@@ -404,13 +404,14 @@ pub async fn export_har(out: &Path, input: ExportInput<'_>, filter: Option<Filte
     Ok(())
 }
 
-/// A saved session, read into a store.
+/// A saved session or HAR file, read into a store.
 fn open_file(path: &Path) -> anyhow::Result<SessionStore> {
-    if !session::is_session_file(path) {
-        bail!("{} is not a traffic-police session file (.trafficpolice)", path.display());
-    }
     let mut store = SessionStore::new();
-    let opened = session::open(path, &store.source_ids()).with_context(|| format!("cannot read {}", path.display()))?;
+    let opened = traffic_police_core::import::open(path, &store.source_ids())
+        .map_err(|e| anyhow::anyhow!("cannot open {}: {e}", path.display()))?;
+    for s in &opened.skipped {
+        eprintln!("traffic-police: {}: left out {s}", path.display());
+    }
     store.apply_all(opened.events);
     for key in opened.pins {
         if let Some(i) = store.find(key) {
@@ -512,6 +513,14 @@ mod tests {
         let entries = doc["log"]["entries"].as_array().unwrap();
         assert!(!entries.is_empty());
         assert!(entries.iter().all(|e| e["response"]["status"].as_u64().is_some_and(|s| (200..300).contains(&s))));
+        // a HAR reads back too
+        let again = dir.join("again.har");
+        export_har(&again, ExportInput::File(&har_path), None).await.unwrap();
+        let doc2: Value = serde_json::from_slice(&std::fs::read(&again).unwrap()).unwrap();
+        let urls = |d: &Value| {
+            d["log"]["entries"].as_array().unwrap().iter().map(|e| e["request"]["url"].clone()).collect::<Vec<_>>()
+        };
+        assert_eq!(urls(&doc2), urls(&doc));
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

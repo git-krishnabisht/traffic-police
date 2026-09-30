@@ -477,7 +477,9 @@ fn overview_rows(app: &mut App, txn: TxnIdx, rows: &mut Vec<DocRow>) {
     }
     if let Some(c) = &t.conn {
         if let Some(r) = &c.remote {
-            let mut v = vec![Span::styled(format!("{}:{}", r.ip, r.port), theme.text())];
+            let addr =
+                if r.ip.contains(':') { format!("[{}]:{}", r.ip, r.port) } else { format!("{}:{}", r.ip, r.port) };
+            let mut v = vec![Span::styled(addr, theme.text())];
             if let Some(id) = &c.id {
                 let reused = if c.reused == Some(true) { "reused" } else { "new" };
                 v.push(Span::styled(format!("  connection {id} ({reused})"), theme.dim()));
