@@ -587,25 +587,25 @@ enabled = true
   [rule.match]
   methods = ["GET"]
   scheme = "https"
-  host = "*.example.app"
+  host = "*.example.com"
   port = 443
-  path = "/api/sdk/*/status/**"
-  query = { sessionId = "*" }
+  path = "/api/v1/*/status/**"
+  query = { orderId = "*" }
 
   [[rule.action]]
   type = "delay"
   ms = 3000
 
 [[rule]]
-id = "force-pass"
+id = "force-paid"
 
   [rule.match]
-  path = { exact = "/api/sdk/sim-binding/status/" }
+  path = { exact = "/api/v1/orders/status" }
 
   [[rule.action]]
   type = "replace"
-  find = '"verdict":"pending"'
-  with = '"verdict":"pass"'
+  find = '"payment":"pending"'
+  with = '"payment":"captured"'
 
   [[rule.action]]
   type = "header"
@@ -643,7 +643,7 @@ name = "stub"
         assert!(f.is_valid(), "{:?}", f.problems);
         assert_eq!(
             f.entries.iter().map(|e| (e.id.as_str(), e.enabled)).collect::<Vec<_>>(),
-            [("force-pass", true), ("enroll-down", false)]
+            [("force-paid", true), ("checkout-down", false)]
         );
     }
 
@@ -678,11 +678,11 @@ name = "stub"
         assert_eq!(f.set.rules.len(), 3);
         assert_eq!(f.set.version.len(), 8);
         let slow = &f.set.rules[0];
-        assert_eq!(slow.matcher.host, Some(Pattern::Glob("*.example.app".into())));
+        assert_eq!(slow.matcher.host, Some(Pattern::Glob("*.example.com".into())));
         assert_eq!(slow.matcher.port, Some(443));
         assert_eq!(
             slow.matcher.query,
-            vec![QueryMatch { name: "sessionId".into(), value: Some(Pattern::Glob("*".into())) }]
+            vec![QueryMatch { name: "orderId".into(), value: Some(Pattern::Glob("*".into())) }]
         );
         assert_eq!(slow.actions, vec![RuleAction::Delay { ms: 3000 }]);
         let stub = &f.set.rules[2];
@@ -697,7 +697,7 @@ name = "stub"
         );
         // the wire JSON is what PROTOCOL.md §8.2 shows
         let json = serde_json::to_value(&f.set.rules[1]).unwrap();
-        assert_eq!(json["match"]["path"], serde_json::json!({ "exact": "/api/sdk/sim-binding/status/" }));
+        assert_eq!(json["match"]["path"], serde_json::json!({ "exact": "/api/v1/orders/status" }));
         assert_eq!(json["actions"][0]["type"], "replace");
         assert_eq!(f.entries.iter().map(|e| e.line).collect::<Vec<_>>(), vec![4, 21, 38]);
         std::fs::remove_dir_all(base).unwrap();
@@ -764,27 +764,27 @@ id = "fine"
         assert!(!again.entries[0].enabled);
         assert!(!again.set.rules[0].enabled);
         // one without: the key is added under its header
-        let off = with_enabled(&f, "force-pass", false).unwrap();
-        assert!(off.contains("[[rule]]\nenabled = false\nid = \"force-pass\""), "{off}");
+        let off = with_enabled(&f, "force-paid", false).unwrap();
+        assert!(off.contains("[[rule]]\nenabled = false\nid = \"force-paid\""), "{off}");
         assert!(!parse(&off, Path::new(".")).entries[1].enabled);
         // a new rule for a request, appended; it parses and matches the request exactly
         let new = NewRule {
-            id: fresh_id(&f, "/api/sdk/init"),
-            name: "POST /api/sdk/init".into(),
+            id: fresh_id(&f, "/api/v1/sessions"),
+            name: "POST /api/v1/sessions".into(),
             method: "POST".into(),
-            scheme: "https".into(),
-            host: "deepid.example.app".into(),
-            port: 443,
-            path: "/api/sdk/init".into(),
+            scheme: "http".into(),
+            host: "localhost".into(),
+            port: 8080,
+            path: "/api/v1/sessions".into(),
             query: vec!["session id".into(), "v".into()],
         };
-        assert_eq!(new.id, "init");
+        assert_eq!(new.id, "sessions");
         let (text, line) = with_new_rule(&f.text, &new);
         let g = parse(&text, Path::new("."));
         assert!(g.is_valid(), "{:?}\n{text}", g.problems);
         let r = g.set.rules.last().unwrap();
         assert!(!r.enabled, "a new rule starts off");
-        assert_eq!(r.matcher.path, Some(Pattern::Exact("/api/sdk/init".into())));
+        assert_eq!(r.matcher.path, Some(Pattern::Exact("/api/v1/sessions".into())));
         assert_eq!(r.matcher.query.len(), 2);
         assert_eq!(g.entries.last().unwrap().line, line);
         // into an empty file

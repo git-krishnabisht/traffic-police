@@ -2,40 +2,40 @@
 source: crates/tui/tests/snapshots.rs
 expression: "frame(40.0, MEDIUM, \"vhhhhhhhhhhv\")"
 ---
- traffic-police  Pixel 8 [demo]  com.example.deepid_example  pid 4312  ● LIVE  ✎ 1 rule active          60 requests · 5.0 MB in · 42 KB out
-╭─ Network · all app traffic ────────────────────────────────────────────────────────────────── ━ Receiving 2.2 KB/s   ━ Sending 1.5 KB/s ─╮
+ traffic-police  Pixel 8 [demo]  com.example.shop  pid 4312  ● LIVE  ✎ 1 rule active         60 requests · 5.0 MB in · 40 KB out · 2 failed
+╭─ Network · all app traffic ────────────────────────────────────────────────────────────────── ━ Receiving 2.3 KB/s   ━ Sending 1.6 KB/s ─╮
 │ 1.0 MB/s                             ┊   │                                                                                               │
 │                       ┏━━┓┏━━┓   ┏━┓ ┏━━┓│━━┓                                                                                            │
 │                      ┏┛  ┗┛  ┗━━━┛ ┗━┛  ┗│  ┗━┓                                                                                          │
 │                     ┏┛               ┊   │    ┗┓                                                                                         │
 │ 512 KB/s            ┃                ┊   │     ┗┓                                                                                        │
 │                     ┃                ┊   │      ┃                                                                                        │
-│                     ┃                ┊   │      ┃   ┏━┓                                                                                  │
-│                     ┃                ┊   │      ┗━━━┛ ┗━┓                                                                                │
+│                     ┃                ┊   │      ┗━┓   ┏━┓                                                                                │
+│                     ┃                ┊   │        ┗━━━┛ ┃                                                                                │
 │        0 ━━━━━━━━━━━┛━━━━━━━━━━━━━━━━━━━━│━━━━━━━━━━━━━━┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ │
 │          00:10.000            00:15.000             00:20.000            00:25.000            00:30.000            00:35.000             │
 ╰─ cursor 00:17.500 ─ range 00:17.500–00:32.500 · Esc clears ──────────────────────────────────────────────────────────────────────────────╯
-╭─ Requests 18 ─ Connection ─ Thread ─ Rules ──────────────────────────────────────────────────────────────────────────────────────────────╮
+╭─ Requests 19 ─ Connection ─ Thread ─ Rules ──────────────────────────────────────────────────────────────────────────────────────────────╮
 │ Name                                                     Size  Type      Status         Time   Timeline                                  │
-│ threshold                                                                failed       10.0 s   ███████▏                                  │
-│ face-liveness-v3.tflite                                5.0 MB  binary    200          6.38 s   ███▎                                      │
-│ events                                                   17 B  json      200          1.13 s   ██▍                                       │
-│ monitor                                                 302 B  json      200          1.38 s   ███▊                                      │
-│ status?sessionId=session_15bce3a5a963c9fde0ebe700e…     263 B  json      200          259 ms      ▌                                      │
-│ monitor                                                 302 B  json      200          1.67 s        ▐████                                │
-│ status?sessionId=session_15bce3a5a963c9fde0ebe700e…     263 B  json      200          158 ms          ▏                                  │
-│ events                                                   17 B  json      200          995 ms             ▐███                            │
-│ monitor                                                 302 B  json      200          1.65 s             ▕████▍                          │
-│ ✎ status?sessionId=session_15bce3a5a963c9fde0ebe70…     264 B  json      200          327 ms              ██                             │
-│ monitor                                                 302 B  json      200          1.60 s                   ▐███▊                     │
-│ events                                                   17 B  json      200          1.49 s                       █████                 │
-│ monitor                                                 302 B  json      200          1.44 s                        ▕███▊                │
-│ monitor                                                 302 B  json      200          1.71 s                              ▐████          │
-│ events                                                   17 B  json      200          1.19 s                                 ███▍        │
-│ monitor                                                 302 B  json      200          1.71 s                                   ▕█████    │
-│ monitor                                                 302 B  json      200          1.42 s                                         ███ │
-│ events                                                   17 B  json      200          1.42 s                                          ██ │
-│                                                                                                                                          │
+│ recommendations?productId=p_1042                                         failed       10.0 s   ███████▏                                  │
+│ catalog-offline-v12.bin                                5.0 MB  binary    200          6.38 s   ███▎                                      │
+│ events                                                   17 B  json      200          1.30 s   █                                         │
+│ notifications                                           306 B  json      200          1.45 s   ███▉                                      │
+│ status?orderId=ord_15bce3a5a963c9fd                     146 B  json      200          162 ms   ▏                                         │
+│ status?orderId=ord_15bce3a5a963c9fd                     146 B  json      200          359 ms       ▐█                                    │
+│ notifications                                           306 B  json      200          1.70 s        ▐████▏                               │
+│ events                                                   17 B  json      200          1.22 s         ▐██▊                                │
+│ status?orderId=ord_15bce3a5a963c9fd                     146 B  json      200          253 ms           █▏                                │
+│ notifications                                           306 B  json      200          1.32 s             ▕███▌                           │
+│ ✎ status?orderId=ord_15bce3a5a963c9fd                   145 B  json      200          313 ms               ▐▍                            │
+│ events                                                   17 B  json      200          954 ms                   ███                       │
+│ notifications                                           306 B  json      200          1.39 s                   ▐████                     │
+│ notifications                                           306 B  json      200          1.50 s                        ▕███▉                │
+│ events                                                   17 B  json      200          1.21 s                            ▐███             │
+│ notifications                                           306 B  json      200          1.66 s                              ▐███▉          │
+│ notifications                                           306 B  json      200          1.39 s                                   ▕████     │
+│ events                                                   17 B  json      200          1.39 s                                     ▐███▎   │
+│ notifications                                           306 B  json      200          1.54 s                                         ███ │
 │                                                                                                                                          │
 │                                                                                                                                          │
 │                                                                                                                                          │

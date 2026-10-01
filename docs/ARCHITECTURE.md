@@ -374,8 +374,8 @@ pub enum BackendCommand { SetRules(RuleSet), SetCaptureConfig(CaptureConfig), Pa
 
 **Demo backend.** `traffic-police demo` runs a simulated device that *encodes real protocol frames* (PROTOCOL.md) into an in-memory stream decoded by the same code as a live connection, so the demo exercises the protocol path end to end. Scenario scripts (seeded RNG, real or virtual clock):
 
-- an identity-SDK session on `DefaultDispatcher-worker-*` threads: `init` → `challenge` → `attest` → `enroll`, then `status?sessionId=…` every 1.5 s until a verdict;
-- background telemetry (`events`, `monitor`) on its own thread, with gzip-encoded JSON;
+- a pretend shop app (`com.example.shop`, a debug build) whose API is a dev server on `http://localhost:8080` (as over `adb reverse`), with sign-in, images and telemetry on example.com hosts at documentation addresses (RFC 2606, RFC 5737): a shopping session on `DefaultDispatcher-worker-*` threads, `sessions` → `products` → `cart/items` → `checkout`, then `orders/status?orderId=…` every 1.5 s until the order is confirmed (the demo replaced an identity-SDK scenario after v0.1.0, at the user's request, with placeholders only);
+- background telemetry (`events`) and a notifications poll with gzip-encoded JSON;
 - a 302 redirect followed to a 200 (two hops, one call), a 404, a 500, a read timeout, a cancelled call;
 - a PNG avatar, a 5 MB download streamed over several seconds, a protobuf body, a multipart upload, a form POST;
 - a JWT in `Authorization`, `Set-Cookie` duplicates, an active rule that rewrites one response, a `dropped` event, and a `diag` warning;

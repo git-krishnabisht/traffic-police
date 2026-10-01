@@ -30,8 +30,14 @@ fn synth(source: u32, first_txn: u64, count: u64, end: u64, gap: u64) -> Vec<Ses
         "Telemetry-Uploader",
         "glide-source-thread-0",
     ];
-    let paths =
-        ["/api/sdk/monitor", "/api/sdk/status", "/v1/events", "/avatars/u_1.png", "/api/sdk/init", "/v1/metrics"];
+    let paths = [
+        "/api/v1/notifications",
+        "/api/v1/orders/status",
+        "/v1/events",
+        "/avatars/u_1.png",
+        "/api/v1/sessions",
+        "/v1/metrics",
+    ];
     for i in 0..count {
         let key = TxnKey { source, txn: first_txn + i };
         let at = end - (count - i) * gap;

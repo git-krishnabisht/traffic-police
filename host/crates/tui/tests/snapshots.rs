@@ -132,7 +132,7 @@ fn rules_view() {
 
 #[test]
 fn detail_tabs_for_json_post() {
-    let init = || path_is("/api/sdk/init");
+    let init = || path_is("/api/v1/sessions");
     snap!("detail_overview_json", detail(12.0, MEDIUM, init(), ""));
     snap!("detail_response_json", detail(12.0, MEDIUM, init(), "l"));
     snap!("detail_response_json_source", detail(12.0, MEDIUM, init(), "lp"));
@@ -152,7 +152,7 @@ fn detail_tabs_for_json_post() {
 
 #[test]
 fn detail_small_covers_list() {
-    snap!("detail_small", detail(12.0, SMALL, path_is("/api/sdk/init"), "l"));
+    snap!("detail_small", detail(12.0, SMALL, path_is("/api/v1/sessions"), "l"));
 }
 
 #[test]
@@ -163,14 +163,14 @@ fn detail_body_viewers() {
     snap!("detail_protobuf_response", detail(12.0, MEDIUM, path_is("/v1/metrics"), "l"));
     snap!("detail_html_500", detail(12.0, MEDIUM, |t| t.status() == Some(500), "l"));
     snap!("detail_404", detail(12.0, MEDIUM, |t| t.status() == Some(404), "l"));
-    snap!("detail_binary_hex", detail(40.0, MEDIUM, path_ends(".tflite"), "l"));
+    snap!("detail_binary_hex", detail(40.0, MEDIUM, path_ends(".bin"), "l"));
     snap!("detail_query_params", detail(40.0, MEDIUM, |t| t.url.query.is_some(), "ll"));
 }
 
 #[test]
 fn detail_failures_and_hops() {
-    snap!("detail_timeout", detail(40.0, MEDIUM, path_ends("/threshold"), ""));
-    snap!("detail_timeout_response", detail(40.0, MEDIUM, path_ends("/threshold"), "l"));
+    snap!("detail_timeout", detail(40.0, MEDIUM, path_ends("/recommendations"), ""));
+    snap!("detail_timeout_response", detail(40.0, MEDIUM, path_ends("/recommendations"), "l"));
     snap!("detail_canceled", detail(12.0, MEDIUM, path_ends("fonts.json"), ""));
     snap!("detail_redirect_hop", detail(12.0, MEDIUM, |t| t.hop > 0, ""));
     snap!("detail_in_flight", detail(12.0, MEDIUM, |t| t.state.is_open(), ""));
@@ -186,7 +186,7 @@ fn detail_rule_rewritten_response() {
 
 #[test]
 fn jq_filter() {
-    let init = || path_is("/api/sdk/init");
+    let init = || path_is("/api/v1/sessions");
     snap!("jq_prompt", detail(12.0, MEDIUM, init(), "l|.config"));
     snap!("jq_result", detail(12.0, MEDIUM, init(), "l|.config.features<Enter>"));
     snap!("jq_error", detail(12.0, MEDIUM, init(), "l|.config[<Enter>"));

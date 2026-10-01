@@ -65,12 +65,12 @@ pub fn gzip(data: &[u8]) -> Bytes {
 }
 
 pub fn jwt(rng: &mut Rng, sub: &str, iat_s: i64) -> String {
-    let header = URL_SAFE_NO_PAD.encode(br#"{"alg":"HS256","typ":"JWT","kid":"sdk-2026-09"}"#);
+    let header = URL_SAFE_NO_PAD.encode(br#"{"alg":"HS256","typ":"JWT","kid":"shop-2026-09"}"#);
     let claims = serde_json::json!({
         "sub": sub,
-        "iss": "https://auth.example.app",
-        "aud": "deepid-sdk",
-        "scope": "sdk:session sdk:telemetry",
+        "iss": "https://auth.example.com",
+        "aud": "shop-api",
+        "scope": "catalog orders",
         "iat": iat_s,
         "exp": iat_s + 3600,
     });
@@ -125,18 +125,20 @@ fn pb_double(out: &mut Vec<u8>, field: u64, v: f64) {
     out.extend_from_slice(&v.to_le_bytes());
 }
 
-/// `MetricsBatch { device_id=1, repeated Metric metrics=2 { name=1, value=2 (double), ts_ms=3 }, sdk=3 }`
+/// `MetricsBatch { device_id=1, repeated Metric metrics=2 { name=1, value=2 (double), ts_ms=3 }, app=3 }`
 pub fn metrics_batch(rng: &mut Rng, ts_ms: u64) -> Bytes {
     let mut out = Vec::new();
     pb_bytes(&mut out, 1, format!("dev-{}", rng.hex(12)).as_bytes());
-    for (name, v) in [("liveness.score", 0.973), ("frame.fps", 29.7), ("camera.lux", 212.0), ("upload.ms", 184.0)] {
+    for (name, v) in
+        [("app.start_ms", 812.0), ("screen.render_ms", 16.4), ("image.decode_ms", 23.0), ("cart.sync_ms", 184.0)]
+    {
         let mut m = Vec::new();
         pb_bytes(&mut m, 1, name.as_bytes());
         pb_double(&mut m, 2, v);
         pb_varint(&mut m, 3, ts_ms);
         pb_bytes(&mut out, 2, &m);
     }
-    pb_bytes(&mut out, 3, b"deepid-sdk/2.4.1");
+    pb_bytes(&mut out, 3, b"shop-android/3.8.0");
     Bytes::from(out)
 }
 
@@ -221,7 +223,7 @@ fn coroutine_tail(worker: i64) -> Vec<StackFrame> {
 }
 
 /// A Retrofit suspend call made from `class.method` (the app's call site).
-pub fn sdk_stack(api_method: &str, caller_class: &str, caller_method: &str, file: &str, line: i32) -> Vec<StackFrame> {
+pub fn app_stack(api_method: &str, caller_class: &str, caller_method: &str, file: &str, line: i32) -> Vec<StackFrame> {
     let mut v = retrofit_suspend_frames();
     v.push(f("$Proxy14", api_method, "", 0));
     v.push(f(caller_class, caller_method, file, line));
@@ -234,9 +236,9 @@ pub fn telemetry_stack() -> Vec<StackFrame> {
     vec![
         f("okhttp3.internal.connection.RealCall", "callStart", "RealCall.kt", 171),
         f("okhttp3.internal.connection.RealCall", "execute", "RealCall.kt", 151),
-        f("com.example.deepid.sdk.telemetry.EventUploader", "post", "EventUploader.kt", 112),
-        f("com.example.deepid.sdk.telemetry.EventUploader", "flush", "EventUploader.kt", 88),
-        f("com.example.deepid.sdk.telemetry.EventUploader$start$1", "run", "EventUploader.kt", 54),
+        f("com.example.shop.telemetry.EventUploader", "post", "EventUploader.kt", 112),
+        f("com.example.shop.telemetry.EventUploader", "flush", "EventUploader.kt", 88),
+        f("com.example.shop.telemetry.EventUploader$start$1", "run", "EventUploader.kt", 54),
         f("java.util.concurrent.Executors$RunnableAdapter", "call", "Executors.java", 487),
         f("java.util.concurrent.FutureTask", "runAndReset", "FutureTask.java", 307),
         f(
@@ -288,9 +290,9 @@ pub fn download_stack() -> Vec<StackFrame> {
     vec![
         f("okhttp3.internal.connection.RealCall", "callStart", "RealCall.kt", 171),
         f("okhttp3.internal.connection.RealCall", "execute", "RealCall.kt", 151),
-        f("com.example.deepid.sdk.models.ModelDownloader", "fetch", "ModelDownloader.kt", 91),
-        f("com.example.deepid.sdk.models.ModelDownloader", "download", "ModelDownloader.kt", 57),
-        f("com.example.deepid.sdk.models.ModelDownloader$ensureLatest$1", "run", "ModelDownloader.kt", 33),
+        f("com.example.shop.offline.CatalogDownloader", "fetch", "CatalogDownloader.kt", 91),
+        f("com.example.shop.offline.CatalogDownloader", "download", "CatalogDownloader.kt", 57),
+        f("com.example.shop.offline.CatalogDownloader$ensureLatest$1", "run", "CatalogDownloader.kt", 33),
         f("java.util.concurrent.ThreadPoolExecutor", "runWorker", "ThreadPoolExecutor.java", 1145),
         f("java.util.concurrent.ThreadPoolExecutor$Worker", "run", "ThreadPoolExecutor.java", 644),
         f("java.lang.Thread", "run", "Thread.java", 1012),
@@ -298,7 +300,7 @@ pub fn download_stack() -> Vec<StackFrame> {
 }
 
 pub fn login_stack() -> Vec<StackFrame> {
-    sdk_stack("token", "com.example.deepid_example.auth.TokenRepository", "login", "TokenRepository.kt", 34)
+    app_stack("token", "com.example.shop.auth.TokenRepository", "login", "TokenRepository.kt", 34)
 }
 
 pub const ERROR_PAGE: &str = "<!DOCTYPE html>\n<html><head><meta charset=\"utf-8\"><title>500 Internal Server Error</title>\

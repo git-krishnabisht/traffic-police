@@ -31,10 +31,16 @@ const BASE_TS: u64 = 5_800_000_000_000;
 /// Wall clock used for virtual (test) runs: 2026-09-29 05:10:00 UTC.
 pub const VIRTUAL_WALL_MS: i64 = 1_790_658_600_000;
 
-const API: &str = "https://deepid.example.app";
-const CDN: &str = "https://cdn.example.app";
-const TELEMETRY: &str = "https://telemetry.example.app";
-const AUTH: &str = "https://auth.example.app";
+/// The pretend app: a shop's debug build. Its API is the developer's local server, reached over
+/// `adb reverse tcp:8080 tcp:8080`; sign-in, images and telemetry are on example.com hosts
+/// (reserved for examples, RFC 2606).
+const PACKAGE: &str = "com.example.shop";
+const APP_VERSION: &str = "3.8.0";
+const API: &str = "http://localhost:8080";
+const API_HOST: &str = "localhost:8080";
+const CDN: &str = "https://cdn.example.com";
+const TELEMETRY: &str = "https://telemetry.example.com";
+const AUTH: &str = "https://auth.example.com";
 
 #[derive(Debug, Clone)]
 pub struct DemoConfig {
@@ -57,29 +63,30 @@ pub fn demo_rules() -> RuleSet {
         version: "demo-1".into(),
         rules: vec![
             Rule {
-                id: "force-pass".into(),
-                name: Some("Force verdict pass".into()),
+                id: "force-paid".into(),
+                name: Some("Force payment captured".into()),
                 enabled: true,
                 matcher: RuleMatch {
                     methods: vec!["GET".into()],
-                    host: Some(Pattern::Glob("*.example.app".into())),
-                    path: Some(Pattern::Exact("/api/sdk/sim-binding/status/".into())),
+                    host: Some(Pattern::Exact("localhost".into())),
+                    port: Some(8080),
+                    path: Some(Pattern::Exact("/api/v1/orders/status".into())),
                     ..Default::default()
                 },
                 actions: vec![RuleAction::Replace {
-                    find: "\"verdict\":\"pending\"".into(),
-                    with: "\"verdict\":\"pass\"".into(),
+                    find: "\"payment\":\"pending\"".into(),
+                    with: "\"payment\":\"captured\"".into(),
                     regex: false,
                 }],
                 cache_rewrites: false,
             },
             Rule {
-                id: "enroll-down".into(),
-                name: Some("Enroll endpoint down".into()),
+                id: "checkout-down".into(),
+                name: Some("Checkout endpoint down".into()),
                 enabled: false,
                 matcher: RuleMatch {
                     methods: vec!["POST".into()],
-                    path: Some(Pattern::Exact("/api/sdk/enroll".into())),
+                    path: Some(Pattern::Exact("/api/v1/checkout".into())),
                     ..Default::default()
                 },
                 actions: vec![RuleAction::Fail {
@@ -108,9 +115,9 @@ enum Emit {
 enum Flow {
     Boot,
     Login,
-    Sdk { step: u8, polls: u32, session: String },
+    Order { step: u8, polls: u32, session: String },
     Telemetry,
-    Monitor,
+    Notifications,
     OneOff(OneOff),
     TrafficTick,
     Die,
@@ -230,8 +237,8 @@ struct ProcessState {
     telemetry_txns: Vec<u64>,
 }
 
-/// One step of the SDK flow: request line, bodies, and the app call site.
-struct SdkStep {
+/// One step of the order flow: request line, bodies, and the app call site.
+struct OrderStep {
     method: &'static str,
     path: &'static str,
     req: Option<String>,
@@ -241,7 +248,7 @@ struct SdkStep {
     line: i32,
 }
 
-impl SdkStep {
+impl OrderStep {
     fn new(
         method: &'static str,
         path: &'static str,
@@ -251,7 +258,7 @@ impl SdkStep {
         caller: (&'static str, &'static str, &'static str),
         line: i32,
     ) -> Self {
-        SdkStep { method, path, req, resp, api, caller, line }
+        OrderStep { method, path, req, resp, api, caller, line }
     }
 }
 
@@ -412,8 +419,8 @@ impl DemoDevice {
                     },
                     instance: self.proc.instance.clone(),
                     app: AppInfo {
-                        package: "com.example.deepid_example".into(),
-                        process: "com.example.deepid_example".into(),
+                        package: PACKAGE.into(),
+                        process: PACKAGE.into(),
                         pid: self.proc.pid,
                         uid: Some(10_234),
                         debuggable: Some(true),
@@ -490,7 +497,7 @@ impl DemoDevice {
                     "Android Studio's network interceptor is also installed; it may rewrite response headers",
                 );
                 self.push_flow(at + 600 * MS, Flow::Login);
-                self.push_flow(at + 1_500 * MS, Flow::Monitor);
+                self.push_flow(at + 1_500 * MS, Flow::Notifications);
                 self.push_flow(at + 2_200 * MS, Flow::Telemetry);
                 if self.proc.generation == 0 {
                     for (secs_x10, o) in [
@@ -539,7 +546,7 @@ impl DemoDevice {
                 self.push_flow(at + 500 * MS, Flow::TrafficTick);
             }
             Flow::Login => self.login(at),
-            Flow::Sdk { step, polls, session } => self.sdk(at, step, polls, session),
+            Flow::Order { step, polls, session } => self.order(at, step, polls, session),
             Flow::Telemetry => {
                 if self.recording {
                     self.telemetry(at);
@@ -547,11 +554,11 @@ impl DemoDevice {
                 let next = at + self.rng.range(3_000, 4_500) * MS;
                 self.push_flow(next, Flow::Telemetry);
             }
-            Flow::Monitor => {
+            Flow::Notifications => {
                 if self.recording {
-                    self.monitor(at);
+                    self.notifications(at);
                 }
-                self.push_flow(at + 2_000 * MS, Flow::Monitor);
+                self.push_flow(at + 2_000 * MS, Flow::Notifications);
             }
             Flow::OneOff(o) => {
                 if self.recording {
@@ -605,7 +612,7 @@ impl DemoDevice {
         if let Some(l) = len {
             hs.push(("Content-Length".into(), l.to_string()));
         }
-        hs.push(("X-Sdk-Version".into(), "2.4.1".into()));
+        hs.push(("X-App-Version".into(), APP_VERSION.into()));
         hs.push(("X-Request-Id".into(), self.rng.uuid()));
         hs.push(("Accept-Encoding".into(), "gzip".into()));
         hs.push(("User-Agent".into(), "okhttp/4.12.0".into()));
@@ -627,6 +634,8 @@ impl DemoDevice {
     }
 
     fn base_ex(&mut self, method: &'static str, url: String, thread: ThreadInfo, stack: Vec<StackFrame>) -> Ex {
+        // the dev server speaks cleartext HTTP/1.1; the example.com hosts h2 over TLS
+        let protocol = if url.starts_with("https") { "h2" } else { "http/1.1" };
         Ex {
             method,
             url,
@@ -636,7 +645,7 @@ impl DemoDevice {
             reason: "OK",
             resp_headers: Vec::new(),
             resp_body: Bytes::new(),
-            protocol: "h2",
+            protocol,
             client: ("okhttp", Some("4.12.0")),
             thread,
             stack,
@@ -654,88 +663,111 @@ impl DemoDevice {
     }
 
     fn login(&mut self, at: u64) {
-        let form = "grant_type=password&client_id=deepid-example&username=demo%40example.app&password=%E2%80%A2%E2%80%A2%E2%80%A2%E2%80%A2&scope=sdk%3Asession+sdk%3Atelemetry";
+        let form = "grant_type=password&client_id=shop-android&username=demo%40example.com&password=%E2%80%A2%E2%80%A2%E2%80%A2%E2%80%A2&scope=catalog+orders";
         let iat = self.wall(at) / 1000;
-        let token = content::jwt(&mut self.rng, "user_4821", iat);
-        let body = json!({"access_token": token, "token_type": "Bearer", "expires_in": 3600, "scope": "sdk:session sdk:telemetry"}).to_string();
+        let token = content::jwt(&mut self.rng, "user_1024", iat);
+        let body =
+            json!({"access_token": token, "token_type": "Bearer", "expires_in": 3600, "scope": "catalog orders"})
+                .to_string();
         let thread = self.next_worker();
         let mut ex = self.base_ex("POST", format!("{AUTH}/oauth/token"), thread, content::login_stack());
         ex.req_headers =
-            self.api_headers("auth.example.app", false, Some("application/x-www-form-urlencoded"), Some(form.len()));
+            self.api_headers("auth.example.com", false, Some("application/x-www-form-urlencoded"), Some(form.len()));
         ex.req_body = Some(("application/x-www-form-urlencoded".into(), Bytes::from(form)));
         ex.resp_headers = self.json_resp_headers(at, body.len(), false);
         ex.resp_body = Bytes::from(body);
         let end = self.start(at, ex);
         self.proc.token = token;
         let session = format!("session_{}", self.rng.hex(32));
-        self.push_flow(end + 300 * MS, Flow::Sdk { step: 0, polls: 0, session });
+        self.push_flow(end + 300 * MS, Flow::Order { step: 0, polls: 0, session });
     }
 
-    fn sdk(&mut self, at: u64, step: u8, polls: u32, session: String) {
+    /// A shopping session: open it, browse, add to the cart, check out, then poll the order
+    /// until it is confirmed (the demo's rule marks the payment captured on the last poll).
+    fn order(&mut self, at: u64, step: u8, polls: u32, session: String) {
         if !self.recording {
-            self.push_flow(at + 500 * MS, Flow::Sdk { step, polls, session });
+            self.push_flow(at + 500 * MS, Flow::Order { step, polls, session });
             return;
         }
-        let deepid = format!("-{}", self.rng.b64(38));
+        let cart = format!("cart_{}", &session[8..20]);
+        let order = format!("ord_{}", &session[8..24]);
         let thread = self.next_worker();
-        let SdkStep { method, path, req, resp, api, caller, line } = match step {
-            0 => SdkStep::new(
+        let OrderStep { method, path, req, resp, api, caller, line } = match step {
+            0 => OrderStep::new(
                 "POST",
-                "/api/sdk/init",
-                Some(json!({"sdkVersion": "2.4.1", "platform": "android", "apiLevel": 36, "device": {"model": "Pixel 8", "manufacturer": "Google"}, "locale": "en-IN"}).to_string()),
-                json!({"ok": true, "sessionId": session, "deepid": deepid, "config": {"pollIntervalMs": 1500, "maxPolls": 20, "features": {"simBinding": true, "liveness": true, "nfc": false}, "endpoints": {"status": "/api/sdk/sim-binding/status/"}}, "expiresAt": "2026-09-29T06:10:00.000Z"}).to_string(),
-                "init",
-                ("com.example.deepid.sdk.session.SessionManager", "start", "SessionManager.kt"),
+                "/api/v1/sessions",
+                Some(json!({"appVersion": APP_VERSION, "platform": "android", "apiLevel": 36, "device": {"model": "Pixel 8", "manufacturer": "Google"}, "locale": "en-US"}).to_string()),
+                json!({"ok": true, "sessionId": session, "userId": "user_1024", "config": {"pollIntervalMs": 1500, "maxPolls": 20, "features": {"newCheckout": true, "wishlist": true, "darkMode": false}, "endpoints": {"orderStatus": "/api/v1/orders/status"}}, "expiresAt": "2026-09-29T06:10:00.000Z"}).to_string(),
+                "createSession",
+                ("com.example.shop.session.SessionRepository", "start", "SessionRepository.kt"),
                 62,
             ),
-            1 => SdkStep::new(
-                "GET",
-                "/api/sdk/challenge",
-                None,
-                json!({"challenge": self.rng.b64(64), "nonce": self.rng.hex(16), "algorithm": "ES256", "ttlSeconds": 120}).to_string(),
-                "challenge",
-                ("com.example.deepid.sdk.session.SessionManager", "fetchChallenge", "SessionManager.kt"),
-                88,
-            ),
-            2 => SdkStep::new(
+            1 => {
+                let items: Vec<_> = [
+                    ("p_1042", "Studio Headphones", 12900, 4.6),
+                    ("p_1043", "Wireless Earbuds", 7900, 4.3),
+                    ("p_1044", "Noise-Cancelling Headphones", 24900, 4.8),
+                    ("p_1045", "Sport Earbuds", 5900, 4.1),
+                    ("p_1046", "Kids Headphones", 2900, 4.4),
+                    ("p_1047", "Travel Case", 1900, 4.7),
+                ]
+                .iter()
+                .enumerate()
+                .map(|(i, (id, name, cents, rating))| json!({"id": id, "name": name, "priceCents": cents, "currency": "USD", "rating": rating, "inStock": i != 3, "image": format!("{CDN}/img/products/{id}.png")}))
+                .collect();
+                OrderStep::new(
+                    "GET",
+                    "/api/v1/products?category=headphones&page=1",
+                    None,
+                    json!({"page": 1, "pageSize": 6, "total": 48, "items": items}).to_string(),
+                    "products",
+                    ("com.example.shop.catalog.CatalogRepository", "products", "CatalogRepository.kt"),
+                    88,
+                )
+            }
+            2 => OrderStep::new(
                 "POST",
-                "/api/sdk/attest",
-                Some(json!({"sessionId": session, "attestation": {"format": "android-key", "chain": [self.rng.b64(120), self.rng.b64(96)], "signature": self.rng.b64(86)}, "integrity": {"deviceRecognition": ["MEETS_DEVICE_INTEGRITY"], "appRecognition": "PLAY_RECOGNIZED"}}).to_string()),
-                json!({"ok": true, "attested": true, "riskScore": 0, "checks": [{"name": "keyAttestation", "result": "pass"}, {"name": "rootDetection", "result": "pass"}, {"name": "emulatorDetection", "result": "pass"}]}).to_string(),
-                "attest",
-                ("com.example.deepid.sdk.session.Attestor", "attest", "Attestor.kt"),
+                "/api/v1/cart/items",
+                Some(json!({"sessionId": session, "productId": "p_1042", "quantity": 1, "options": {"color": "black"}}).to_string()),
+                json!({"ok": true, "cart": {"id": cart, "items": [{"productId": "p_1042", "quantity": 1, "priceCents": 12900}], "subtotalCents": 12900, "currency": "USD"}}).to_string(),
+                "addToCart",
+                ("com.example.shop.cart.CartRepository", "add", "CartRepository.kt"),
                 141,
             ),
-            3 => SdkStep::new(
+            3 => OrderStep::new(
                 "POST",
-                "/api/sdk/enroll",
-                Some(json!({"sessionId": session, "mobile": "+91••••••4821", "simSlot": 0, "carrier": "Airtel", "consent": {"version": "2026-03", "accepted": true}}).to_string()),
-                json!({"ok": true, "status": "pending", "enrollmentId": format!("enr_{}", self.rng.hex(20))}).to_string(),
-                "enroll",
-                ("com.example.deepid.sdk.simbinding.SimBinder", "enroll", "SimBinder.kt"),
+                "/api/v1/checkout",
+                Some(json!({"sessionId": session, "cartId": cart, "shipping": {"method": "standard", "address": {"line1": "1 Example Way", "city": "Springfield", "postalCode": "00000", "country": "US"}}, "payment": {"method": "card", "token": format!("tok_{}", self.rng.hex(16)), "last4": "4242"}}).to_string()),
+                json!({"ok": true, "orderId": order, "status": "pending", "totalCents": 13900, "currency": "USD"}).to_string(),
+                "checkout",
+                ("com.example.shop.checkout.CheckoutRepository", "placeOrder", "CheckoutRepository.kt"),
                 77,
             ),
             _ => {
-                let verdict_now = polls + 1 >= 9;
-                let body = json!({"ok": true, "sessionId": session, "deepid": deepid, "mobile": null, "status": if verdict_now { "complete" } else { "pending" }, "verdict": "pending", "riskScore": 0, "createdAt": "2026-09-29T05:04:51.000Z", "completedAt": null, "enrollmentSim": null}).to_string();
-                SdkStep::new("GET", "/api/sdk/sim-binding/status/", None, body, "status", ("com.example.deepid.sdk.session.StatusPoller", "poll", "StatusPoller.kt"), 41)
+                let confirmed = polls + 1 >= 9;
+                let body = json!({"ok": true, "orderId": order, "status": if confirmed { "confirmed" } else { "processing" }, "payment": "pending", "items": 1, "eta": null, "updatedAt": "2026-09-29T05:04:51.000Z"}).to_string();
+                OrderStep::new(
+                    "GET",
+                    "/api/v1/orders/status",
+                    None,
+                    body,
+                    "orderStatus",
+                    ("com.example.shop.orders.OrderStatusPoller", "poll", "OrderStatusPoller.kt"),
+                    41,
+                )
             }
         };
-        let url = if step >= 4 { format!("{API}{path}?sessionId={session}") } else { format!("{API}{path}") };
-        let stack = content::sdk_stack(api, caller.0, caller.1, caller.2, line);
+        let url = if step >= 4 { format!("{API}{path}?orderId={order}") } else { format!("{API}{path}") };
+        let stack = content::app_stack(api, caller.0, caller.1, caller.2, line);
         let mut ex = self.base_ex(method, url, thread, stack);
         let req_len = req.as_ref().map(|r| r.len());
-        ex.req_headers = self.api_headers(
-            "deepid.example.app",
-            true,
-            req.as_ref().map(|_| "application/json; charset=utf-8"),
-            req_len,
-        );
+        ex.req_headers =
+            self.api_headers(API_HOST, true, req.as_ref().map(|_| "application/json; charset=utf-8"), req_len);
         ex.req_body = req.map(|r| ("application/json; charset=utf-8".into(), Bytes::from(r)));
         ex.resp_headers = self.json_resp_headers(at, resp.len(), false);
         if step == 0 {
-            ex.resp_headers.push(("set-cookie".into(), format!("dsid={}; Path=/; Secure; HttpOnly", self.rng.hex(24))));
-            ex.resp_headers.push(("set-cookie".into(), "region=ap-south-1; Path=/; Secure".into()));
+            ex.resp_headers.push(("set-cookie".into(), format!("sid={}; Path=/; HttpOnly", self.rng.hex(24))));
+            ex.resp_headers.push(("set-cookie".into(), "region=us-east-1; Path=/".into()));
             ex.wait_ms = self.rng.range(1_600, 2_100);
         }
         if step == 2 {
@@ -744,10 +776,10 @@ impl DemoDevice {
         if step == 3 {
             ex.wait_ms = self.rng.range(1_900, 2_700);
         }
-        // the demo's "force-pass" rule rewrites the 9th poll
+        // the demo's "force-paid" rule rewrites the 9th poll
         let mut done = false;
         if step >= 4 && polls + 1 >= 9 {
-            let delivered = resp.replace("\"verdict\":\"pending\"", "\"verdict\":\"pass\"");
+            let delivered = resp.replace("\"payment\":\"pending\"", "\"payment\":\"captured\"");
             let mut dh = ex.resp_headers.clone();
             dh.retain(|(n, _)| !n.eq_ignore_ascii_case("content-length") && !n.eq_ignore_ascii_case("cache-control"));
             dh.push(("Content-Length".into(), delivered.len().to_string()));
@@ -772,14 +804,14 @@ impl DemoDevice {
         ex.resp_body = Bytes::from(resp);
         let end = self.start(at, ex);
         let next = match step {
-            0..=3 => Some((end + 250 * MS, Flow::Sdk { step: step + 1, polls, session })),
+            0..=3 => Some((end + 250 * MS, Flow::Order { step: step + 1, polls, session })),
             _ if done => {
                 self.sessions += 1;
-                // start another SDK session a little later so the live demo keeps flowing
+                // start another session a little later so the live demo keeps flowing
                 let session = format!("session_{}", self.rng.hex(32));
-                Some((end + 12 * SEC, Flow::Sdk { step: 0, polls: 0, session }))
+                Some((end + 12 * SEC, Flow::Order { step: 0, polls: 0, session }))
             }
-            _ => Some((at + 1_500 * MS, Flow::Sdk { step: 4, polls: polls + 1, session })),
+            _ => Some((at + 1_500 * MS, Flow::Order { step: 4, polls: polls + 1, session })),
         };
         if let Some((t, f)) = next {
             self.push_flow(t, f);
@@ -788,7 +820,7 @@ impl DemoDevice {
 
     fn telemetry(&mut self, at: u64) {
         let events: Vec<_> = (0..self.rng.range(3, 9))
-            .map(|i| json!({"name": (["screen_view", "camera_open", "frame_ok", "upload_start", "upload_done"][(i % 5) as usize]), "ts": self.wall(at) - (i as i64) * 700, "props": {"session": self.proc.pid, "n": i}}))
+            .map(|i| json!({"name": (["screen_view", "product_view", "add_to_cart", "begin_checkout", "purchase"][(i % 5) as usize]), "ts": self.wall(at) - (i as i64) * 700, "props": {"session": self.proc.pid, "n": i}}))
             .collect();
         let req = json!({"batch": self.rng.hex(8), "events": events}).to_string();
         let resp = json!({"accepted": true}).to_string();
@@ -799,7 +831,7 @@ impl DemoDevice {
             content::telemetry_stack(),
         );
         ex.req_headers =
-            self.api_headers("telemetry.example.app", true, Some("application/json; charset=utf-8"), Some(req.len()));
+            self.api_headers("telemetry.example.com", true, Some("application/json; charset=utf-8"), Some(req.len()));
         ex.req_body = Some(("application/json; charset=utf-8".into(), Bytes::from(req)));
         ex.resp_headers = self.json_resp_headers(at, resp.len(), false);
         ex.resp_body = Bytes::from(resp);
@@ -809,26 +841,27 @@ impl DemoDevice {
         self.start(at, ex);
     }
 
-    fn monitor(&mut self, at: u64) {
-        let checks: Vec<_> = (0..24)
-            .map(|i| json!({"check": format!("probe-{i:02}"), "ok": true, "latencyMs": 20 + (i * 7) % 90, "region": (["ap-south-1", "ap-southeast-1", "eu-west-1"][i % 3])}))
+    /// The notifications poll every 2 s, gzip-encoded.
+    fn notifications(&mut self, at: u64) {
+        let items: Vec<_> = (0..24)
+            .map(|i| json!({"id": format!("ntf_{i:02}"), "kind": (["order_update", "price_drop", "back_in_stock"][i % 3]), "read": i >= 3, "ageMin": 5 + (i * 7) % 90}))
             .collect();
-        let body = json!({"ok": true, "service": "deepid-sdk", "window": "60s", "checks": checks, "p95Ms": 212, "errorRate": 0.0021}).to_string();
+        let body = json!({"ok": true, "unread": 3, "window": "24h", "items": items, "nextPollMs": 2000}).to_string();
         let wire = gzip(body.as_bytes());
         let worker = self.next_worker();
         let mut ex = self.base_ex(
             "GET",
-            format!("{API}/api/sdk/monitor"),
+            format!("{API}/api/v1/notifications"),
             worker,
-            content::sdk_stack(
-                "monitor",
-                "com.example.deepid.sdk.health.HealthMonitor",
+            content::app_stack(
+                "notifications",
+                "com.example.shop.notifications.NotificationPoller",
                 "tick",
-                "HealthMonitor.kt",
+                "NotificationPoller.kt",
                 29,
             ),
         );
-        ex.req_headers = self.api_headers("deepid.example.app", true, None, None);
+        ex.req_headers = self.api_headers(API_HOST, true, None, None);
         ex.resp_headers = self.json_resp_headers(at, wire.len(), true);
         ex.resp_body = wire;
         ex.wait_ms = self.rng.range(1_300, 1_750);
@@ -841,11 +874,11 @@ impl DemoDevice {
                 let png = content::avatar_png(self.rng.next_u64());
                 let mut ex = self.base_ex(
                     "GET",
-                    format!("{CDN}/avatars/u_4821.png"),
+                    format!("{CDN}/avatars/user_1024.png"),
                     content::thread("glide-source-thread-0", 64, "call"),
                     content::glide_stack(),
                 );
-                ex.req_headers = self.api_headers("cdn.example.app", false, None, None);
+                ex.req_headers = self.api_headers("cdn.example.com", false, None, None);
                 ex.resp_headers = h(&[
                     ("date", &http_date(self.wall(at))),
                     ("content-type", "image/png"),
@@ -863,23 +896,22 @@ impl DemoDevice {
                 let call = self.next_call;
                 self.next_call += 1;
                 let thread = self.next_worker();
-                let stack = content::sdk_stack(
+                let stack = content::app_stack(
                     "remoteConfig",
-                    "com.example.deepid.sdk.config.RemoteConfig",
+                    "com.example.shop.config.RemoteConfig",
                     "refresh",
                     "RemoteConfig.kt",
                     48,
                 );
                 let mut first =
-                    self.base_ex("GET", "http://cdn.example.app/sdk/config".into(), thread.clone(), stack.clone());
-                first.protocol = "http/1.1";
-                first.req_headers = self.api_headers("cdn.example.app", false, None, None);
+                    self.base_ex("GET", "http://cdn.example.com/app/config".into(), thread.clone(), stack.clone());
+                first.req_headers = self.api_headers("cdn.example.com", false, None, None);
                 first.req_headers.insert(1, ("Connection".into(), "Keep-Alive".into()));
                 first.status = 302;
                 first.reason = "Found";
                 first.resp_headers = h(&[
                     ("Date", &http_date(self.wall(at))),
-                    ("Location", "https://cdn.example.app/sdk/v2/config.json"),
+                    ("Location", "https://cdn.example.com/app/v2/config.json"),
                     ("Content-Length", "0"),
                     ("Server", "nginx"),
                 ]);
@@ -887,9 +919,9 @@ impl DemoDevice {
                 first.last_hop = false;
                 first.wait_ms = 60;
                 let end = self.start(at, first);
-                let cfg = json!({"version": 42, "minSdk": "2.3.0", "flags": {"newLivenessModel": true, "strictAttestation": false}, "rollout": 0.25}).to_string();
-                let mut second = self.base_ex("GET", format!("{CDN}/sdk/v2/config.json"), thread, stack);
-                second.req_headers = self.api_headers("cdn.example.app", false, None, None);
+                let cfg = json!({"version": 42, "minAppVersion": "3.6.0", "flags": {"newCheckout": true, "wishlistSync": false}, "rollout": 0.25}).to_string();
+                let mut second = self.base_ex("GET", format!("{CDN}/app/v2/config.json"), thread, stack);
+                second.req_headers = self.api_headers("cdn.example.com", false, None, None);
                 second.resp_headers = self.json_resp_headers(end, cfg.len(), false);
                 second.resp_body = Bytes::from(cfg);
                 second.call = Some(call);
@@ -906,7 +938,7 @@ impl DemoDevice {
                     content::telemetry_stack(),
                 );
                 ex.req_headers =
-                    self.api_headers("telemetry.example.app", true, Some("application/x-protobuf"), Some(body.len()));
+                    self.api_headers("telemetry.example.com", true, Some("application/x-protobuf"), Some(body.len()));
                 ex.req_body = Some(("application/x-protobuf".into(), body));
                 let ack = content::metrics_ack();
                 ex.resp_headers = h(&[
@@ -918,21 +950,15 @@ impl DemoDevice {
                 self.start(at, ex);
             }
             OneOff::NotFound => {
-                let body = json!({"ok": false, "error": {"code": "NOT_FOUND", "message": "asset 'liveness-model-v3.json' does not exist", "requestId": self.rng.uuid()}}).to_string();
+                let body = json!({"ok": false, "error": {"code": "NOT_FOUND", "message": "asset 'promo-banner-v3.json' does not exist", "requestId": self.rng.uuid()}}).to_string();
                 let thread = self.next_worker();
                 let mut ex = self.base_ex(
                     "GET",
-                    format!("{API}/api/sdk/assets/liveness-model-v3.json"),
+                    format!("{API}/api/v1/assets/promo-banner-v3.json"),
                     thread,
-                    content::sdk_stack(
-                        "asset",
-                        "com.example.deepid.sdk.liveness.ModelStore",
-                        "load",
-                        "ModelStore.kt",
-                        73,
-                    ),
+                    content::app_stack("asset", "com.example.shop.promo.PromoBanner", "load", "PromoBanner.kt", 73),
                 );
-                ex.req_headers = self.api_headers("deepid.example.app", true, None, None);
+                ex.req_headers = self.api_headers(API_HOST, true, None, None);
                 ex.status = 404;
                 ex.reason = "Not Found";
                 ex.resp_headers = self.json_resp_headers(at, body.len(), false);
@@ -943,27 +969,27 @@ impl DemoDevice {
                 let boundary = "----traffic-police-7d9f2c";
                 let png = content::avatar_png(9);
                 let mut body = Vec::new();
-                body.extend_from_slice(format!("--{boundary}\r\nContent-Disposition: form-data; name=\"meta\"\r\nContent-Type: application/json; charset=utf-8\r\n\r\n").as_bytes());
-                body.extend_from_slice(json!({"type": "selfie", "sessionId": "session_4b6707958a104c9a8b33d02374751671", "capturedAt": self.wall(at)}).to_string().as_bytes());
-                body.extend_from_slice(format!("\r\n--{boundary}\r\nContent-Disposition: form-data; name=\"image\"; filename=\"selfie.png\"\r\nContent-Type: image/png\r\n\r\n").as_bytes());
+                body.extend_from_slice(format!("--{boundary}\r\nContent-Disposition: form-data; name=\"review\"\r\nContent-Type: application/json; charset=utf-8\r\n\r\n").as_bytes());
+                body.extend_from_slice(json!({"productId": "p_1042", "rating": 5, "title": "Great sound", "text": "Comfortable for long calls, and the battery lasts all day.", "writtenAt": self.wall(at)}).to_string().as_bytes());
+                body.extend_from_slice(format!("\r\n--{boundary}\r\nContent-Disposition: form-data; name=\"photo\"; filename=\"photo.png\"\r\nContent-Type: image/png\r\n\r\n").as_bytes());
                 body.extend_from_slice(&png);
                 body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
                 let ct = format!("multipart/form-data; boundary={boundary}");
-                let resp = json!({"ok": true, "documentId": format!("doc_{}", self.rng.hex(16)), "quality": {"blur": 0.02, "glare": 0.0, "faces": 1}}).to_string();
+                let resp = json!({"ok": true, "reviewId": format!("rev_{}", self.rng.hex(16)), "status": "pending_moderation", "photos": 1}).to_string();
                 let thread = self.next_worker();
                 let mut ex = self.base_ex(
                     "POST",
-                    format!("{API}/api/sdk/documents"),
+                    format!("{API}/api/v1/reviews"),
                     thread,
-                    content::sdk_stack(
+                    content::app_stack(
+                        "postReview",
+                        "com.example.shop.reviews.ReviewUploader",
                         "upload",
-                        "com.example.deepid.sdk.capture.SelfieUploader",
-                        "upload",
-                        "SelfieUploader.kt",
+                        "ReviewUploader.kt",
                         55,
                     ),
                 );
-                ex.req_headers = self.api_headers("deepid.example.app", true, Some(&ct), Some(body.len()));
+                ex.req_headers = self.api_headers(API_HOST, true, Some(&ct), Some(body.len()));
                 ex.req_body = Some((ct, Bytes::from(body)));
                 ex.send_ms = 180;
                 ex.resp_headers = self.json_resp_headers(at, resp.len(), false);
@@ -972,26 +998,22 @@ impl DemoDevice {
                 self.start(at, ex);
             }
             OneOff::ServerError => {
-                let req = json!({"sessionId": "session_4b6707958a104c9a8b33d02374751671", "reason": "user_abandoned", "step": "liveness"}).to_string();
+                let req = json!({"reason": "changed_mind", "refund": "original_payment"}).to_string();
                 let thread = self.next_worker();
                 let mut ex = self.base_ex(
                     "POST",
-                    format!("{API}/api/sdk/report"),
+                    format!("{API}/api/v1/orders/ord_4b6707958a104c9a/cancel"),
                     thread,
-                    content::sdk_stack(
-                        "report",
-                        "com.example.deepid.sdk.session.SessionManager",
-                        "abandon",
-                        "SessionManager.kt",
+                    content::app_stack(
+                        "cancelOrder",
+                        "com.example.shop.orders.OrderRepository",
+                        "cancel",
+                        "OrderRepository.kt",
                         203,
                     ),
                 );
-                ex.req_headers = self.api_headers(
-                    "deepid.example.app",
-                    true,
-                    Some("application/json; charset=utf-8"),
-                    Some(req.len()),
-                );
+                ex.req_headers =
+                    self.api_headers(API_HOST, true, Some("application/json; charset=utf-8"), Some(req.len()));
                 ex.req_body = Some(("application/json; charset=utf-8".into(), Bytes::from(req)));
                 ex.status = 500;
                 ex.reason = "Internal Server Error";
@@ -1005,10 +1027,10 @@ impl DemoDevice {
                 self.start(at, ex);
             }
             OneOff::Volley => {
-                let body = json!({"ip": "49.36.•.•", "country": "IN", "region": "KA", "city": "Bengaluru", "carrier": "Airtel", "asn": 45609}).to_string();
+                let body = json!({"ip": "203.0.113.7", "country": "US", "region": "CA", "city": "Springfield", "currency": "USD", "timezone": "America/Los_Angeles"}).to_string();
                 let mut ex = self.base_ex(
                     "GET",
-                    "https://geo.example.app/v1/lookup?fields=country,region,carrier".into(),
+                    "https://geo.example.com/v1/lookup?fields=country,region,currency".into(),
                     content::thread("Thread-7", 44, "huc"),
                     content::volley_stack(),
                 );
@@ -1016,7 +1038,7 @@ impl DemoDevice {
                 ex.protocol = "http/1.1";
                 ex.req_headers = h(&[
                     ("User-Agent", "Dalvik/2.1.0 (Linux; U; Android 16; Pixel 8 Build/BP41.250725.006)"),
-                    ("Host", "geo.example.app"),
+                    ("Host", "geo.example.com"),
                     ("Connection", "Keep-Alive"),
                     ("Accept-Encoding", "gzip"),
                 ]);
@@ -1033,17 +1055,17 @@ impl DemoDevice {
                 let thread = self.next_worker();
                 let mut ex = self.base_ex(
                     "GET",
-                    format!("{API}/api/sdk/liveness/threshold"),
+                    format!("{API}/api/v1/recommendations?productId=p_1042"),
                     thread,
-                    content::sdk_stack(
-                        "threshold",
-                        "com.example.deepid.sdk.liveness.LivenessConfig",
+                    content::app_stack(
+                        "recommendations",
+                        "com.example.shop.catalog.Recommendations",
                         "fetch",
-                        "LivenessConfig.kt",
+                        "Recommendations.kt",
                         36,
                     ),
                 );
-                ex.req_headers = self.api_headers("deepid.example.app", true, None, None);
+                ex.req_headers = self.api_headers(API_HOST, true, None, None);
                 ex.fail = Some(Fail {
                     phase: "response_headers",
                     class: "java.net.SocketTimeoutException",
@@ -1057,17 +1079,17 @@ impl DemoDevice {
                 let thread = self.next_worker();
                 let mut ex = self.base_ex(
                     "GET",
-                    format!("{CDN}/sdk/prefetch/fonts.json"),
+                    format!("{CDN}/fonts/fonts.json"),
                     thread,
-                    content::sdk_stack(
+                    content::app_stack(
+                        "fonts",
+                        "com.example.shop.ui.FontPrefetcher",
                         "prefetch",
-                        "com.example.deepid.sdk.ui.AssetPrefetcher",
-                        "prefetch",
-                        "AssetPrefetcher.kt",
+                        "FontPrefetcher.kt",
                         22,
                     ),
                 );
-                ex.req_headers = self.api_headers("cdn.example.app", false, None, None);
+                ex.req_headers = self.api_headers("cdn.example.com", false, None, None);
                 ex.fail = Some(Fail {
                     phase: "response_headers",
                     class: "java.io.IOException",
@@ -1081,17 +1103,17 @@ impl DemoDevice {
                 let data = Bytes::from(self.rng.bytes(5 * 1024 * 1024));
                 let mut ex = self.base_ex(
                     "GET",
-                    format!("{CDN}/models/face-liveness-v3.tflite"),
+                    format!("{CDN}/packs/catalog-offline-v12.bin"),
                     content::thread("DownloadWorker-1", 81, "call"),
                     content::download_stack(),
                 );
-                ex.req_headers = self.api_headers("cdn.example.app", false, None, None);
+                ex.req_headers = self.api_headers("cdn.example.com", false, None, None);
                 ex.resp_headers = h(&[
                     ("date", &http_date(self.wall(at))),
                     ("content-type", "application/octet-stream"),
                     ("content-length", &data.len().to_string()),
                     ("accept-ranges", "bytes"),
-                    ("etag", "\"f3v3-5242880\""),
+                    ("etag", "\"c12-5242880\""),
                     ("cache-control", "public, max-age=604800"),
                 ]);
                 ex.resp_body = data;
@@ -1132,28 +1154,35 @@ impl DemoDevice {
                 (id, true)
             }
         };
-        let ip = match host.as_str() {
-            "deepid.example.app" => "34.93.12.207",
-            "cdn.example.app" => "151.101.1.195",
-            "telemetry.example.app" => "34.120.54.55",
-            "auth.example.app" => "35.244.30.101",
-            _ => "104.18.24.51",
+        // localhost:8080 is the dev server; the example.com hosts get documentation addresses (RFC 5737)
+        let (name, port) = match host.rsplit_once(':').and_then(|(n, p)| Some((n, p.parse::<u16>().ok()?))) {
+            Some((n, p)) => (n.to_string(), p),
+            None => (host.clone(), if https { 443 } else { 80 }),
         };
+        let ip = match name.as_str() {
+            "localhost" => "127.0.0.1",
+            "auth.example.com" => "203.0.113.10",
+            "cdn.example.com" => "198.51.100.24",
+            "telemetry.example.com" => "203.0.113.42",
+            "geo.example.com" => "192.0.2.77",
+            _ => "192.0.2.1",
+        };
+        let domain = name.split_once('.').map_or(name.as_str(), |(_, d)| d).to_string();
         let tls = https.then(|| Tls {
             version: Some("TLSv1.3".into()),
             cipher: Some("TLS_AES_128_GCM_SHA256".into()),
             peer: vec![
                 Cert {
-                    subject: Some(format!("CN=*.{}", host.split_once('.').map_or(host.as_str(), |(_, d)| d))),
-                    issuer: Some("CN=WE1, O=Google Trust Services, C=US".into()),
+                    subject: Some(format!("CN=*.{domain}")),
+                    issuer: Some("CN=Example Issuing CA 1, O=Example Trust, C=US".into()),
                     not_before_ms: Some(1_785_000_000_000),
                     not_after_ms: Some(1_792_776_000_000),
                     sha256: Some(format!("{:064x}", u128::from(ip.len() as u8) * 0x9e37_79b9_7f4a_7c15_u128)),
-                    san: vec![format!("*.{}", host.split_once('.').map_or(host.as_str(), |(_, d)| d)), host.clone()],
+                    san: vec![format!("*.{domain}"), name.clone()],
                 },
                 Cert {
-                    subject: Some("CN=WE1, O=Google Trust Services, C=US".into()),
-                    issuer: Some("CN=GTS Root R4, O=Google Trust Services LLC, C=US".into()),
+                    subject: Some("CN=Example Issuing CA 1, O=Example Trust, C=US".into()),
+                    issuer: Some("CN=Example Root CA, O=Example Trust, C=US".into()),
                     ..Default::default()
                 },
             ],
@@ -1162,7 +1191,7 @@ impl DemoDevice {
             id: Some(id),
             reused: Some(!new),
             protocol: Some(ex.protocol.into()),
-            remote: Some(Addr { ip: ip.into(), port: if https { 443 } else { 80 } }),
+            remote: Some(Addr { ip: ip.into(), port }),
             proxy: Some("DIRECT".into()),
             tls,
         };
@@ -1312,7 +1341,7 @@ impl DemoDevice {
                     seq: 0,
                     ts: t,
                     txn,
-                    rules: vec![RuleRef { id: "force-pass".into(), name: Some("Force verdict pass".into()) }],
+                    rules: vec![RuleRef { id: "force-paid".into(), name: Some("Force payment captured".into()) }],
                     changes: rule.changes.clone(),
                     delivered: Some(DeliveredResponse {
                         status: ex.status,
@@ -1504,8 +1533,9 @@ mod tests {
         let txns: Vec<_> = store.txns().iter().map(|t| t.as_ref()).collect();
         let has = |pred: &dyn Fn(&traffic_police_core::model::Transaction) -> bool| txns.iter().any(|t| pred(t));
         assert!(txns.len() > 40, "only {} transactions", txns.len());
-        assert!(has(&|t| t.url.path == "/api/sdk/init" && t.status() == Some(200)));
-        assert!(has(&|t| t.url.path.ends_with("/status/") && t.rule_modified()));
+        assert!(has(&|t| t.url.path == "/api/v1/sessions" && t.status() == Some(200)));
+        assert!(has(&|t| t.url.path == "/api/v1/orders/status" && t.rule_modified()));
+        assert!(has(&|t| t.url.host == "localhost" && t.url.port == Some(8080)));
         assert!(has(&|t| t.status() == Some(302)) && has(&|t| t.hop == 1));
         assert!(has(&|t| t.status() == Some(404)) && has(&|t| t.status() == Some(500)));
         assert!(has(&|t| t.failure.as_ref().is_some_and(|f| f.class.ends_with("SocketTimeoutException"))));

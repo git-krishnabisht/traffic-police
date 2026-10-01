@@ -2,43 +2,43 @@
 source: crates/tui/tests/snapshots.rs
 expression: "frame(12.0, MEDIUM, \"C<Enter>j\")"
 ---
- traffic-police  Pixel 8 [demo]  com.example.deepid_example  pid 4312  ● LIVE  ✎ 1 rule active           26 requests · 13 KB in · 18 KB out
-╭─ Network · all app traffic ────────────────────────────────────────────────────────────────── ━ Receiving 3.1 KB/s   ━ Sending 1.3 KB/s ─╮
+ traffic-police  Pixel 8 [demo]  com.example.shop  pid 4312  ● LIVE  ✎ 1 rule active          26 requests · 14 KB in · 18 KB out · 1 failed
+╭─ Network · all app traffic ────────────────────────────────────────────────────────────────── ━ Receiving 3.1 KB/s   ━ Sending 1.4 KB/s ─╮
 │  16 KB/s                                                                             ┊                                                   │
-│                                                                                      ┊                                                   │
 │                                                                                      ┊            ┏━┓                                    │
-│                                                                                      ┊            ┃ ┃                                    │
-│ 8.0 KB/s                                                                             ┊            ┃ ┃                ┏━┓                 │
-│                                                                                      ┊            ┃ ┗━┓  ┏┓      ┏━┓ ┃ ┃          ┏━┓    │
-│                                                                                      ┊      ┏━┓━┓ ┃   ┗━┓┛┗━━┏━┓━┛ ┗━┓ ┏━━━━━━┓━━┓┃ ┃    │
-│                                                                                      ━━┏━━━━┛ ┗━┗━┛ ┏━┛ ┗┓┏━━┛ ┗━━━┛ ┗━┛┓┏━━┓┏┗━━┗┛ ┗━┓━ │
-│        0                                                                             ━━┛        ┗━━━┛    ┗┛             ┗┛  ┗┛    ┗━┛ ┗━ │
+│                                                                                      ┊            ┃ ┃                 ┏┓                 │
+│                                                                                      ┊            ┃ ┃                ┏┛┃                 │
+│ 8.0 KB/s                                                                             ┊            ┃ ┃                ┃ ┃                 │
+│                                                                                      ┊            ┃ ┗┓┏━━━┓          ┃ ┃  ┏━┓   ┏━┓      │
+│                                                                                      ┊    ┏━┓   ┏━┛  ┗┛━┓ ┗━┓┏┓      ┏━┓┓┏┛ ┗━┓┏┛ ┗━┓ ┏━ │
+│                                                                                      ━━┏━━┛━┗━━━┛ ┏━━━┛ ┗┓┏━┗┛┗━━┓━┏━┛ ┗┗┛━━━━┗┛┗━┓ ┗━┛━ │
+│        0                                                                             ━━┛        ┗━┛      ┗┛      ┗━┛              ┗━━━┛  │
 │                                                                                      00:00.000            00:05.000            00:10.000 │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ Requests 26 ─ Connection ─ Thread ─ Rules ──────────────────────────────────────────────────────────────────────────────────────────────╮
 │ Name                                            ╭ columns ─────────────────────────────╮ Method    Timeline                              │
-│ events                                          │ [x] Method                           │ POST                              ▕▏▊           │
-│ u_4821.png                                      │ [ ] Host                             │ GET                                ▕█           │
-│ monitor                                         │ [ ] Path                             │ GET                                 ▐█▍        ▐│
-│ challenge                                       │ [ ] Thread                           │ GET                                 ▕█         ▐│
+│ events                                          │ [x] Method                           │ POST                              ▕▏▋           │
+│ user_1024.png                                   │ [ ] Host                             │ GET                                ▕█           │
+│ notifications                                   │ [ ] Path                             │ GET                                 ▐█▏        ▐│
+│ products?category=headphones&page=1             │ [ ] Thread                           │ GET                                 ▕▍         ▐│
 │ config                                          │ [ ] Start                            │ GET                                  ▏         ▐│
-│ ↪ config.json                                   │ [ ] Req size                         │ GET                                  █         ▐│
-│ attest                                          │ [ ] Protocol                         │ POST                                 ▐██▉      ▐│
-│ metrics                                         │ [ ] Client                           │ POST                                  ▏        ▐│
-│ monitor                                         │                                      │ GET                                    █▊      ▐│
-│ events                                          │ Enter toggles · Esc closes           │ POST                                   ▐▊      ▐│
-│ liveness-model-v3.json                          ╰──────────────────────────────────────╯ GET                                     ▍      ▐│
-│ enroll                                              72 B  json      200          2.08 s  POST                                     ██▊   ▐│
-│ documents                                           93 B  json      200          515 ms  POST                                     █     ▐│
-│ monitor                                            302 B  json      200          1.50 s  GET                                      ▐█▎   ▐│
-│ report                                             305 B  html      500          219 ms  POST                                      ▐    ▐│
-│ lookup?fields=country,region,carrier               101 B  json      200          507 ms  GET                                        █▎  ▐│
-│ monitor                                            302 B  json      200          1.49 s  GET                                        ▕█▊ ▐│
-│ status?sessionId=session_15bce3a5a963c9fde0eb…     263 B  json      200          326 ms  GET                                         ▏  ▐│
-│ threshold                                                           ···          1.90 s  GET                                         ▐██▐│
-│ events                                              17 B  json      200          970 ms  POST                                        ▕█ ▐│
-│ status?sessionId=session_15bce3a5a963c9fde0eb…     263 B  json      200          174 ms  GET                                          ▕▏▐│
+│ ↪ config.json                                   │ [ ] Req size                         │ GET                                  ▏         ▐│
+│ items                                           │ [ ] Protocol                         │ POST                                 ▕███▏     ▐│
+│ metrics                                         │ [ ] Client                           │ POST                                  ▐        ▐│
+│ notifications                                   │                                      │ GET                                    ██      ▐│
+│ events                                          │ Enter toggles · Esc closes           │ POST                                   █▌      ▐│
+│ promo-banner-v3.json                            ╰──────────────────────────────────────╯ GET                                     ▎      ▐│
+│ reviews                                             86 B  json      200          516 ms  POST                                     █     ▐│
+│ notifications                                      306 B  json      200          1.72 s  GET                                      ▐██   ▐│
+│ checkout                                            99 B  json      200          2.33 s  POST                                     ▐███  ▐│
+│ cancel                                             305 B  html      500          222 ms  POST                                      ▐    ▐│
+│ lookup?fields=country,region,currency              120 B  json      200          291 ms  GET                                        █   ▐│
+│ notifications                                      306 B  json      200          1.42 s  GET                                        ▕█▋ ▐│
+│ events                                              17 B  json      200          958 ms  POST                                        █▎ ▐│
+│ status?orderId=ord_15bce3a5a963c9fd                146 B  json      200          329 ms  GET                                         ▐  ▐│
+│ recommendations?productId=p_1042                                    ···          1.90 s  GET                                         ▐██▐│
 │ fonts.json                                                          canceled     380 ms  GET                                           ▌▐│
-│ monitor                                                             ···          500 ms  GET                                           ▐ │
+│ notifications                                                       ···          500 ms  GET                                           ▐▐│
+│ status?orderId=ord_15bce3a5a963c9fd                  0 B  json      200          413 ms  GET                                           ▐ │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
  ↑↓ move   Enter toggle   Esc close                                                                              ⚠ studio inspector present

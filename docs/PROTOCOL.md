@@ -175,11 +175,11 @@ Sent when a transaction starts: OkHttp network-interceptor entry, or the first H
 {
   "t": "req", "seq": 41, "ts": 5821334411223, "txn": 7, "call": 5, "hop": 0,
   "method": "GET",
-  "url": "https://deepid.example.app/api/sdk/sim-binding/status/?sessionId=session_4b67",
-  "headers": [["Host", "deepid.example.app"], ["Accept-Encoding", "gzip"], ["User-Agent", "okhttp/4.12.0"]],
+  "url": "https://api.example.com/api/v1/orders/status?orderId=ord_4b67",
+  "headers": [["Host", "api.example.com"], ["Accept-Encoding", "gzip"], ["User-Agent", "okhttp/4.12.0"]],
   "client": { "kind": "okhttp", "version": "4.12.0" },          // kind: "okhttp" | "huc"
   "thread": { "name": "DefaultDispatcher-worker-11", "id": 88, "origin": "call" },
-  "stack": [ { "c": "com.example.deepid.StatusPoller", "m": "poll", "f": "StatusPoller.kt", "l": 41 } ],
+  "stack": [ { "c": "com.example.shop.orders.OrderStatusPoller", "m": "poll", "f": "OrderStatusPoller.kt", "l": 41 } ],
   "stack_truncated": false,
   "body": { "length": -1, "type": null, "one_shot": false, "duplex": false },   // absent when the request has no body
   "marks": [["call_start", 5821290000000], ["dns_start", 5821291000000], ["dns_end", 5821300000000]],
@@ -204,9 +204,9 @@ Sent when a transaction starts: OkHttp network-interceptor entry, or the first H
     "version": "TLSv1.3",
     "cipher": "TLS_AES_128_GCM_SHA256",
     "peer": [                         // leaf first; at most 4 entries
-      { "subject": "CN=*.example.app", "issuer": "CN=WE1, O=Google Trust Services, C=US",
+      { "subject": "CN=*.example.com", "issuer": "CN=Example Issuing CA 1, O=Example Trust, C=US",
         "not_before_ms": 1780000000000, "not_after_ms": 1787776000000,
-        "sha256": "3f…", "san": ["*.example.app", "example.app"] }
+        "sha256": "3f…", "san": ["*.example.com", "example.com"] }
     ]
   }
 }
@@ -282,7 +282,7 @@ Sent once, after the last `body_end` of the transaction (or after `resp` when th
 
 ```jsonc
 { "t": "rule", "seq": 47, "ts": 5822012000000, "txn": 7,
-  "rules": [{ "id": "force-pass", "name": "Force verdict pass" }],
+  "rules": [{ "id": "force-paid", "name": "Force payment captured" }],
   "changes": [
     { "op": "status", "from": 200, "to": 500, "reason": "Internal Server Error" },
     { "op": "header_set", "name": "Cache-Control", "value": "no-store", "old": ["max-age=60"], "reason": "cache_guard" },
@@ -340,9 +340,9 @@ Codes defined in v1: `started`, `hook_installed`, `hook_failed`, `hook_other_loa
   "protocol": 1,
   "runtime": { "version": "0.1.0", "build": "3f2c1ab", "mode": "library" },      // mode: "library" | "attach"
   "instance": "9d1c7e0f5b2a4c83a1e6f0d2b7c94e51",
-  "app": { "package": "com.example.deepid_example", "process": "com.example.deepid_example",
+  "app": { "package": "com.example.shop", "process": "com.example.shop",
            "pid": 4312, "uid": 10234, "debuggable": true },
-  "device": { "api": 35, "release": "15", "manufacturer": "Nothing", "model": "A015",
+  "device": { "api": 35, "release": "15", "manufacturer": "Google", "model": "Pixel 8",
               "abi": "arm64-v8a", "abis": ["arm64-v8a", "armeabi-v7a", "armeabi"] },
   "clock": { "ts": 5800000000000, "wall_ms": 1790658651000 },
   "started_ts": 5790000000000,                      // when the runtime started in this process
@@ -449,26 +449,26 @@ enabled = true                     # the default
   [rule.match]
   methods = ["GET"]                # any method when absent
   scheme = "https"                 # "http" | "https"
-  host = "*.example.app"           # glob; { exact = "…" } or { regex = "…" }
+  host = "*.example.com"           # glob; { exact = "…" } or { regex = "…" }
   port = 443
-  path = "/api/sdk/*/status/**"    # glob; { exact = "…" } or { regex = "…" }
-  query = { sessionId = "*" }      # every listed parameter must be present and match (glob)
+  path = "/api/v1/*/status/**"    # glob; { exact = "…" } or { regex = "…" }
+  query = { orderId = "*" }        # every listed parameter must be present and match (glob)
 
   [[rule.action]]
   type = "delay"
   ms = 3000
 
 [[rule]]
-id = "force-pass"
-name = "Force verdict pass"
+id = "force-paid"
+name = "Force payment captured"
 
   [rule.match]
-  path = "/api/sdk/sim-binding/status/"
+  path = "/api/v1/orders/status"
 
   [[rule.action]]
   type = "replace"                 # find-and-replace in a text body
-  find = '"verdict":"pending"'
-  with = '"verdict":"pass"'
+  find = '"payment":"pending"'
+  with = '"payment":"captured"'
   regex = false                    # literal by default
 
   [[rule.action]]
@@ -483,12 +483,12 @@ name = "Force verdict pass"
   value = "no-store"
 
 [[rule]]
-id = "enroll-down"
+id = "checkout-down"
 enabled = false
 
   [rule.match]
   methods = ["POST"]
-  path = "/api/sdk/enroll"
+  path = "/api/v1/checkout"
 
   [[rule.action]]
   type = "fail"
@@ -514,12 +514,12 @@ The host checks the file before it sends anything, and reports each problem with
 The host normalizes the TOML into explicit matcher objects and inlines files:
 
 ```jsonc
-{ "id": "force-pass", "name": "Force verdict pass", "enabled": true,
-  "match": { "methods": ["GET"], "scheme": "https", "host": { "glob": "*.example.app" }, "port": 443,
-             "path": { "exact": "/api/sdk/sim-binding/status/" },
-             "query": [{ "name": "sessionId", "value": { "glob": "*" } }] },
+{ "id": "force-paid", "name": "Force payment captured", "enabled": true,
+  "match": { "methods": ["GET"], "scheme": "https", "host": { "glob": "*.example.com" }, "port": 443,
+             "path": { "exact": "/api/v1/orders/status" },
+             "query": [{ "name": "orderId", "value": { "glob": "*" } }] },
   "actions": [
-    { "type": "replace", "find": "\"verdict\":\"pending\"", "with": "\"verdict\":\"pass\"", "regex": false },
+    { "type": "replace", "find": "\"payment\":\"pending\"", "with": "\"payment\":\"captured\"", "regex": false },
     { "type": "status", "code": 200, "reason": "OK" },
     { "type": "header", "op": "set", "name": "Cache-Control", "value": "no-store" },
     { "type": "body", "text": "{\"ok\":false}", "content_type": "application/json" },

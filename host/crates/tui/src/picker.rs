@@ -497,7 +497,7 @@ mod tests {
             serial: "0123456789ABCDEF".into(),
             state: "device".into(),
             product: None,
-            model: Some("A015".into()),
+            model: Some("Pixel_8".into()),
             device: None,
             transport_id: 1,
         }
@@ -514,7 +514,7 @@ mod tests {
             frozen: false,
             arch: Some("arm64".into()),
         };
-        let rows = Ok(vec![row(10771, "io.surepass.suresignsample"), row(20, "com.example.other")]);
+        let rows = Ok(vec![row(10771, "com.example.shop"), row(20, "com.example.other")]);
         let devices = Ok(vec![device.clone()]);
         let abouts = HashMap::from([(1, "Android 14 (API 34)".to_string())]);
         let mut view = View {
@@ -530,7 +530,7 @@ mod tests {
         let area = Rect::new(0, 0, 160, 14);
         let selected = Theme::new(Palette::Dark, Depth::TrueColor).selected().bg.unwrap();
         for (title, last_column) in
-            [("╭─ Choose an app process on A015", "capture"), ("╭─ Choose a device ─", "Android")]
+            [("╭─ Choose an app process on Pixel 8", "capture"), ("╭─ Choose a device ─", "Android")]
         {
             let buf = render(&view, area);
             let row_text = |y: u16| (0..area.width).map(|x| buf[(x, y)].symbol()).collect::<String>();

@@ -2,43 +2,43 @@
 source: crates/tui/tests/snapshots.rs
 expression: "press(&mut detached, MEDIUM, \"\")"
 ---
- traffic-police  Pixel 8 [demo]  com.example.deepid_example  pid 4312  ● DETACHED  ✎ 1 rule active      38 requests · 5.0 MB in · 26 KB out
-╭─ Network · all app traffic ────────────────────────────────────────────────────────────────── ━ Receiving 119 KB/s   ━ Sending 4.0 KB/s ─╮
+ traffic-police  Pixel 8 [demo]  com.example.shop  pid 4312  ● DETACHED  ✎ 1 rule active     39 requests · 5.0 MB in · 26 KB out · 1 failed
+╭─ Network · all app traffic ────────────────────────────────────────────────────────────────── ━ Receiving 123 KB/s   ━ Sending 3.9 KB/s ─╮
 │ 1.0 MB/s                                       ┊                                                                     ┊              ┊    │
 │                                                ┊                                                      ┏━━┓┏━━┓   ┏━┓ ┏━━┓┏━━┓       ┊    │
 │                                                ┊                                                     ┏┛  ┗┛  ┗━━━┛ ┗━┛  ┗┛  ┗━┓     ┊    │
 │                                                ┊                                                    ┏┛               ┊        ┗┓    ┊    │
 │ 512 KB/s                                       ┊                                                    ┃                ┊         ┗┓   ┊    │
 │                                                ┊                                                    ┃                ┊          ┃   ┊    │
-│                                                ┊                                                    ┃                ┊          ┃   ┏━┓  │
-│                                                ┊                                                    ┃                ┊          ┗━┓ ┃ ┗━ │
+│                                                ┊                                                    ┃                ┊          ┗┓  ┏━┓  │
+│                                                ┊                                                    ┃                ┊           ┗┓ ┃ ┗━ │
 │        0                                       ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┗━┛━━━ │
 │                                                00:00.000            00:05.000            00:10.000            00:15.000                  │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-╭─ Requests 38 ─ Connection ─ Thread ─ Rules ──────────────────────────────────────────────────────────────────────────────────────────────╮
+╭─ Requests 39 ─ Connection ─ Thread ─ Rules ──────────────────────────────────────────────────────────────────────────────────────────────╮
 │ Name                                                     Size  Type      Status         Time   Timeline                                  │
-│ documents                                                93 B  json      200          515 ms                         █▏                  │
-│ monitor                                                 302 B  json      200          1.50 s                         ▐█▋                 │
-│ report                                                  305 B  html      500          219 ms                          ▕▎                 │
-│ lookup?fields=country,region,carrier                    101 B  json      200          507 ms                            █                │
-│ monitor                                                 302 B  json      200          1.49 s                            ███              │
-│ status?sessionId=session_15bce3a5a963c9fde0ebe700e…     263 B  json      200          326 ms                            ▏                │
-│ threshold                                                                detached     9.90 s                             █████████████▋  │
-│ events                                                   17 B  json      200          970 ms                             █▋              │
-│ status?sessionId=session_15bce3a5a963c9fde0ebe700e…     263 B  json      200          174 ms                              ▏              │
-│ fonts.json                                                               canceled     380 ms                              ▐▏            ▐│
-│ monitor                                                 302 B  json      200          1.44 s                               ██           ▐│
-│ face-liveness-v3.tflite                                5.0 MB  binary    200          6.38 s                                ████████▉   ▐│
-│ status?sessionId=session_15bce3a5a963c9fde0ebe700e…     263 B  json      200          284 ms                                ▐           ▐│
-│ monitor                                                 302 B  json      200          1.56 s                                 ▕█▉        ▐│
-│ ! events                                                 17 B  json      200          971 ms                                  ▐▉        ▐│
-│ status?sessionId=session_15bce3a5a963c9fde0ebe700e…     263 B  json      200          358 ms                                  ▐▏        ▐│
-│ monitor                                                 302 B  json      200          1.72 s                                    ▐██     ▐│
-│ status?sessionId=session_15bce3a5a963c9fde0ebe700e…     263 B  json      200          381 ms                                    ▐▏      ▐│
-│ status?sessionId=session_15bce3a5a963c9fde0ebe700e…     263 B  json      200          225 ms                                      ▕     ▐│
-│ events                                                   17 B  json      200          1.13 s                                      ▕█▍   ▐│
-│ monitor                                                 302 B  json      200          1.38 s                                       ██▏  ▐│
-│ status?sessionId=session_15bce3a5a963c9fde0ebe700e…     263 B  json      200          259 ms                                        ▕▏  ▐│
-│ monitor                                                                  detached     500 ms                                          ▋  │
+│ checkout                                                 99 B  json      200          2.33 s                         ▐██▊                │
+│ cancel                                                  305 B  html      500          222 ms                          ▕▎                 │
+│ lookup?fields=country,region,currency                   120 B  json      200          291 ms                            █                │
+│ notifications                                           306 B  json      200          1.42 s                            ██▎              │
+│ events                                                   17 B  json      200          958 ms                            ▐▊               │
+│ status?orderId=ord_15bce3a5a963c9fd                     146 B  json      200          329 ms                             ▏               │
+│ recommendations?productId=p_1042                                         detached     9.90 s                             █████████████▋  │
+│ fonts.json                                                               canceled     380 ms                              ▐▏             │
+│ notifications                                           306 B  json      200          1.50 s                               ██            │
+│ status?orderId=ord_15bce3a5a963c9fd                     146 B  json      200          421 ms                               ▌            ▐│
+│ catalog-offline-v12.bin                                5.0 MB  binary    200          6.38 s                                ████████▉   ▐│
+│ status?orderId=ord_15bce3a5a963c9fd                     146 B  json      200          282 ms                                 █          ▐│
+│ ! events                                                 17 B  json      200          1.04 s                                 ▐█         ▐│
+│ notifications                                           306 B  json      200          1.77 s                                 ▕██▏       ▐│
+│ status?orderId=ord_15bce3a5a963c9fd                     146 B  json      200          134 ms                                   ▏        ▐│
+│ notifications                                           306 B  json      200          1.44 s                                    ▐██     ▐│
+│ status?orderId=ord_15bce3a5a963c9fd                     146 B  json      200          129 ms                                     ▏      ▐│
+│ events                                                   17 B  json      200          1.30 s                                      █▊    ▐│
+│ notifications                                           306 B  json      200          1.45 s                                       ███  ▐│
+│ status?orderId=ord_15bce3a5a963c9fd                     146 B  json      200          162 ms                                       ▏    ▐│
+│ status?orderId=ord_15bce3a5a963c9fd                     146 B  json      200          359 ms                                         ▌  ▐│
+│ notifications                                                            detached     500 ms                                          ▋ ▐│
+│ events                                                                   detached     164 ms                                          ▏  │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
  Enter open   / filter   Space pause   m pin   y copy   e export   c collapse   s sort   ? help                  ⚠ studio inspector present

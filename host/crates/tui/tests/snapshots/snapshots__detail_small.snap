@@ -1,34 +1,34 @@
 ---
 source: crates/tui/tests/snapshots.rs
-expression: "detail(12.0, SMALL, path_is(\"/api/sdk/init\"), \"l\")"
+expression: "detail(12.0, SMALL, path_is(\"/api/v1/sessions\"), \"l\")"
 ---
- traffic-police  Pixel 8 [demo]  com.example.deepid_example  pid 4312  ● LIVE  ✎ 1 rule active
-╭─ Network · all app traffic ────────────────────────── ━ Receiving 3.4 KB/s   ━ Sending 1.5 KB/s ─╮
+ traffic-police  Pixel 8 [demo]  com.example.shop  pid 4312  ● LIVE  ✎ 1 rule active    26 requests
+╭─ Network · all app traffic ────────────────────────── ━ Receiving 3.3 KB/s   ━ Sending 1.2 KB/s ─╮
 │  16 KB/s                                                      ┊                                  │
 │                                                               ┊        ┏┓                        │
-│                                                               ┊        ┃┃                        │
-│ 8.0 KB/s                                                      ┊        ┃┃           ┏┓           │
-│                                                               ┊       ┏┛┗━━━━┓┏┓━━━┓┛┏━━┓   ┏━┓  │
-│                                                               ━━┓┏━━━┓┛ ┏━━┓┏┗┛┗━┓┏┗┓┃┓┏┗┏━━┛┓┗━ │
-│        0                                                      ━━┗┛   ┗━━┛  ┗┛    ┗┛ ┗┛┗┛┗┛   ┗┛  │
+│                                                               ┊        ┃┃           ┏┓           │
+│ 8.0 KB/s                                                      ┊       ┏┛┃           ┃┃           │
+│                                                               ┊       ┃ ┗━━━━┓     ┏┏┓ ┏━┓┏┏━┓   │
+│                                                               ━━┏━━━━┓┛┏━━━┓ ┗┓┏━┓┏┛┛┗━┛┓┗┛┛━┗━┏ │
+│        0                                                      ━━┛    ┗━┛   ┗━┛┗┛ ┗┛     ┗┛   ┗━┛ │
 │                                                               00:00.000                          │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
-╭─ init ─ Response body ─ Request body ────────────────────────────────────── JSON · 316 B · 1/18 ─╮
+╭─ sessions ─ Response body ─ Request body ────────────────────────────────── JSON · 290 B · 1/18 ─╮
 │ {                                                                                                │
 │   "ok": true,                                                                                    │
 │   "sessionId": "session_15bce3a5a963c9fde0ebe700e9d76981",                                       │
-│   "deepid": "-a02mRsDvpclHF1i8eoravsWmApTcmegxpqeKsY",                                           │
+│   "userId": "user_1024",                                                                         │
 │   "config": {                                                                                    │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ Overview ─ Response ─ Request ─ Call Stack ─────────────────────────────────────────────────────╮
-│ HTTP/2 200 OK                                                                                    │
+│ HTTP/1.1 200 OK                                                                                  │
 │                                                                                                  │
 │ Headers (8)                                                                                      │
 │ date: Tue, 29 Sep 2026 05:10:01 GMT                                                              │
 │ content-type: application/json; charset=utf-8                                                    │
-│ content-length: 316                                                                              │
+│ content-length: 290                                                                              │
 │ cache-control: no-cache, no-store                                                                │
-│ x-request-id: e9199733-54bd-4086-af69-d7eeccf00dee                                               │
+│ x-request-id: 803deb4e-a4a7-4649-a7cb-4bd43532b959                                               │
 │ server: envoy                                                                                    │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
  ←→ tabs   ↑↓ move   / search   nN next/previous   y copy   ? help       ⚠ studio inspector present

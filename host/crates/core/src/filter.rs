@@ -447,15 +447,15 @@ mod tests {
 
     #[test]
     fn tokens_combine_and_negate() {
-        let t = txn("POST", "https://api.example.app/api/sdk/sim-binding/status/?sessionId=s_1", Some(200));
-        assert!(check("sim-binding", &t));
-        assert!(check("SIM-BINDING method:post,put status:2xx", &t));
-        assert!(!check("sim-binding -method:POST", &t));
+        let t = txn("POST", "https://api.example.app/api/v1/order-tracking/status/?orderId=o_1", Some(200));
+        assert!(check("order-tracking", &t));
+        assert!(check("ORDER-TRACKING method:post,put status:2xx", &t));
+        assert!(!check("order-tracking -method:POST", &t));
         assert!(check("host:*.example.app path:/api/**/status", &t));
-        assert!(check("path:/api/sdk/*/status", &t));
+        assert!(check("path:/api/v1/*/status", &t));
         assert!(!check("path:/api/*/status", &t), "* stays within a segment");
-        assert!(check("/session[Ii]d=s_\\d/", &t));
-        assert!(check("/SESSIONID/i", &t));
+        assert!(check("/order[Ii]d=o_\\d/", &t));
+        assert!(check("/ORDERID/i", &t));
         assert!(check("status:>=200 status:<300 type:json time<1s time>=250ms", &t));
         assert!(!check("status:4xx", &t));
         assert!(check("\"example.app/api\"", &t));

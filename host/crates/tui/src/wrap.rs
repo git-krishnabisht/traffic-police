@@ -453,7 +453,7 @@ mod tests {
         let dim = Style::default().add_modifier(Modifier::DIM);
         let line = Line::from(vec![
             Span::styled(format!("{:<LABEL_W$}", "Token"), dim),
-            Span::raw("JWT HS256 · expired 11:32:20.000 (13 d 5 h ago) · iss surepass"),
+            Span::raw("JWT HS256 · expired 11:32:20.000 (13 d 5 h ago) · iss example"),
         ]);
         let parts = wrap_line(&line, 50, LABEL_W);
         assert!(parts.len() > 1, "{parts:?}");
@@ -476,15 +476,14 @@ mod tests {
     #[test]
     fn a_word_wider_than_a_line_starts_where_it_is_and_breaks_after_punctuation() {
         let pad = " ".repeat(LABEL_W);
-        let url = format!("{:<LABEL_W$}https://prod-esign-api-v2.surepass.app/api/v1/flow/check-session", "URL");
+        let url = format!("{:<LABEL_W$}https://shop-checkout-api-v2.example.com/api/v1/orders/status", "URL");
         // the URL starts beside its label; its rows end after a `-` or a `/`
         assert_eq!(
             rows(&url, 40, LABEL_W, true),
             vec![
-                "URL               https://prod-esign-".to_string(),
-                format!("{pad}api-v2.surepass.app/"),
-                format!("{pad}api/v1/flow/check-"),
-                format!("{pad}session")
+                "URL               https://shop-checkout-".to_string(),
+                format!("{pad}api-v2.example.com/"),
+                format!("{pad}api/v1/orders/status")
             ]
         );
         // a frame breaks before its file
@@ -510,26 +509,26 @@ mod tests {
             ]
         );
         // an item longer than a line starts a line too when its first word would be alone
-        let token = format!("{:<LABEL_W$}JWT HS256 · iss https://auth.example.app in request header", "Token");
+        let token = format!("{:<LABEL_W$}JWT HS256 · iss https://auth.example.com in request header", "Token");
         assert_eq!(
             rows(&token, 50, LABEL_W, true),
             vec![
                 "Token             JWT HS256 ·".to_string(),
-                format!("{pad}iss https://auth.example.app in"),
+                format!("{pad}iss https://auth.example.com in"),
                 format!("{pad}request header")
             ]
         );
         // … but stays where its first two words fit
         let token = format!(
-            "{:<LABEL_W$}JWT HS256 · expires 06:10:00.000 (in 59 min) · sub user_4821 · \
-             iss https://auth.example.app  in request header Authorization · Enter decodes",
+            "{:<LABEL_W$}JWT HS256 · expires 06:10:00.000 (in 59 min) · sub user_1024 · \
+             iss https://auth.example.com  in request header Authorization · Enter decodes",
             "Token"
         );
         assert_eq!(
             rows(&token, 73, LABEL_W, true),
             vec![
                 "Token             JWT HS256 · expires 06:10:00.000 (in 59 min) ·".to_string(),
-                format!("{pad}sub user_4821 · iss https://auth.example.app  in"),
+                format!("{pad}sub user_1024 · iss https://auth.example.com  in"),
                 format!("{pad}request header Authorization · Enter decodes")
             ]
         );

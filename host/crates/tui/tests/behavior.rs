@@ -209,7 +209,7 @@ fn wheel_scrolls_the_list() {
 #[test]
 fn stale_jq_results_are_ignored() {
     let mut app = app_at(12.0);
-    let to = goto(&mut app, MEDIUM, path_is("/api/sdk/init"));
+    let to = goto(&mut app, MEDIUM, path_is("/api/v1/sessions"));
     press(&mut app, MEDIUM, &format!("{to}<Enter>l|.ok"));
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     let jobs = app.take_jq_jobs();
@@ -371,12 +371,12 @@ fn keys_between_frames_see_the_new_order() {
 #[test]
 fn enter_on_an_app_frame_asks_for_the_editor() {
     let root = std::env::temp_dir().join(format!("tp-src-test-{}", std::process::id()));
-    // SessionManager.kt lives outside its package directory, as Kotlin allows
-    let file = root.join("sdk/session/SessionManager.kt");
+    // SessionRepository.kt lives outside its package directory, as Kotlin allows
+    let file = root.join("shop/session/SessionRepository.kt");
     std::fs::create_dir_all(file.parent().unwrap()).unwrap();
-    std::fs::write(&file, "class SessionManager\n").unwrap();
+    std::fs::write(&file, "class SessionRepository\n").unwrap();
     let mut app = app_at(12.0);
-    let to = goto(&mut app, MEDIUM, path_is("/api/sdk/init"));
+    let to = goto(&mut app, MEDIUM, path_is("/api/v1/sessions"));
     press(&mut app, MEDIUM, &format!("{to}<Enter>lll<Down><Down><Down><Down><Enter>"));
     assert!(app.editor_request.is_none(), "no source roots configured yet");
     app.source_roots = vec![root.clone()];
@@ -431,11 +431,11 @@ fn the_filter_applies_as_typed_and_esc_restores_it() {
 #[test]
 fn pins_mark_rows_and_filter_with_is_pinned() {
     let mut app = app_at(40.0);
-    let to = goto(&mut app, MEDIUM, path_is("/api/sdk/init"));
+    let to = goto(&mut app, MEDIUM, path_is("/api/v1/sessions"));
     let text = press(&mut app, MEDIUM, &format!("{to}m"));
     let init = app.selected.expect("selected");
     assert!(app.view_store().txn(init).pinned);
-    assert!(text.contains("★ init"), "{text}");
+    assert!(text.contains("★ sessions"), "{text}");
     press(&mut app, MEDIUM, "/is:pinned<Enter>");
     assert_eq!(app.view_rows().matched(), 1);
     press(&mut app, MEDIUM, "m");
@@ -445,16 +445,16 @@ fn pins_mark_rows_and_filter_with_is_pinned() {
 #[test]
 fn d_on_two_requests_compares_them() {
     let mut app = app_at(40.0);
-    let to = goto(&mut app, MEDIUM, path_is("/api/sdk/init"));
+    let to = goto(&mut app, MEDIUM, path_is("/api/v1/sessions"));
     let text = press(&mut app, MEDIUM, &format!("{to}d"));
-    assert!(text.contains("◆ init"), "{text}");
-    let to = goto(&mut app, MEDIUM, path_is("/api/sdk/monitor"));
+    assert!(text.contains("◆ sessions"), "{text}");
+    let to = goto(&mut app, MEDIUM, path_is("/api/v1/notifications"));
     let text = press(&mut app, MEDIUM, &format!("{to}d"));
     assert_eq!(app.overlay, Overlay::Diff);
-    assert!(text.contains("A POST https://deepid.example.app/api/sdk/init"), "{text}");
-    assert!(text.contains("B GET https://deepid.example.app/api/sdk/monitor"), "{text}");
+    assert!(text.contains("A POST http://localhost:8080/api/v1/sessions"), "{text}");
+    assert!(text.contains("B GET http://localhost:8080/api/v1/notifications"), "{text}");
     assert!(text.contains("differs in request,"), "{text}");
-    assert!(text.contains("- POST https://deepid.example.app/api/sdk/init"), "{text}");
+    assert!(text.contains("- POST http://localhost:8080/api/v1/sessions"), "{text}");
     // sorted headers, then the next change
     let text = press(&mut app, MEDIUM, "sn");
     assert!(text.contains("headers compared as sets"), "{text}");
@@ -470,7 +470,7 @@ fn d_on_two_requests_compares_them() {
 #[test]
 fn enter_on_a_value_decodes_it_or_filters_by_it() {
     let mut app = app_at(40.0);
-    let to = goto(&mut app, MEDIUM, path_is("/api/sdk/init"));
+    let to = goto(&mut app, MEDIUM, path_is("/api/v1/sessions"));
     press(&mut app, MEDIUM, &format!("{to}<Enter>"));
     let init = app.selected.expect("selected");
     // the Overview shows the bearer token; Enter on its row decodes it
@@ -513,7 +513,7 @@ fn the_palette_finds_and_runs_commands() {
     assert_eq!(app.overlay, Overlay::None);
     assert_eq!(app.graph_style, traffic_police_tui::graph::GraphStyle::Braille);
     // an action runs as its key would: pin the selected request
-    let to = goto(&mut app, MEDIUM, path_is("/api/sdk/init"));
+    let to = goto(&mut app, MEDIUM, path_is("/api/v1/sessions"));
     press(&mut app, MEDIUM, &format!("{to}:pin<Enter>"));
     assert!(app.view_store().txn(app.selected.unwrap()).pinned);
     // a command without a key, found by what people call it
@@ -531,7 +531,7 @@ fn the_palette_finds_and_runs_commands() {
 fn the_body_explorer_moves_folds_and_switches_bodies() {
     use traffic_police_tui::explorer::BodyTab;
     let mut app = app_at(40.0);
-    let to = goto(&mut app, MEDIUM, path_is("/api/sdk/init"));
+    let to = goto(&mut app, MEDIUM, path_is("/api/v1/sessions"));
     press(&mut app, MEDIUM, &format!("{to}<Enter>"));
     // the explorer sits above the tabs: Shift+Tab reaches it
     press(&mut app, MEDIUM, "<S-Tab>");
@@ -545,12 +545,12 @@ fn the_body_explorer_moves_folds_and_switches_bodies() {
     // Enter on a single value opens its value menu
     let text = press(&mut app, MEDIUM, "k<Enter>");
     assert_eq!(app.overlay, Overlay::Menu);
-    assert!(text.contains("value at $.deepid"), "{text}");
+    assert!(text.contains("value at $.userId"), "{text}");
     press(&mut app, MEDIUM, "<Esc>");
     // l goes to the request body and h back, as the tabs below are switched
     let text = press(&mut app, MEDIUM, "l");
     assert_eq!((app.explorer.tab, app.focus), (BodyTab::Request, Focus::Preview));
-    assert!(text.contains("\"sdkVersion\": \"2.4.1\""), "the request's JSON: {text}");
+    assert!(text.contains("\"appVersion\": \"3.8.0\""), "the request's JSON: {text}");
     press(&mut app, MEDIUM, "h");
     assert_eq!(app.explorer.tab, BodyTab::Response);
     // Tab goes on to the tabs below, where h and l switch tabs too
@@ -568,7 +568,7 @@ fn rules_from_the_project_file_toggle_edit_and_grow() {
     let path = tp.join("rules.toml");
     std::fs::write(
         &path,
-        "version = 1\n\n# the status poll\n[[rule]]\nid = \"slow\"\nname = \"Slow poll\"\n  [rule.match]\n  path = \"/api/sdk/*/status/**\"\n  [[rule.action]]\n  type = \"delay\"\n  ms = 800\n",
+        "version = 1\n\n# the status poll\n[[rule]]\nid = \"slow\"\nname = \"Slow poll\"\n  [rule.match]\n  path = \"/api/v1/*/status\"\n  [[rule.action]]\n  type = \"delay\"\n  ms = 800\n",
     )
     .unwrap();
     let mut app = app_at(40.0);
@@ -593,13 +593,13 @@ fn rules_from_the_project_file_toggle_edit_and_grow() {
     press(&mut app, MEDIUM, "<Enter>");
     assert_eq!(app.editor_request.take(), Some((path.clone(), 4)));
     // r on a request appends a rule that matches it exactly, off, and opens it
-    let to = goto(&mut app, MEDIUM, path_is("/api/sdk/init"));
+    let to = goto(&mut app, MEDIUM, path_is("/api/v1/sessions"));
     press(&mut app, MEDIUM, &format!("1{to}r"));
     let f = traffic_police_core::rules::load(&path);
     assert!(f.is_valid(), "{:?}", f.problems);
     let new = f.set.rules.last().unwrap();
-    assert_eq!((new.id.as_str(), new.enabled), ("init", false));
-    assert_eq!(new.matcher.path, Some(traffic_police_proto::msg::Pattern::Exact("/api/sdk/init".into())));
+    assert_eq!((new.id.as_str(), new.enabled), ("sessions", false));
+    assert_eq!(new.matcher.path, Some(traffic_police_proto::msg::Pattern::Exact("/api/v1/sessions".into())));
     assert_eq!(app.editor_request.take().map(|(p, _)| p), Some(path.clone()));
     // a broken file keeps the active rules, and says where it breaks
     let active = app.rules.clone();
@@ -614,20 +614,20 @@ fn rules_from_the_project_file_toggle_edit_and_grow() {
 #[test]
 fn body_filters_fill_in_from_the_background() {
     let mut app = app_at(40.0);
-    press(&mut app, MEDIUM, "/body:\"simBinding\"<Enter>");
+    press(&mut app, MEDIUM, "/body:\"darkMode\"<Enter>");
     // render_keys runs queued jobs inline, as the event loop would run them on workers
     render_text(&mut app, MEDIUM.0, MEDIUM.1);
     let store = app.view_store();
     let paths: Vec<&str> = app.view_rows().rows().iter().map(|r| store.txn(r.txn()).url.path.as_str()).collect();
     assert!(!paths.is_empty());
-    assert!(paths.iter().all(|p| *p == "/api/sdk/init"), "{paths:?}");
+    assert!(paths.iter().all(|p| *p == "/api/v1/sessions"), "{paths:?}");
 }
 
 #[test]
 fn search_in_the_detail_pane_steps_through_matches() {
     let mut app = app_at(40.0);
-    let to = goto(&mut app, MEDIUM, path_is("/api/sdk/init"));
-    // Response tab of init: its JSON mentions "feature" keys several times
+    let to = goto(&mut app, MEDIUM, path_is("/api/v1/sessions"));
+    // Response tab of the session request: its JSON has several `true` values
     press(&mut app, MEDIUM, &format!("{to}<Enter>l/true<Enter>"));
     let n = app.search.matches.len();
     assert!(n >= 2, "{n} matches");
@@ -646,14 +646,14 @@ fn search_in_the_detail_pane_steps_through_matches() {
 #[test]
 fn copy_as_curl_url_and_a_json_value() {
     let mut app = app_at(40.0);
-    let to = goto(&mut app, MEDIUM, path_is("/api/sdk/init"));
+    let to = goto(&mut app, MEDIUM, path_is("/api/v1/sessions"));
     press(&mut app, MEDIUM, &format!("{to}yc"));
     let curl = app.copied.clone().expect("copied");
     assert!(curl.starts_with("curl"), "{curl}");
     assert!(curl.contains("--data-binary '{"), "the JSON request body goes inline: {curl}");
     assert!(!curl.contains("Content-Length"), "{curl}");
     press(&mut app, MEDIUM, "yu");
-    assert!(app.copied.as_deref().unwrap().ends_with("/api/sdk/init"));
+    assert!(app.copied.as_deref().unwrap().ends_with("/api/v1/sessions"));
     // the value under the cursor in the response body
     press(&mut app, MEDIUM, "<Enter>l");
     press(&mut app, MEDIUM, "/pollIntervalMs<Enter>");
@@ -668,12 +668,12 @@ fn save_a_body_and_export_har() {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let mut app = app_at(40.0);
-    let to = goto(&mut app, MEDIUM, path_is("/api/sdk/init"));
+    let to = goto(&mut app, MEDIUM, path_is("/api/v1/sessions"));
     press(&mut app, MEDIUM, &format!("{to}w"));
     assert_eq!(app.overlay, Overlay::Prompt);
     let default = app.prompt.as_ref().unwrap().input.value().to_string();
-    assert!(default.ends_with("init.json"), "{default}");
-    let body = dir.join("init.json");
+    assert!(default.ends_with("sessions.json"), "{default}");
+    let body = dir.join("sessions.json");
     app.prompt.as_mut().unwrap().input = tui_input::Input::new(body.display().to_string());
     app.finish_prompt();
     let saved = std::fs::read_to_string(&body).unwrap();
@@ -687,7 +687,7 @@ fn save_a_body_and_export_har() {
     let doc: serde_json::Value = serde_json::from_slice(&std::fs::read(&har).unwrap()).unwrap();
     let entries = doc["log"]["entries"].as_array().unwrap();
     assert_eq!(entries.len(), app.view_store().len());
-    let init = entries.iter().find(|e| e["request"]["url"].as_str().unwrap().ends_with("/api/sdk/init")).unwrap();
+    let init = entries.iter().find(|e| e["request"]["url"].as_str().unwrap().ends_with("/api/v1/sessions")).unwrap();
     assert_eq!(init["request"]["method"], "POST");
     assert!(init["request"]["postData"]["text"].as_str().unwrap().starts_with('{'));
     assert!(init["_trafficPolice"]["thread"]["name"].is_string());
@@ -756,9 +756,9 @@ fn half_page_jumps_move_the_view_and_the_cursor() {
     press(&mut app, MEDIUM, "<C-d>");
     assert_eq!(app.list_cursor, 3);
 
-    // the body box: init's response body is 18 lines
+    // the body box: the session response is 18 lines
     app.prefs.scroll = 0;
-    let to = goto(&mut app, MEDIUM, path_is("/api/sdk/init"));
+    let to = goto(&mut app, MEDIUM, path_is("/api/v1/sessions"));
     press(&mut app, MEDIUM, &format!("{to}<Enter><S-Tab>"));
     assert_eq!(app.focus, Focus::Preview);
     let half = app.explorer.height / 2;
@@ -779,14 +779,14 @@ fn half_page_jumps_move_the_view_and_the_cursor() {
 fn the_body_box_shows_the_request_body_on_its_second_tab() {
     use traffic_police_tui::explorer::BodyTab;
     let mut app = app_at(40.0);
-    let to = goto(&mut app, MEDIUM, path_is("/api/sdk/init"));
+    let to = goto(&mut app, MEDIUM, path_is("/api/v1/sessions"));
     let text = press(&mut app, MEDIUM, &format!("{to}<Enter>"));
     assert!(text.contains("Response body") && text.contains("Request body"), "{text}");
     assert_eq!(app.explorer.tab, BodyTab::Response);
-    // init posts {"sdkVersion":"2.4.1","platform":"android"}
+    // the session request posts {"appVersion":"3.8.0","platform":"android"}
     let text = press(&mut app, MEDIUM, "b");
     assert_eq!(app.explorer.tab, BodyTab::Request);
-    assert!(text.contains("\"sdkVersion\": \"2.4.1\""), "{text}");
+    assert!(text.contains("\"appVersion\": \"3.8.0\""), "{text}");
     // the tab stays when another request is opened
     press(&mut app, MEDIUM, "<Esc>j<Enter>");
     assert_eq!(app.explorer.tab, BodyTab::Request);
@@ -802,7 +802,7 @@ fn the_body_box_shows_the_request_body_on_its_second_tab() {
 fn long_rows_wrap_and_enter_still_acts_on_the_whole_row() {
     use traffic_police_tui::detail;
     let mut app = app_at(40.0);
-    let to = goto(&mut app, MEDIUM, path_is("/api/sdk/init"));
+    let to = goto(&mut app, MEDIUM, path_is("/api/v1/sessions"));
     let text = press(&mut app, MEDIUM, &format!("{to}<Enter>"));
     let txn = app.selected.unwrap();
     let doc = detail::build_doc(&mut app);
@@ -862,7 +862,7 @@ fn body_lines_wrap_in_the_body_box_and_the_tabs() {
 #[test]
 fn search_finds_text_across_the_break_of_a_wrapped_row() {
     let mut app = app_at(40.0);
-    let to = goto(&mut app, MEDIUM, path_is("/api/sdk/init"));
+    let to = goto(&mut app, MEDIUM, path_is("/api/v1/sessions"));
     let text = press(&mut app, MEDIUM, &format!("{to}<Enter>"));
     // the token row's first two rows on screen, from where the row starts
     let lines: Vec<Vec<char>> = text.lines().map(|l| l.chars().collect()).collect();

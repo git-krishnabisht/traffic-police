@@ -497,15 +497,15 @@ mod tests {
 
     #[test]
     fn url_parts_and_name() {
-        let u = Url::parse("https://deepid.example.app/api/sdk/sim-binding/status/?sessionId=abc&x=1");
+        let u = Url::parse("https://api.example.com/api/v1/orders/status/?orderId=abc&x=1");
         assert_eq!(u.scheme, "https");
-        assert_eq!(u.host, "deepid.example.app");
+        assert_eq!(u.host, "api.example.com");
         assert_eq!(u.port, None);
         assert_eq!(u.effective_port(), Some(443));
-        assert_eq!(u.path, "/api/sdk/sim-binding/status/");
-        assert_eq!(u.query.as_deref(), Some("sessionId=abc&x=1"));
-        assert_eq!(u.name(), "status?sessionId=abc&x=1");
-        assert_eq!(u.query_pairs(), vec![("sessionId".into(), "abc".into()), ("x".into(), "1".into())]);
+        assert_eq!(u.path, "/api/v1/orders/status/");
+        assert_eq!(u.query.as_deref(), Some("orderId=abc&x=1"));
+        assert_eq!(u.name(), "status?orderId=abc&x=1");
+        assert_eq!(u.query_pairs(), vec![("orderId".into(), "abc".into()), ("x".into(), "1".into())]);
 
         let u = Url::parse("http://10.0.2.2:8080");
         assert_eq!((u.host.as_str(), u.port, u.path.as_str()), ("10.0.2.2", Some(8080), "/"));

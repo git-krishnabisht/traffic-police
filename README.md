@@ -71,10 +71,13 @@ platform-tools); traffic-police talks to the adb server and starts it if it is n
 traffic-police demo
 ```
 
-A pretend app runs an identity-verification SDK session (init, challenge, attest, enroll, then a
-status poll every 1.5 s until a rule forces a verdict), plus telemetry, image loads, a redirect,
-a 404, a 500, a timeout, a cancelled call, a multipart upload, a gzip JSON body, a protobuf body
-and a 5 MB download, on several threads.
+A pretend shop app (`com.example.shop`, a debug build talking to a dev server on
+`http://localhost:8080` and to example.com hosts) signs in, opens a session, lists products, adds
+one to the cart and checks out, then polls the order's status every 1.5 s until a rule marks the
+payment captured. Around that: telemetry, a notifications poll with gzip JSON, an avatar image, a
+redirect, a 404, a 500 HTML page, a timeout, a cancelled call, a multipart review upload, a
+protobuf body and a 5 MB download, on several threads. Nothing leaves your machine: the traffic
+is made up.
 
 | Option | What it does |
 |---|---|
@@ -423,25 +426,25 @@ next to `project.toml` (the nearest one at or above the directory you start from
 version = 1
 
 [[rule]]
-id = "force-pass"
-name = "Force verdict pass"
+id = "force-paid"
+name = "Force payment captured"
 
   [rule.match]
-  host = "*.example.app"             # a glob: * stays between dots, ** crosses them
-  path = "/api/sdk/sim-binding/status/"
+  host = "*.example.com"             # a glob: * stays between dots, ** crosses them
+  path = "/api/v1/orders/status"
 
   [[rule.action]]
   type = "replace"                   # in the body's text; gzip and deflate are handled
-  find = '"verdict":"pending"'
-  with = '"verdict":"pass"'
+  find = '"payment":"pending"'
+  with = '"payment":"captured"'
 
 [[rule]]
-id = "enroll-down"
+id = "checkout-down"
 enabled = false
 
   [rule.match]
   methods = ["POST"]
-  path = "/api/sdk/enroll"
+  path = "/api/v1/checkout"
 
   [[rule.action]]
   type = "fail"

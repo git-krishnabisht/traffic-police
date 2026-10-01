@@ -2,8 +2,8 @@
 source: crates/tui/tests/snapshots.rs
 expression: "detail(40.0, LARGE, modified(), \"G\")"
 ---
- traffic-police  Pixel 8 [demo]  com.example.deepid_example  pid 4312  ● LIVE  ✎ 1 rule active                                              60 requests · 5.0 MB in · 42 KB out · 2 failed · 12 dropped
-╭─ Network · all app traffic ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── ━ Receiving 2.3 KB/s   ━ Sending 1.6 KB/s ─╮
+ traffic-police  Pixel 8 [demo]  com.example.shop  pid 4312  ● LIVE  ✎ 1 rule active                                                        60 requests · 5.0 MB in · 40 KB out · 2 failed · 12 dropped
+╭─ Network · all app traffic ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── ━ Receiving 2.3 KB/s   ━ Sending 1.8 KB/s ─╮
 │ 1.0 MB/s                                          ┊                                                                                                                                                  │
 │                             ┏━━┓   ┏━━┓     ┏━━┓  ┏━━┓  ┏━━┓                                                                                                                                         │
 │                           ┏━┛  ┗━━━┛  ┗━━━━━┛  ┗━━┛  ┗━━┛  ┗━━┓                                                                                                                                      │
@@ -13,42 +13,42 @@ expression: "detail(40.0, LARGE, modified(), \"G\")"
 │                          ┃                        ┊               ┃                                                                                                                                  │
 │                          ┃                        ┊               ┃                                                                                                                                  │
 │                          ┃                        ┊               ┗━━━━━━━━━━━┓                                                                                                                      │
-│                          ┃                        ┊                           ┃                                                                                                                      │
-│        0 ━━━━━━━━━━━━━━━━┛━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ │
+│                          ┃                        ┊                           ┗┓                                                                                                                     │
+│        0 ━━━━━━━━━━━━━━━━┛━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ │
 │          00:10.000                      00:15.000                       00:20.000                      00:25.000                      00:30.000                      00:35.000                       │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-╭─ Requests 60 ─ Connection ─ Thread ─ Rules ────────────────────────────────────────────────────────────────╮ ╭─ status?sessionId=session_15… ─ Response body (as delivered) ─ Request body ──────────╮
+╭─ Requests 60 ─ Connection ─ Thread ─ Rules ────────────────────────────────────────────────────────────────╮ ╭─ status?orderId=ord_15bce3a5… ─ Response body (as delivered) ─ Request body ──────────╮
 │ Name                                     Size  Type      Status         Time   Timeline                    │ │ {                                                                                     │
-│ monitor                                 302 B  json      200          1.41 s                               │ │   "ok": true,                                                                         │
-│ events                                   17 B  json      200          1.14 s                               │ │   "sessionId": "session_15bce3a5a963c9fde0ebe700e9d76981",                            │
-│ liveness-model-v3.json                  150 B  json      404          346 ms                               │ │   "deepid": "-fWdPR-silxdhEdA5s951RnzPITRjkkelext-Qs",                                │
-│ enroll                                   72 B  json      200          2.08 s                               │ │   "mobile": null,                                                                     │
-│ documents                                93 B  json      200          515 ms                               │ │   "status": "complete",                                                               │
-│ monitor                                 302 B  json      200          1.50 s                              ▐│ │   "verdict": "pass",                                                                  │
-│ report                                  305 B  html      500          219 ms                              ▐│ │   "riskScore": 0,                                                                     │
-│ lookup?fields=country,region,carri…     101 B  json      200          507 ms                              ▐│ │   "createdAt": "2026-09-29T05:04:51.000Z",                                            │
-│ monitor                                 302 B  json      200          1.49 s   ▉                          ▐│ │   "completedAt": null,                                                                │
-│ status?sessionId=session_15bce3a5a…     263 B  json      200          326 ms                              ▐│ │   "enrollmentSim": null                                                               │
-│ threshold                                                failed       10.0 s   █████████▏                 ▐│ ╰───────────────────────────────────────────────────────────────────────────────────────╯
-│ events                                   17 B  json      200          970 ms   █▏                         ▐│ ╭─ Overview ─ Response ─ Request ─ Call Stack ──────────────────────────────────────────╮
-│ status?sessionId=session_15bce3a5a…     263 B  json      200          174 ms    ▏                         ▐│ │ Response size     264 B                                                               │
-│ fonts.json                                               canceled     380 ms    ▏                         ▐│ │ Token             JWT HS256 · expires 06:10:00.000 (in 59 min) · sub user_4821 ·      │
-│ monitor                                 302 B  json      200          1.44 s    ▐▋                        ▐│ │                   iss https://auth.example.app  in request header Authorization ·     │
-│ face-liveness-v3.tflite                5.0 MB  binary    200          6.38 s     █████▉                   ▐│ │                   Enter decodes                                                       │
-│ status?sessionId=session_15bce3a5a…     263 B  json      200          284 ms     ▏                        ▐│ │ Initiating thread DefaultDispatcher-worker-3  id 60 · call site                       │
-│ monitor                                 302 B  json      200          1.56 s      █▌                      ▐│ │ Client            OkHttp 4.12.0                                                       │
-│ ! events                                 17 B  json      200          971 ms      ▐▌                      ▐│ │ Protocol          h2                                                                  │
-│ status?sessionId=session_15bce3a5a…     263 B  json      200          358 ms      ▕                       ▐│ │ Remote address    34.93.12.207:443  connection c-2 (reused)                           │
-│ monitor                                 302 B  json      200          1.72 s        █▌                    ▐│ │ TLS               TLSv1.3 · TLS_AES_128_GCM_SHA256                                    │
-│ status?sessionId=session_15bce3a5a…     263 B  json      200          381 ms        ▏                      │ │ Certificate       CN=*.example.app · issued by WE1                                    │
-│ status?sessionId=session_15bce3a5a…     263 B  json      200          225 ms         ▏                     │ │ Started           00:21.632  (05:10:21.632)                                           │
-│ events                                   17 B  json      200          1.13 s         ▐▌                    │ │ Duration          327 ms                                                              │
-│ monitor                                 302 B  json      200          1.38 s         ▕█                    │ │                                                                                       │
-│ status?sessionId=session_15bce3a5a…     263 B  json      200          259 ms          ▕                    │ │ Timing            ███████████████████████████████████████████████████████████████████ │
-│ monitor                                 302 B  json      200          1.67 s           ▐█                  │ │                   queued 500 µs · dns — · connect — · send 100 µs · wait 302 ms ·     │
-│ status?sessionId=session_15bce3a5a…     263 B  json      200          158 ms            ▏                  │ │                   receive 24 ms                                                       │
-│ events                                   17 B  json      200          995 ms             █▏                │ │                                                                                       │
-│ monitor                                 302 B  json      200          1.65 s             ▐█                │ │ Rule              ✎ "Force verdict pass" changed this response: body edited (1 match),│
-│ ✎ status?sessionId=session_15bce3a…     264 B  json      200          327 ms             ▏                 │ │                   set Cache-Control · o in Response shows the original                │
+│ notifications                           306 B  json      200          1.65 s                               │ │   "ok": true,                                                                         │
+│ events                                   17 B  json      200          1.09 s                               │ │   "orderId": "ord_15bce3a5a963c9fd",                                                  │
+│ promo-banner-v3.json                    148 B  json      404          277 ms                               │ │   "status": "confirmed",                                                              │
+│ reviews                                  86 B  json      200          516 ms                               │ │   "payment": "captured",                                                              │
+│ notifications                           306 B  json      200          1.72 s                               │ │   "items": 1,                                                                         │
+│ checkout                                 99 B  json      200          2.33 s                              ▐│ │   "eta": null,                                                                        │
+│ cancel                                  305 B  html      500          222 ms                              ▐│ │   "updatedAt": "2026-09-29T05:04:51.000Z"                                             │
+│ lookup?fields=country,region,curre…     120 B  json      200          291 ms                              ▐│ │ }                                                                                     │
+│ notifications                           306 B  json      200          1.42 s   █                          ▐│ │                                                                                       │
+│ events                                   17 B  json      200          958 ms   ▌                          ▐│ │                                                                                       │
+│ status?orderId=ord_15bce3a5a963c9fd     146 B  json      200          329 ms   ▏                          ▐│ ╰───────────────────────────────────────────────────────────────────────────────────────╯
+│ recommendations?productId=p_1042                         failed       10.0 s   █████████▏                 ▐│ ╭─ Overview ─ Response ─ Request ─ Call Stack ──────────────────────────────────────────╮
+│ fonts.json                                               canceled     380 ms    ▏                         ▐│ │ Request type      —                                                                   │
+│ notifications                           306 B  json      200          1.50 s    ▐▊                        ▐│ │ Response type     application/json; charset=utf-8                                     │
+│ status?orderId=ord_15bce3a5a963c9fd     146 B  json      200          421 ms    ▏                         ▐│ │ Response size     145 B                                                               │
+│ catalog-offline-v12.bin                5.0 MB  binary    200          6.38 s     █████▉                   ▐│ │ Token             JWT HS256 · expires 06:10:00.000 (in 59 min) · sub user_1024 ·      │
+│ status?orderId=ord_15bce3a5a963c9fd     146 B  json      200          282 ms     ▕                        ▐│ │                   iss https://auth.example.com  in request header Authorization ·     │
+│ ! events                                 17 B  json      200          1.04 s      █                       ▐│ │                   Enter decodes                                                       │
+│ notifications                           306 B  json      200          1.77 s      █▊                      ▐│ │ Initiating thread DefaultDispatcher-worker-3  id 60 · call site                       │
+│ status?orderId=ord_15bce3a5a963c9fd     146 B  json      200          134 ms       ▏                      ▐│ │ Client            OkHttp 4.12.0                                                       │
+│ notifications                           306 B  json      200          1.44 s        █▎                    ▐│ │ Protocol          http/1.1                                                            │
+│ status?orderId=ord_15bce3a5a963c9fd     146 B  json      200          129 ms        ▏                      │ │ Remote address    127.0.0.1:8080  connection c-2 (reused)                             │
+│ events                                   17 B  json      200          1.30 s        ▕█▏                    │ │ Started           00:22.086  (05:10:22.086)                                           │
+│ notifications                           306 B  json      200          1.45 s         ▕█                    │ │ Duration          313 ms                                                              │
+│ status?orderId=ord_15bce3a5a963c9fd     146 B  json      200          162 ms         ▕                     │ │                                                                                       │
+│ status?orderId=ord_15bce3a5a963c9fd     146 B  json      200          359 ms           ▏                   │ │ Timing            ███████████████████████████████████████████████████████████████████ │
+│ notifications                           306 B  json      200          1.70 s           ▐█▏                 │ │                   queued 500 µs · dns — · connect — · send 100 µs · wait 303 ms ·     │
+│ events                                   17 B  json      200          1.22 s           ▕█                  │ │                   receive 9 ms                                                        │
+│ status?orderId=ord_15bce3a5a963c9fd     146 B  json      200          253 ms            ▏                  │ │                                                                                       │
+│ notifications                           306 B  json      200          1.32 s             ▐▌                │ │ Rule              ✎ "Force payment captured" changed this response: body edited (1    │
+│ ✎ status?orderId=ord_15bce3a5a963c…     145 B  json      200          313 ms             ▕▏                │ │                   match), set Cache-Control · o in Response shows the original        │
 ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ ╰───────────────────────────────────────────────────────────────────────────────────────╯
  ←→ tabs   ↑↓ move   / search   nN next/previous   y copy   w save   Enter fold   p parsed/source   | jq   Esc close   ? help                                                ⚠ studio inspector present

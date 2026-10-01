@@ -2,4 +2,4 @@
 source: crates/tui/tests/snapshots.rs
 expression: "header(&mut app_at(12.0),\nConnectionStatus::Detached(\"the app exited · data kept\".into()))"
 ---
- traffic-police  Pixel 8 [demo]  com.example.deepid_example  pid 4312  ● DETACHED  the app exited · data kept  ✎ 1 rule active  26 requests
+ traffic-police  Pixel 8 [demo]  com.example.shop  pid 4312  ● DETACHED  the app exited · data kept  ✎ 1 rule active            26 requests
