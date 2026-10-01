@@ -8,7 +8,7 @@ expression: "frame(12.0, SMALL, \"?\")"
 │                                                               ┊        ┏┓                        │
 │                                                               ┊        ┃┃                        │
 │ 8.╭ keys ────────────────────────────────────────────────────────────────────────────────────╮   │
-│   │ Move     ↑/k up · ↓/j down · ←/h left · →/l right · g/Home top · G/End bottom            │┓  │
+│   │ Move     ↑/k up · ↓/j down · ←/h left · →/l right · g/Home top · G/End/Ctrl+g bottom     │┓  │
 │   │          PgUp page up · PgDn page down · Ctrl+u/Ctrl+p ½ page up · Ctrl+d ½ page down    │┗━ │
 │   │          Enter open/decode · Esc back · Tab next panel · Shift+Tab previous panel        │┛  │
 │   │ Views    1 connections · 2 threads · 3 rules                                             │   │

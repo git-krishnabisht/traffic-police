@@ -21,6 +21,7 @@
 //! body = "response"           # the body box's tab: response or request (b switches)
 //! body_height = 40            # the body box's share of the detail pane, percent (15-85; 0 hides it)
 //! scroll = 0                  # lines Ctrl+D and Ctrl+U move (0: half the box, like Neovim)
+//! follow = true               # follow new requests while the cursor is on the newest
 //! hints = true                # key hints in the footer
 //! clipboard = "auto"          # auto, osc52, native, off
 //! images = true               # false draws images with half-blocks (as --no-images)
@@ -120,6 +121,7 @@ pub struct Ui {
     pub body: Option<Spanned<String>>,
     pub body_height: Option<Spanned<u16>>,
     pub scroll: Option<Spanned<u16>>,
+    pub follow: Option<bool>,
     pub hints: Option<bool>,
 }
 
@@ -494,6 +496,9 @@ impl Loaded {
         if let Some(n) = number(&ui.scroll).filter(|n| SCROLL_RANGE.contains(n)) {
             p.scroll = n;
         }
+        if let Some(f) = ui.follow {
+            p.follow = f;
+        }
         if let Some(n) = number(&ui.graph_height).filter(|n| GRAPH_HEIGHT_RANGE.contains(n)) {
             p.graph_height = Some(n);
         }
@@ -691,6 +696,7 @@ tab = "call-stack"
 body = "request"
 body_height = 0
 scroll = 10
+follow = false
 hints = false
 "#;
         let l = parse(text);
@@ -698,7 +704,7 @@ hints = false
         let mut app = App::new(traffic_police_core::SessionStore::new(), Theme::default());
         l.apply_ui(&mut app);
         let p = &app.prefs;
-        assert_eq!((p.scroll, p.hints), (10, false));
+        assert_eq!((p.scroll, p.follow, p.hints), (10, false, false));
         assert_eq!((p.graph_height, p.body_height, p.side_by_side), (Some(0), 0, 200));
         assert_eq!((app.view, app.detail.tab, app.explorer.tab), (View::Threads, Tab::CallStack, BodyTab::Request));
         assert_eq!(app.graph_source, GraphSource::Captured);

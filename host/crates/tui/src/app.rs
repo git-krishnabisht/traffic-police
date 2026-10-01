@@ -196,6 +196,8 @@ impl Default for DetailState {
 pub struct Prefs {
     /// Lines a half-page jump (Ctrl+D, Ctrl+U) moves; 0 is half the box, like Neovim's 'scroll'.
     pub scroll: u16,
+    /// The list follows new requests while its cursor is on the newest.
+    pub follow: bool,
     /// Rows of the traffic graph: `None` sizes it to the screen (8 to 14); 0 hides it.
     pub graph_height: Option<u16>,
     /// The body box's share of the detail pane, in percent; 0 hides the box.
@@ -210,6 +212,7 @@ impl Default for Prefs {
     fn default() -> Self {
         Prefs {
             scroll: 0,
+            follow: true,
             graph_height: None,
             body_height: 40,
             side_by_side: crate::ui::SIDE_BY_SIDE_WIDTH,
@@ -422,6 +425,9 @@ pub struct App {
     last_click: Option<(Instant, u16, u16)>,
     drag: Option<Drag>,
     follow_list: bool,
+    /// The user went to the bottom (G) with a request open: the list, and so the open request,
+    /// follows new ones until the cursor moves away.
+    follow_open: bool,
 }
 
 impl App {
@@ -495,6 +501,7 @@ impl App {
             last_click: None,
             drag: None,
             follow_list: true,
+            follow_open: false,
         }
     }
 
@@ -593,7 +600,8 @@ impl App {
             self.list_offset = 0;
             return;
         }
-        if self.follow_list && !self.detail_open && !frozen {
+        let following = self.prefs.follow && self.follow_list && (!self.detail_open || self.follow_open);
+        if following && !frozen {
             self.list_cursor = len - 1;
         } else if let Some(sel) = self.selected
             && let Some(pos) = rows.position(sel)
@@ -601,8 +609,13 @@ impl App {
             self.list_cursor = pos;
         }
         self.list_cursor = self.list_cursor.min(len - 1);
-        if self.selected.is_none() || (self.follow_list && !self.detail_open) {
-            self.selected = Some(rows.rows()[self.list_cursor].txn());
+        if self.selected.is_none() || following {
+            let txn = rows.rows()[self.list_cursor].txn();
+            if self.selected != Some(txn) && self.detail_open {
+                // the open request follows the newest: start at its top
+                self.reset_detail_position();
+            }
+            self.selected = Some(txn);
         }
         self.clamp_list_offset();
     }
@@ -699,16 +712,24 @@ impl App {
         let row = row.min(len - 1);
         self.list_cursor = row;
         self.follow_list = row == len - 1 && self.is_live();
+        if !self.follow_list {
+            self.follow_open = false;
+        }
         let txn = self.view_rows().rows()[row].txn();
         if self.selected != Some(txn) {
             self.selected = Some(txn);
-            self.detail.cursor = 0;
-            self.detail.scroll = 0;
-            self.detail.hscroll = 0;
-            self.detail.expanded_runs.clear();
-            self.detail.original = false;
+            self.reset_detail_position();
         }
         self.clamp_list_offset();
+    }
+
+    /// Another request in the detail pane starts at its top.
+    fn reset_detail_position(&mut self) {
+        self.detail.cursor = 0;
+        self.detail.scroll = 0;
+        self.detail.hscroll = 0;
+        self.detail.expanded_runs.clear();
+        self.detail.original = false;
     }
 
     /// Lines a half-page jump moves in a box `visible` rows tall (`[ui] scroll`, else half).
@@ -729,6 +750,7 @@ impl App {
     fn open_detail(&mut self) {
         if self.selected.is_some() {
             self.detail_open = true;
+            self.follow_open = false;
             self.focus = Focus::Detail;
         }
     }
@@ -1427,7 +1449,11 @@ impl App {
                 self.select_row(if down { cur + n } else { cur.saturating_sub(n) });
             }
             Action::Top => self.select_row(0),
-            Action::Bottom => self.select_row(len - 1),
+            Action::Bottom => {
+                self.select_row(len - 1);
+                // at the bottom, the list follows new requests again, also with a request open
+                self.follow_open = self.follow_list && self.detail_open;
+            }
             Action::Activate | Action::Right => {
                 let row = self.view_rows().rows()[cur].clone();
                 match row {

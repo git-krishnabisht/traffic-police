@@ -243,7 +243,7 @@ traffic-police tail --mode attach -p com.example.app       # the commands withou
 | Call Stack | `Enter` on a framework group expands it · `Enter` on an app frame opens `$EDITOR` there (needs source roots, below) |
 | Live | `Space` pause or resume recording · `F` freeze the view (capture continues) · `L` back to live · `+` `-` zoom · `0` reset zoom · `v` select a time range (`v` or `Enter` again to apply) |
 | Graph | `T` whole-app traffic or captured requests · `t` time since start or wall clock · `←` `→` move when the graph has focus |
-| List | `c` collapse repeated calls · `s` sort by the next column · `S` reverse the sort · `C` choose columns |
+| List | New requests are followed while the cursor is on the newest; `G` (or `End`, `Ctrl+G`) goes back to it and follows again, also with a request open · `c` collapse repeated calls · `s` sort by the next column · `S` reverse the sort · `C` choose columns |
 | Find | `/` in the list: the filter bar ([language below](#filters)) · `/` in the detail pane: search the tab (`n` `N` next and previous match) · `m` pin a request (`is:pinned` lists pins) |
 | Copy and save | `y` copy: as cURL, the URL, headers, one header, a body, the JSON value at the cursor · `w` save a body to a file · `e` export: HAR (all, listed or selected requests) or a session file |
 | Compare | `d` marks a request (◆), `d` on another compares them: request and status lines, headers (`s` in order or as sets), bodies (JSON with keys sorted); `n` `N` step through changes, `y` copies the diff |
@@ -332,6 +332,7 @@ tab = "overview"              # the tab a request opens on: overview, response, 
 body = "response"             # the body box's tab at start: response or request (b switches)
 body_height = 40              # the body box's share of the detail pane, percent (15-85), 0 hides it
 scroll = 0                    # lines Ctrl+D and Ctrl+U move: 0 is half the box, as in Neovim
+follow = true                 # follow new requests while the cursor is on the newest
 hints = true                  # the key hints in the footer
 clipboard = "auto"            # auto, osc52, native, off
 images = true                 # false: half-blocks (as --no-images)

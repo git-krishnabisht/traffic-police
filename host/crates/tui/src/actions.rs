@@ -120,7 +120,14 @@ pub const ACTIONS: &[Info] = &[
     info!(Left, "left", Move, "left", "Left: previous tab, collapse a group, earlier on the graph", ["left", "h"]),
     info!(Right, "right", Move, "right", "Right: next tab, expand a group, later on the graph", ["right", "l"]),
     info!(Top, "top", Move, "top", "Go to the top", ["g", "home"]),
-    info!(Bottom, "bottom", Move, "bottom", "Go to the bottom", ["G", "end"]),
+    info!(
+        Bottom,
+        "bottom",
+        Move,
+        "bottom",
+        "Go to the bottom; in the list, follow new requests again",
+        ["G", "end", "ctrl+g"]
+    ),
     info!(PageUp, "page-up", Move, "page up", "Page up", ["pgup"]),
     info!(PageDown, "page-down", Move, "page down", "Page down", ["pgdn"]),
     info!(
@@ -415,10 +422,11 @@ mod tests {
         assert_eq!(m.action(&ev(KeyCode::Char('G'), KeyModifiers::NONE)), Some(Action::Bottom));
         assert_eq!(m.action(&ev(KeyCode::BackTab, KeyModifiers::SHIFT)), Some(Action::FocusPrev));
         assert_eq!(m.key_label(Action::Pause), "Space");
-        // Neovim's half-page jumps (Ctrl+P too)
+        // Neovim's half-page jumps (Ctrl+P too), and Ctrl+G to the bottom
         assert_eq!(m.action(&ev(KeyCode::Char('d'), KeyModifiers::CONTROL)), Some(Action::HalfPageDown));
         assert_eq!(m.action(&ev(KeyCode::Char('u'), KeyModifiers::CONTROL)), Some(Action::HalfPageUp));
         assert_eq!(m.action(&ev(KeyCode::Char('p'), KeyModifiers::CONTROL)), Some(Action::HalfPageUp));
+        assert_eq!(m.action(&ev(KeyCode::Char('g'), KeyModifiers::CONTROL)), Some(Action::Bottom));
         assert_eq!(m.action(&ev(KeyCode::Char('b'), KeyModifiers::NONE)), Some(Action::BodyTab));
     }
 

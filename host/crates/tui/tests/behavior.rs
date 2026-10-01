@@ -693,6 +693,50 @@ fn save_a_body_and_export_har() {
 }
 
 #[test]
+fn going_to_the_bottom_follows_new_requests_with_a_request_open() {
+    let mut app = app_at(5.0);
+    let mut session = DemoSession::new(DemoConfig::default(), app.store.source_ids());
+    for t in 1..=200 {
+        app.ingest(session.advance(t * 25_000_000));
+    }
+    render_text(&mut app, MEDIUM.0, MEDIUM.1);
+    // open a request above the newest: it stays while new ones arrive
+    press(&mut app, MEDIUM, "kk<Enter>");
+    let picked = app.selected;
+    for t in 201..=300 {
+        app.ingest(session.advance(t * 25_000_000));
+    }
+    app.now_override = Some(DemoSession::clock_at(7_500_000_000));
+    render_text(&mut app, MEDIUM.0, MEDIUM.1);
+    assert_eq!(app.selected, picked, "an open request stays put");
+    // back to the list, to the bottom: the open request follows the newest from then on
+    press(&mut app, MEDIUM, "<Tab><Tab>");
+    assert_eq!(app.focus, Focus::List);
+    press(&mut app, MEDIUM, "G");
+    for t in 301..=400 {
+        app.ingest(session.advance(t * 25_000_000));
+    }
+    app.now_override = Some(DemoSession::clock_at(10 * NS_PER_SEC));
+    render_text(&mut app, MEDIUM.0, MEDIUM.1);
+    let last = app.view_rows().len() - 1;
+    assert_eq!(app.list_cursor, last, "the cursor followed the new requests");
+    assert_eq!(app.selected, Some(app.view_rows().rows()[last].txn()));
+    assert!(app.detail_open);
+    // moving away stops it
+    press(&mut app, MEDIUM, "k");
+    let picked = app.selected;
+    for t in 401..=480 {
+        app.ingest(session.advance(t * 25_000_000));
+    }
+    app.now_override = Some(DemoSession::clock_at(12 * NS_PER_SEC));
+    render_text(&mut app, MEDIUM.0, MEDIUM.1);
+    assert_eq!(app.selected, picked);
+    // Ctrl+G goes to the bottom too
+    press(&mut app, MEDIUM, "<C-g>");
+    assert_eq!(app.list_cursor, app.view_rows().len() - 1);
+}
+
+#[test]
 fn half_page_jumps_move_the_view_and_the_cursor() {
     let mut app = app_at(40.0);
     render_text(&mut app, MEDIUM.0, MEDIUM.1);
