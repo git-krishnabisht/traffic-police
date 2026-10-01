@@ -1051,7 +1051,6 @@ fn draw_rules(app: &mut App, r: Rect, buf: &mut Buffer) {
         ack.as_ref().filter(|a| active.as_ref().is_some_and(|s| a.version.as_deref() == Some(s.version.as_str())));
     let app_error =
         |id: &str| ack_current.and_then(|a| a.errors.iter().find(|e| e.rule == id)).map(|e| e.message.clone());
-    let foot_y = r.y + r.height.saturating_sub(1);
     let footer = match (&app.rules_file, app.rules_dir.is_some()) {
         (Some(f), _) if !f.is_valid() => {
             let file_wide: Vec<String> =
@@ -1101,7 +1100,15 @@ fn draw_rules(app: &mut App, r: Rect, buf: &mut Buffer) {
             t.faint(),
         )],
     };
-    text(buf, r.x, foot_y, r.width, footer);
+    // the footer at the bottom, wrapped (`[ui] wrap`) on up to a third of the view
+    let wrapping = app.prefs.wrap;
+    let footer = Line::from(footer);
+    let foot_rows = if wrapping { crate::wrap::wrap_line(&footer, usize::from(r.width), 2) } else { vec![footer] };
+    let n = foot_rows.len().min(usize::from((r.height / 3).max(1)));
+    let foot_y = r.y + r.height.saturating_sub(n as u16);
+    for (k, l) in foot_rows.into_iter().take(n).enumerate() {
+        text(buf, r.x, foot_y + k as u16, r.width, l.spans);
+    }
     if rows.is_empty() {
         return;
     }
@@ -1167,11 +1174,17 @@ fn draw_rules(app: &mut App, r: Rect, buf: &mut Buffer) {
     let dw = r.width.saturating_sub(list_w + 3);
     let row = &rows[cursor];
     let mut y = r.y;
+    // each line wrapped to the panel (`[ui] wrap`), its later rows two columns past its indent
     let mut line = |spans: Vec<Span<'static>>| {
-        if y < foot_y {
-            text(buf, dx, y, dw, spans);
+        let l = Line::from(spans);
+        let lead = l.spans.first().map_or(0, |s| s.content.len() - s.content.trim_start_matches(' ').len());
+        let rows = if wrapping { crate::wrap::wrap_line(&l, usize::from(dw).max(1), lead + 2) } else { vec![l] };
+        for row in rows {
+            if y < foot_y {
+                text(buf, dx, y, dw, row.spans);
+            }
+            y += 1;
         }
-        y += 1;
     };
     line(vec![Span::styled(row.name.clone().unwrap_or_else(|| row.id.clone()), t.title())]);
     let keys = if app.rules_file.is_some() { " · Space turns it " } else { "" };
@@ -1310,24 +1323,35 @@ fn draw_menu(app: &App, area: Rect, buf: &mut Buffer) {
         .max()
         .unwrap_or(20)
         .clamp(44, area.width.saturating_sub(8));
-    let r = centered(area, w, menu.items.len() as u16 + 4);
+    // each label after its key, wrapped under itself (`[ui] wrap`; else cut)
+    let label_w = usize::from(w.saturating_sub(7)).max(1);
+    let labels: Vec<Vec<Line>> = menu
+        .items
+        .iter()
+        .map(|item| match app.prefs.wrap {
+            true => crate::wrap::wrap_line(&Line::styled(item.label.clone(), t.text()), label_w, 0),
+            false => vec![Line::styled(truncate(&item.label, label_w), t.text())],
+        })
+        .collect();
+    let rows: usize = labels.iter().map(Vec::len).sum();
+    let r = centered(area, w, (rows as u16 + 4).min(area.height));
     draw_box(buf, r, &menu.title, t);
-    for (i, item) in menu.items.iter().enumerate() {
-        let y = r.y + 1 + i as u16;
+    let mut y = r.y + 1;
+    for (i, (item, lines)) in menu.items.iter().zip(&labels).enumerate() {
         let style = if i == menu.cursor { t.selected() } else { Style::default() };
-        if i == menu.cursor {
-            fill(buf, Rect { x: r.x + 1, y, width: r.width - 2, height: 1 }, style);
+        for (k, line) in lines.iter().enumerate() {
+            if y + 2 >= r.y + r.height {
+                break;
+            }
+            if i == menu.cursor {
+                fill(buf, Rect { x: r.x + 1, y, width: r.width - 2, height: 1 }, style);
+            }
+            let key = if k == 0 { format!("{}  ", item.key) } else { "   ".into() };
+            let mut spans = vec![Span::styled(key, t.accent().add_modifier(Modifier::BOLD).patch(style))];
+            spans.extend(line.spans.iter().map(|s| Span::styled(s.content.clone(), s.style.patch(style))));
+            text(buf, r.x + 2, y, r.width - 4, spans);
+            y += 1;
         }
-        text(
-            buf,
-            r.x + 2,
-            y,
-            r.width - 4,
-            vec![
-                Span::styled(format!("{}  ", item.key), t.accent().add_modifier(Modifier::BOLD).patch(style)),
-                Span::styled(truncate(&item.label, (r.width - 7) as usize), t.text().patch(style)),
-            ],
-        );
     }
     text(
         buf,

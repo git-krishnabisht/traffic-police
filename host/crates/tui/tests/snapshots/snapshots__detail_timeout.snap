@@ -29,16 +29,16 @@ expression: "detail(40.0, MEDIUM, path_ends(\"/threshold\"), \"\")"
 │ attest                 180 B json      200          2.75 s                ││ Request           threshold                                 │
 │ metrics                  6 B protobuf  200          224 ms                ││ Method            GET                                       │
 │ monitor                302 B json      200          1.41 s                ││ Status            SocketTimeoutException: timeout           │
-│ events                  17 B json      200          1.14 s                ││ URL               https://deepid.example.app/api/sdk/livenes│
-│ liveness-model-v3…     150 B json      404          346 ms                ││ Request type      —                                         │
-│ enroll                  72 B json      200          2.08 s                ││ Response type     —                                         │
-│ documents               93 B json      200          515 ms                ││ Response size     —                                         │
-│ monitor                302 B json      200          1.50 s                ││ Token             JWT HS256 · expires 06:10:00.000 (in 59 mi│
-│ report                 305 B html      500          219 ms                ││ Initiating thread DefaultDispatcher-worker-4  id 61 · call s│
-│ lookup?fields=cou…     101 B json      200          507 ms                ││ Client            OkHttp 4.12.0                             │
-│ monitor                302 B json      200          1.49 s ▌              ││ Protocol          h2                                        │
-│ status?sessionId=…     263 B json      200          326 ms                ││ Remote address    34.93.12.207:443  connection c-2 (reused) │
-│ threshold                              failed       10.0 s ████▊          ││ TLS               TLSv1.3 · TLS_AES_128_GCM_SHA256          │
-│ events                  17 B json      200          970 ms ▏              ││ Certificate       CN=*.example.app · issued by WE1          │
+│ events                  17 B json      200          1.14 s                ││ URL               https://deepid.example.app/api/sdk/       │
+│ liveness-model-v3…     150 B json      404          346 ms                ││                   liveness/threshold                        │
+│ enroll                  72 B json      200          2.08 s                ││ Request type      —                                         │
+│ documents               93 B json      200          515 ms                ││ Response type     —                                         │
+│ monitor                302 B json      200          1.50 s                ││ Response size     —                                         │
+│ report                 305 B html      500          219 ms                ││ Token             JWT HS256 ·                               │
+│ lookup?fields=cou…     101 B json      200          507 ms                ││                   expires 06:10:00.000 (in 59 min) ·        │
+│ monitor                302 B json      200          1.49 s ▌              ││                   sub user_4821 ·                           │
+│ status?sessionId=…     263 B json      200          326 ms                ││                   iss https://auth.example.app  in request  │
+│ threshold                              failed       10.0 s ████▊          ││                   header Authorization · Enter decodes      │
+│ events                  17 B json      200          970 ms ▏              ││ Initiating thread DefaultDispatcher-worker-4  id 61 ·       │
 ╰───────────────────────────────────────────────────────────────────────────╯╰─────────────────────────────────────────────────────────────╯
  ←→ tabs   ↑↓ move   / search   nN next/previous   y copy   w save   Enter fold   p parsed/source   ? help       ⚠ studio inspector present

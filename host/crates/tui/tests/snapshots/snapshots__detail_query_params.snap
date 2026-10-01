@@ -32,13 +32,13 @@ expression: "detail(40.0, MEDIUM, |t| t.url.query.is_some(), \"ll\")"
 │ events                  17 B json      200          1.14 s                ││ fields = country,region,carrier                             │
 │ liveness-model-v3…     150 B json      404          346 ms                ││                                                             │
 │ enroll                  72 B json      200          2.08 s                ││ Headers (4)                                                 │
-│ documents               93 B json      200          515 ms                ││ User-Agent: Dalvik/2.1.0 (Linux; U; Android 16; Pixel 8 Buil│
-│ monitor                302 B json      200          1.50 s                ││ Host: geo.example.app                                       │
-│ report                 305 B html      500          219 ms                ││ Connection: Keep-Alive                                      │
-│ lookup?fields=cou…     101 B json      200          507 ms                ││ Accept-Encoding: gzip                                       │
-│ monitor                302 B json      200          1.49 s ▌              ││                                                             │
-│ status?sessionId=…     263 B json      200          326 ms                ││ No body                                                     │
-│ threshold                              failed       10.0 s ████▊          ││                                                             │
+│ documents               93 B json      200          515 ms                ││ User-Agent: Dalvik/2.1.0 (Linux; U; Android 16; Pixel 8     │
+│ monitor                302 B json      200          1.50 s                ││   Build/BP41.250725.006)                                    │
+│ report                 305 B html      500          219 ms                ││ Host: geo.example.app                                       │
+│ lookup?fields=cou…     101 B json      200          507 ms                ││ Connection: Keep-Alive                                      │
+│ monitor                302 B json      200          1.49 s ▌              ││ Accept-Encoding: gzip                                       │
+│ status?sessionId=…     263 B json      200          326 ms                ││                                                             │
+│ threshold                              failed       10.0 s ████▊          ││ No body                                                     │
 │ events                  17 B json      200          970 ms ▏              ││                                                             │
 ╰───────────────────────────────────────────────────────────────────────────╯╰─────────────────────────────────────────────────────────────╯
  ←→ tabs   ↑↓ move   / search   nN next/previous   y copy   w save   Enter fold   p parsed/source   ? help       ⚠ studio inspector present

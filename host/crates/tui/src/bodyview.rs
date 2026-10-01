@@ -1,7 +1,9 @@
 //! A body prepared for display: decoded, parsed per kind, with fold state and jq output
 //! (ARCHITECTURE.md §5.9). Lines are produced on demand for the visible window.
 
-use std::collections::HashSet;
+use std::borrow::Cow;
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use bytes::Bytes;
 use ratatui::text::{Line, Span};
@@ -11,9 +13,14 @@ use traffic_police_core::fmt;
 use traffic_police_core::model::Headers;
 
 use crate::theme::Theme;
+use crate::wrap::{self, Part, Text};
 
 /// Decoded images are capped to keep a hostile body from exhausting memory.
 const MAX_IMAGE_BYTES: u64 = 64 * 1024 * 1024;
+
+/// Lines longer than this keep where they break (a minified body is one line of megabytes);
+/// shorter ones are laid out as they are drawn.
+const LONG_LINE: usize = 4096;
 
 #[derive(Debug, Clone)]
 pub struct ImageInfo {
@@ -50,6 +57,23 @@ pub struct BodyView {
     pub folded: HashSet<u32>,
     visible: Vec<u32>,
     pub jq: Option<JqView>,
+    /// Where long lines break, by line: the width, and the rows.
+    breaks: HashMap<LineKey, (usize, Arc<Vec<Part>>)>,
+}
+
+/// A line whose breaks are kept: jq output or not, the parsed view or the source, the line, and
+/// whether it is folded.
+type LineKey = (bool, bool, u32, bool);
+
+/// A styled line as text to wrap (plain without a theme).
+pub(crate) fn text_of<'a>(l: &'a StyledLine, theme: Option<&Theme>) -> Text<'a> {
+    let (runs, base) = match theme {
+        Some(t) => {
+            (l.spans.iter().map(|&(s, e, tok)| (s as usize, e as usize, t.tok(tok))).collect(), t.tok(Tok::Plain))
+        }
+        None => (Vec::new(), Default::default()),
+    };
+    Text { text: Cow::Borrowed(&l.text), runs, base }
 }
 
 fn text_or_hex(bytes: &Bytes) -> Content {
@@ -237,7 +261,16 @@ impl BodyView {
                 BodyKind::Binary => Content::Hex,
             }
         };
-        let mut v = BodyView { decoded, parsed, source, note, folded: HashSet::new(), visible: Vec::new(), jq: None };
+        let mut v = BodyView {
+            decoded,
+            parsed,
+            source,
+            note,
+            folded: HashSet::new(),
+            visible: Vec::new(),
+            jq: None,
+            breaks: HashMap::new(),
+        };
         v.refold();
         v
     }
@@ -421,6 +454,114 @@ impl BodyView {
         }
     }
 
+    /// Visible line `i` as text to wrap (styled with `theme`; plain without): a folded object
+    /// or array says after it what it holds, as [`BodyView::line`] draws it.
+    pub fn text(&self, i: usize, parsed: bool, theme: Option<&Theme>) -> Text<'_> {
+        let plain = theme.map(|t| t.tok(Tok::Plain)).unwrap_or_default();
+        if parsed && let Some(jq) = &self.jq {
+            return jq.lines.get(i).map(|l| text_of(l, theme)).unwrap_or_default();
+        }
+        match self.content(parsed) {
+            Content::Json(doc) => {
+                let Some(&li) = self.visible.get(i) else { return Text::default() };
+                let jl = &doc.lines[li as usize];
+                let mut text = text_of(&jl.line, theme);
+                if let Some(n) = jl.opens
+                    && self.folded.contains(&n)
+                {
+                    let node = doc.nodes[n as usize];
+                    let what = if node.is_array { "item" } else { "key" };
+                    let s = if node.len == 1 { "" } else { "s" };
+                    let style = |f: fn(&Theme) -> ratatui::style::Style| theme.map(f).unwrap_or_default();
+                    let mut more = vec![
+                        ("…".to_string(), style(Theme::dim)),
+                        (
+                            (if node.is_array { "]" } else { "}" }).to_string(),
+                            theme.map(|t| t.tok(Tok::Punct)).unwrap_or_default(),
+                        ),
+                    ];
+                    if doc.close_has_comma(n) {
+                        more.push((",".to_string(), theme.map(|t| t.tok(Tok::Punct)).unwrap_or_default()));
+                    }
+                    more.push((format!("  {} {what}{s}", node.len), style(Theme::faint)));
+                    let mut owned = text.text.into_owned();
+                    for (piece, st) in more {
+                        let start = owned.len();
+                        owned.push_str(&piece);
+                        text.runs.push((start, owned.len(), st));
+                    }
+                    text.text = Cow::Owned(owned);
+                }
+                text
+            }
+            Content::Lines(lines) => lines.get(i).map(|l| text_of(l, theme)).unwrap_or_default(),
+            Content::Hex => Text { text: Cow::Owned(hex::line(&self.decoded.bytes, i)), runs: Vec::new(), base: plain },
+            Content::Image(_) => match theme {
+                Some(t) => Text::from_line(&self.line(i, parsed, t, Window::ALL)),
+                None => Text::default(),
+            },
+            Content::Empty => Text::default(),
+        }
+    }
+
+    /// Where visible line `i` breaks at `width` (`[ui] wrap`): its later rows start two columns
+    /// past its indent. Long lines keep their breaks.
+    pub fn breaks(&mut self, i: usize, parsed: bool, width: usize) -> Arc<Vec<Part>> {
+        let key = self.line_key(i, parsed);
+        if let Some((w, b)) = self.breaks.get(&key)
+            && *w == width
+        {
+            return b.clone();
+        }
+        let text = self.text(i, parsed, None);
+        let b = Arc::new(wrap::layout(&text.text, width, text.leading() + 2, false));
+        if text.text.len() > LONG_LINE {
+            if self.breaks.len() >= 64 {
+                self.breaks.clear();
+            }
+            self.breaks.insert(key, (width, b.clone()));
+        }
+        b
+    }
+
+    /// Rows `from..from + n` of visible line `i` wrapped at `width`, drawn, with where each one
+    /// is in the line.
+    pub fn wrapped(
+        &mut self,
+        i: usize,
+        parsed: bool,
+        theme: &Theme,
+        width: usize,
+        from: usize,
+        n: usize,
+    ) -> Vec<(Line<'static>, Part)> {
+        let breaks = self.breaks(i, parsed, width);
+        let text = self.text(i, parsed, Some(theme));
+        breaks.iter().skip(from).take(n).map(|p| (text.part(p), *p)).collect()
+    }
+
+    /// Without wrapping: columns `skip..skip + take` of visible line `i`, with where they are.
+    pub fn window(&self, i: usize, parsed: bool, theme: &Theme, skip: usize, take: usize) -> (Line<'static>, Part) {
+        let text = self.text(i, parsed, Some(theme));
+        let p = text.window(skip, take);
+        (text.part(&p), p)
+    }
+
+    /// What a line's breaks are kept under: the jq output, the view and the line, folded or not.
+    fn line_key(&self, i: usize, parsed: bool) -> LineKey {
+        if parsed && self.jq.is_some() {
+            return (true, parsed, i as u32, false);
+        }
+        match self.content(parsed) {
+            Content::Json(doc) => {
+                let li = self.visible.get(i).copied().unwrap_or(u32::MAX);
+                let folded = doc.lines.get(li as usize).and_then(|l| l.opens).is_some_and(|n| self.folded.contains(&n));
+                (false, parsed, li, folded)
+            }
+            _ => (false, parsed, i as u32, false),
+        }
+    }
+
     /// Visible line `i` as plain text, for search (columns match [`BodyView::line`]).
     pub fn plain(&self, i: usize, parsed: bool) -> String {
         if parsed && let Some(jq) = &self.jq {
@@ -461,10 +602,12 @@ impl BodyView {
             Err(e) => vec![StyledLine::styled(e, Tok::Error)],
         };
         self.jq = Some(JqView { filter, lines });
+        self.breaks.clear();
     }
 
     pub fn clear_jq(&mut self) {
         self.jq = None;
+        self.breaks.clear();
     }
 
     /// One-line description: kind, sizes, encoding.

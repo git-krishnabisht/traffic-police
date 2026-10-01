@@ -27,18 +27,18 @@ expression: "detail(40.0, MEDIUM, modified(), \"lo\")"
 │ face-liveness-v3.…    5.0 MB binary    200          6.38 s  ███          ▐│╰─────────────────────────────────────────────────────────────╯
 │ status?sessionId=…     263 B json      200          284 ms  ▏            ▐│╭─ Overview ─ Response ─ Request ─ Call Stack ────────────────╮
 │ monitor                302 B json      200          1.56 s  ▐▍           ▐││ HTTP/2 200 OK                                               │
-│ ! events                17 B json      200          971 ms  ▕▍           ▐││ ✎ showing the ORIGINAL response; rule "Force verdict pass" c│
-│ status?sessionId=…     263 B json      200          358 ms  ▕▏           ▐││                                                             │
-│ monitor                302 B json      200          1.72 s   ▐▍          ▐││ Headers (6)                                                 │
-│ status?sessionId=…     263 B json      200          381 ms   ▏           ▐││ date: Tue, 29 Sep 2026 05:10:21 GMT                         │
-│ status?sessionId=…     263 B json      200          225 ms    ▏          ▐││ content-type: application/json; charset=utf-8               │
-│ events                  17 B json      200          1.13 s    ▌           ││ content-length: 264                                         │
-│ monitor                302 B json      200          1.38 s    ▐▏          ││ cache-control: no-cache, no-store                           │
-│ status?sessionId=…     263 B json      200          259 ms     ▏          ││ x-request-id: 20924730-8f2e-41f6-a5fb-d9b5d4fea81d          │
-│ monitor                302 B json      200          1.67 s     ▐▎         ││ server: envoy                                               │
-│ status?sessionId=…     263 B json      200          158 ms     ▏          ││                                                             │
-│ events                  17 B json      200          995 ms      ▌         ││ Body  JSON, 264 B  [parsed · p: source]                     │
-│ monitor                302 B json      200          1.65 s      ▐▏        ││ {                                                           │
-│ ✎ status?sessionI…     264 B json      200          327 ms      ▏         ││   "ok": true,                                               │
+│ ! events                17 B json      200          971 ms  ▕▍           ▐││ ✎ showing the ORIGINAL response; rule "Force verdict pass"  │
+│ status?sessionId=…     263 B json      200          358 ms  ▕▏           ▐││   changed what the app received · o: delivered              │
+│ monitor                302 B json      200          1.72 s   ▐▍          ▐││                                                             │
+│ status?sessionId=…     263 B json      200          381 ms   ▏           ▐││ Headers (6)                                                 │
+│ status?sessionId=…     263 B json      200          225 ms    ▏          ▐││ date: Tue, 29 Sep 2026 05:10:21 GMT                         │
+│ events                  17 B json      200          1.13 s    ▌           ││ content-type: application/json; charset=utf-8               │
+│ monitor                302 B json      200          1.38 s    ▐▏          ││ content-length: 264                                         │
+│ status?sessionId=…     263 B json      200          259 ms     ▏          ││ cache-control: no-cache, no-store                           │
+│ monitor                302 B json      200          1.67 s     ▐▎         ││ x-request-id: 20924730-8f2e-41f6-a5fb-d9b5d4fea81d          │
+│ status?sessionId=…     263 B json      200          158 ms     ▏          ││ server: envoy                                               │
+│ events                  17 B json      200          995 ms      ▌         ││                                                             │
+│ monitor                302 B json      200          1.65 s      ▐▏        ││ Body  JSON, 264 B  [parsed · p: source]                     │
+│ ✎ status?sessionI…     264 B json      200          327 ms      ▏         ││ {                                                           │
 ╰───────────────────────────────────────────────────────────────────────────╯╰─────────────────────────────────────────────────────────────╯
  ←→ tabs   ↑↓ move   / search   nN next/previous   y copy   w save   Enter fold   p parsed/source   ? help    showing the original response

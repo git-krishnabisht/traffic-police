@@ -1,7 +1,8 @@
 //! The body explorer: the top of the detail pane shows the response body or, on its second tab
 //! (`b`, or a click on the tab), the request body. With focus `j`/`k` move through it, Ctrl+D and
 //! Ctrl+U by half the box, `h` folds (or goes to the enclosing object or array), `l` unfolds (or
-//! steps into it), Enter folds or opens the value menu on a single value.
+//! steps into it), Enter folds or opens the value menu on a single value. Long lines wrap
+//! (`[ui] wrap`).
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -12,8 +13,8 @@ use traffic_police_core::model::{BodyDir, TxnIdx};
 
 use crate::actions::Action;
 use crate::app::{App, Focus, Target};
-use crate::bodyview::Window;
 use crate::detail::draw_line;
+use crate::wrap;
 use unicode_width::UnicodeWidthStr;
 
 /// Which body the box shows.
@@ -52,9 +53,12 @@ pub struct Explorer {
     /// The body shown; it stays as chosen when another request is selected.
     pub tab: BodyTab,
     pub cursor: usize,
+    /// The line at the top of the box, and (`[ui] wrap`) how many of its rows are above it.
     pub scroll: usize,
-    /// Rows shown last time, for paging.
+    pub scroll_part: usize,
+    /// The box's size last time, for paging and wrapping.
     pub height: usize,
+    pub width: usize,
 }
 
 impl App {
@@ -72,8 +76,9 @@ impl App {
     fn explorer_sync(&mut self) -> Option<(TxnIdx, BodyDir)> {
         let now = self.explorer_body();
         if self.explorer.shown != now {
+            let e = &self.explorer;
             self.explorer =
-                Explorer { shown: now, tab: self.explorer.tab, height: self.explorer.height, ..Explorer::default() };
+                Explorer { shown: now, tab: e.tab, height: e.height, width: e.width, ..Explorer::default() };
         }
         now
     }
@@ -94,11 +99,24 @@ impl App {
 
     pub fn explorer_action(&mut self, a: Action) {
         let Some((txn, dir)) = self.explorer_sync() else { return };
-        if a == Action::Back {
-            return self.close_detail();
+        match a {
+            Action::Back => return self.close_detail(),
+            Action::PageUp | Action::PageDown | Action::HalfPageUp | Action::HalfPageDown => {
+                // the view moves by rows (a page, or half the box), and the cursor with it
+                let n = if matches!(a, Action::PageUp | Action::PageDown) {
+                    self.explorer.height.max(2) - 1
+                } else {
+                    self.half_page(self.explorer.height)
+                };
+                let down = matches!(a, Action::PageDown | Action::HalfPageDown);
+                let (top, cursor) = (self.explorer_top(), self.explorer.cursor);
+                let (top, cursor) = self.with_explorer_lines(txn, dir, |l| l.half_page(top, cursor, n, down));
+                self.set_explorer_top(top);
+                self.explorer.cursor = cursor;
+                return;
+            }
+            _ => {}
         }
-        let page = self.explorer.height.max(2) - 1;
-        let half = self.half_page(self.explorer.height);
         let cur = self.explorer.cursor;
         let mut value_menu = false;
         let next = {
@@ -108,10 +126,6 @@ impl App {
             match a {
                 Action::Up => cur.saturating_sub(1),
                 Action::Down => (cur + 1).min(len.saturating_sub(1)),
-                Action::PageUp => cur.saturating_sub(page),
-                Action::PageDown => (cur + page).min(len.saturating_sub(1)),
-                Action::HalfPageUp => cur.saturating_sub(half),
-                Action::HalfPageDown => (cur + half).min(len.saturating_sub(1)),
                 Action::Top => 0,
                 Action::Bottom => len.saturating_sub(1),
                 // fold, or go up to the enclosing object or array
@@ -148,41 +162,49 @@ impl App {
                 _ => cur,
             }
         };
-        // like Neovim, a half-page jump moves the view with the cursor
-        match a {
-            Action::HalfPageDown => {
-                let len = self.body_view(txn, dir).map_or(0, |v| v.len(true));
-                let max = len.saturating_sub(self.explorer.height.max(1));
-                self.explorer.scroll = (self.explorer.scroll + half).min(max);
-            }
-            Action::HalfPageUp => self.explorer.scroll = self.explorer.scroll.saturating_sub(half),
-            _ => {}
-        }
         self.explorer.cursor = next;
-        self.clamp_explorer_scroll();
+        if matches!(a, Action::Up | Action::Down | Action::Top | Action::Bottom | Action::FoldAll) {
+            let top = self.explorer_top();
+            let top = self.with_explorer_lines(txn, dir, |l| l.show(top, next, 0));
+            self.set_explorer_top(top);
+        }
         if value_menu {
             self.open_value_menu(txn);
         }
     }
 
-    fn clamp_explorer_scroll(&mut self) {
-        let h = self.explorer.height.max(1);
-        let e = &mut self.explorer;
-        if e.cursor < e.scroll {
-            e.scroll = e.cursor;
-        } else if e.cursor >= e.scroll + h {
-            e.scroll = e.cursor + 1 - h;
-        }
+    fn explorer_top(&self) -> wrap::Top {
+        wrap::Top { line: self.explorer.scroll, part: self.explorer.scroll_part }
     }
 
-    /// The mouse wheel over the explorer.
+    fn set_explorer_top(&mut self, top: wrap::Top) {
+        self.explorer.scroll = top.line;
+        self.explorer.scroll_part = top.part;
+    }
+
+    /// Runs `f` over the body's lines as the box sees them: one row each, or (`[ui] wrap`) the
+    /// rows each takes at the box's width.
+    fn with_explorer_lines<R>(&mut self, txn: TxnIdx, dir: BodyDir, f: impl FnOnce(&mut wrap::Lines) -> R) -> R {
+        let (width, view, wrapping) = (self.explorer.width.max(1), self.explorer.height.max(1), self.prefs.wrap);
+        let len = self.body_view(txn, dir).map_or(0, |v| v.len(true));
+        let mut rows = |i: usize| match self.body_view(txn, dir) {
+            Some(v) if wrapping => v.breaks(i, true, width).len(),
+            _ => 1,
+        };
+        let mut lines = wrap::Lines { len, view, rows: &mut rows };
+        f(&mut lines)
+    }
+
+    /// The mouse wheel over the explorer: the view moves three rows, the cursor stays on it.
     pub fn explorer_scroll(&mut self, down: bool) {
         let Some((txn, dir)) = self.explorer_sync() else { return };
-        let len = self.body_view(txn, dir).map_or(0, |v| v.len(true));
-        let e = &mut self.explorer;
-        let max = len.saturating_sub(e.height.max(1));
-        e.scroll = if down { (e.scroll + 3).min(max) } else { e.scroll.saturating_sub(3) };
-        e.cursor = e.cursor.clamp(e.scroll, e.scroll + e.height.saturating_sub(1));
+        let (top, cursor) = (self.explorer_top(), self.explorer.cursor);
+        let (top, cursor) = self.with_explorer_lines(txn, dir, |l| {
+            let (top, _) = l.scroll(top, if down { 3 } else { -3 });
+            (top, l.keep_cursor(top, cursor))
+        });
+        self.set_explorer_top(top);
+        self.explorer.cursor = cursor;
     }
 
     /// A click on explorer line `i`.
@@ -259,6 +281,7 @@ pub fn draw(app: &mut App, r: Rect, buf: &mut Buffer) {
     labels.extend(tab_labels);
     let content = Rect { x: inner.x + 1, width: inner.width.saturating_sub(1), ..inner };
     app.explorer.height = content.height as usize;
+    app.explorer.width = content.width as usize;
     let message = |app: &App| -> Option<String> {
         let tx = app.view_store().txn(txn);
         let has_body = match dir {
@@ -311,16 +334,29 @@ pub fn draw(app: &mut App, r: Rect, buf: &mut Buffer) {
     }
     let cursor = app.explorer.cursor.min(len.saturating_sub(1));
     app.explorer.cursor = cursor;
-    app.clamp_explorer_scroll();
-    let scroll = app.explorer.scroll.min(len.saturating_sub(1));
+    // the view within the lines as they are now, with the cursor's line on it
+    let top = app.explorer_top();
+    let top = app.with_explorer_lines(txn, dir, |l| {
+        let top = l.clamp(top);
+        if cursor >= top.line && l.row_of(top, cursor) < l.view { top } else { l.show(top, cursor, 0) }
+    });
+    app.set_explorer_top(top);
+    let (width, height, wrapping) = (usize::from(content.width), usize::from(content.height), app.prefs.wrap);
     let Some(view) = app.body_view(txn, dir) else { return };
-    let mut rows: Vec<Line<'static>> = Vec::new();
-    for i in scroll..(scroll + content.height as usize).min(len) {
-        rows.push(view.line(i, true, &t, Window { skip: 0, take: usize::from(content.width) }));
+    // the rows on screen: each line's rows from the top on
+    let mut rows: Vec<(usize, Line<'static>)> = Vec::new();
+    let (mut i, mut skip) = (top.line, top.part);
+    while rows.len() < height && i < len {
+        if wrapping {
+            let left = height - rows.len();
+            rows.extend(view.wrapped(i, true, &t, width, skip, left).into_iter().map(|(l, _)| (i, l)));
+        } else {
+            rows.push((i, view.window(i, true, &t, 0, width).0));
+        }
+        (i, skip) = (i + 1, 0);
     }
-    for (row, l) in rows.iter().enumerate() {
-        let y = content.y + row as u16;
-        let i = scroll + row;
+    for (row, (i, l)) in rows.iter().enumerate() {
+        let (i, y) = (*i, content.y + row as u16);
         let selected = focused && i == cursor;
         let base = if selected { t.selected() } else { Style::default() };
         if selected {

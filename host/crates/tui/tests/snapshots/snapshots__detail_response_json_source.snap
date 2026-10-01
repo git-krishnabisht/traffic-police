@@ -35,10 +35,10 @@ expression: "detail(12.0, MEDIUM, init(), \"lp\")"
 │ documents               93 B json      200          515 ms            ▕▏ ▐││ cache-control: no-cache, no-store                           │
 │ monitor                302 B json      200          1.50 s            ▕▋ ▐││ x-request-id: e9199733-54bd-4086-af69-d7eeccf00dee          │
 │ report                 305 B html      500          219 ms             ▏ ▐││ server: envoy                                               │
-│ lookup?fields=cou…     101 B json      200          507 ms             ▕ ▐││ set-cookie: dsid=ced258d0da790089d2f9467c; Path=/; Secure; H│
-│ monitor                302 B json      200          1.49 s             ▕▌▐││ set-cookie: region=ap-south-1; Path=/; Secure               │
-│ status?sessionId=…     263 B json      200          326 ms             ▕  ││                                                             │
-│ threshold                              ···          1.90 s              █ ││ Body  JSON, 316 B  [source · p: parsed]                     │
-│ events                  17 B json      200          970 ms              ▌ ││ {"ok":true,"sessionId":"session_15bce3a5a963c9fde0ebe700e9d7│
+│ lookup?fields=cou…     101 B json      200          507 ms             ▕ ▐││ set-cookie: dsid=ced258d0da790089d2f9467c; Path=/; Secure;  │
+│ monitor                302 B json      200          1.49 s             ▕▌▐││   HttpOnly                                                  │
+│ status?sessionId=…     263 B json      200          326 ms             ▕  ││ set-cookie: region=ap-south-1; Path=/; Secure               │
+│ threshold                              ···          1.90 s              █ ││                                                             │
+│ events                  17 B json      200          970 ms              ▌ ││ Body  JSON, 316 B  [source · p: parsed]                     │
 ╰───────────────────────────────────────────────────────────────────────────╯╰─────────────────────────────────────────────────────────────╯
  ←→ tabs   ↑↓ move   / search   nN next/previous   y copy   w save   Enter fold   p parsed/source   | jq   ? help               source view

@@ -18,6 +18,7 @@ pub mod terminal;
 pub mod theme;
 pub mod ui;
 pub mod values;
+pub mod wrap;
 
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;

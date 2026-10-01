@@ -29,16 +29,16 @@ expression: "detail(12.0, MEDIUM, path_ends(\"fonts.json\"), \"\")"
 │ monitor                302 B json      200          1.41 s            ▋  ▐││ Request           fonts.json                                │
 │ events                  17 B json      200          1.14 s            ▌  ▐││ Method            GET                                       │
 │ liveness-model-v3…     150 B json      404          346 ms            ▏  ▐││ Status            IOException: Canceled                     │
-│ enroll                  72 B json      200          2.08 s            ▕▊ ▐││ URL               https://cdn.example.app/sdk/prefetch/fonts│
-│ documents               93 B json      200          515 ms            ▕▏ ▐││ Request type      —                                         │
-│ monitor                302 B json      200          1.50 s            ▕▋ ▐││ Response type     —                                         │
-│ report                 305 B html      500          219 ms             ▏ ▐││ Response size     —                                         │
-│ lookup?fields=cou…     101 B json      200          507 ms             ▕ ▐││ Initiating thread DefaultDispatcher-worker-2  id 59 · call s│
-│ monitor                302 B json      200          1.49 s             ▕▌▐││ Client            OkHttp 4.12.0                             │
-│ status?sessionId=…     263 B json      200          326 ms             ▕ ▐││ Protocol          h2                                        │
-│ threshold                              ···          1.90 s              █▐││ Remote address    151.101.1.195:443  connection c-4 (reused)│
-│ events                  17 B json      200          970 ms              ▌▐││ TLS               TLSv1.3 · TLS_AES_128_GCM_SHA256          │
-│ status?sessionId=…     263 B json      200          174 ms              ▏ ││ Certificate       CN=*.example.app · issued by WE1          │
-│ fonts.json                             canceled     380 ms              ▏ ││ Started           00:11.200  (05:10:11.200)                 │
+│ enroll                  72 B json      200          2.08 s            ▕▊ ▐││ URL               https://cdn.example.app/sdk/prefetch/     │
+│ documents               93 B json      200          515 ms            ▕▏ ▐││                   fonts.json                                │
+│ monitor                302 B json      200          1.50 s            ▕▋ ▐││ Request type      —                                         │
+│ report                 305 B html      500          219 ms             ▏ ▐││ Response type     —                                         │
+│ lookup?fields=cou…     101 B json      200          507 ms             ▕ ▐││ Response size     —                                         │
+│ monitor                302 B json      200          1.49 s             ▕▌▐││ Initiating thread DefaultDispatcher-worker-2  id 59 ·       │
+│ status?sessionId=…     263 B json      200          326 ms             ▕ ▐││                   call site                                 │
+│ threshold                              ···          1.90 s              █▐││ Client            OkHttp 4.12.0                             │
+│ events                  17 B json      200          970 ms              ▌▐││ Protocol          h2                                        │
+│ status?sessionId=…     263 B json      200          174 ms              ▏ ││ Remote address    151.101.1.195:443  connection c-4 (reused)│
+│ fonts.json                             canceled     380 ms              ▏ ││ TLS               TLSv1.3 · TLS_AES_128_GCM_SHA256          │
 ╰───────────────────────────────────────────────────────────────────────────╯╰─────────────────────────────────────────────────────────────╯
  ←→ tabs   ↑↓ move   / search   nN next/previous   y copy   w save   Enter fold   p parsed/source   ? help       ⚠ studio inspector present

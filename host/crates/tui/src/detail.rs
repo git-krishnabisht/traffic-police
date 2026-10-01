@@ -11,8 +11,9 @@ use traffic_police_core::fmt;
 use traffic_police_core::model::{BodyDir, BodyMeta, BodyState, Transaction, TxnIdx, TxnState, header};
 
 use crate::app::{App, Focus, Tab, Target};
-use crate::bodyview::Window;
 use crate::theme::Theme;
+use crate::wrap::{self, Part, Text};
+use traffic_police_proto::msg::StackFrame;
 
 #[derive(Debug, Clone)]
 pub enum DocRow {
@@ -95,8 +96,11 @@ pub fn is_framework(class: &str) -> bool {
     FRAMEWORK_PREFIXES.iter().any(|p| class.starts_with(p))
 }
 
+/// The width of the Overview's label column.
+pub const LABEL_W: usize = 18;
+
 fn label_row(theme: &Theme, label: &str, value: Vec<Span<'static>>) -> DocRow {
-    let mut spans = vec![Span::styled(format!("{label:<18}"), theme.dim())];
+    let mut spans = vec![Span::styled(format!("{label:<LABEL_W$}"), theme.dim())];
     spans.extend(value);
     DocRow::Line(Line::from(spans))
 }
@@ -373,6 +377,156 @@ pub fn build_doc(app: &mut App) -> Doc {
     doc
 }
 
+/// What a doc row is drawn as: text that wraps (with its indent, and whether its ` · ` items
+/// stay together), a body line, or something one row high.
+enum RowKind {
+    Text(Text<'static>, usize, bool),
+    Body(usize),
+    Fixed,
+}
+
+fn row_kind(app: &mut App, doc: &Doc, i: usize, txn: TxnIdx) -> RowKind {
+    match doc.row(i) {
+        Some(DocRow::Line(l)) => {
+            // a label row continues under its value; the pane's other rows a little indented
+            let label =
+                l.spans.first().is_some_and(|s| s.content.chars().count() == LABEL_W && s.content.ends_with(' '));
+            RowKind::Text(Text::from_line(&l), if label { LABEL_W } else { 2 }, true)
+        }
+        Some(DocRow::Body(bi)) => RowKind::Body(bi),
+        Some(DocRow::Frame { index }) => {
+            let theme = app.theme.clone();
+            let t = app.view_store().txn(txn);
+            match t.stack.get(index) {
+                Some(f) => {
+                    let text = Text::from_line(&frame_line(&theme, f));
+                    let indent = text.leading() + 2;
+                    RowKind::Text(text, indent, false)
+                }
+                None => RowKind::Fixed,
+            }
+        }
+        Some(DocRow::FrameRun { run }) => {
+            let theme = app.theme.clone();
+            let expanded = app.detail.expanded_runs.contains(&run);
+            let stack = app.view_store().txn(txn).stack.clone();
+            let text = Text::from_line(&frame_run_line(&theme, &stack, run, expanded));
+            let indent = text.leading() + 2;
+            RowKind::Text(text, indent, false)
+        }
+        Some(DocRow::TimingBar | DocRow::Image { .. } | DocRow::ImageCont) | None => RowKind::Fixed,
+    }
+}
+
+/// The rows doc row `i` takes in a pane `width` wide: one when nothing wraps (`[ui] wrap`).
+pub fn row_height(app: &mut App, doc: &Doc, i: usize, txn: TxnIdx, width: usize) -> usize {
+    if !app.prefs.wrap {
+        return 1;
+    }
+    let parsed = app.detail.parsed;
+    match row_kind(app, doc, i, txn) {
+        RowKind::Text(text, indent, items) => wrap::layout(&text.text, width, indent, items).len(),
+        RowKind::Body(bi) => match doc.body_dir.and_then(|dir| app.body_view(txn, dir)) {
+            Some(v) => v.breaks(bi, parsed, width).len(),
+            None => 1,
+        },
+        RowKind::Fixed => 1,
+    }
+}
+
+/// The row of doc row `i` (wrapped at `width`) that column `col` of it is on.
+pub fn row_part_at(app: &mut App, doc: &Doc, i: usize, txn: TxnIdx, width: usize, col: usize) -> usize {
+    if !app.prefs.wrap {
+        return 0;
+    }
+    let parsed = app.detail.parsed;
+    let parts = match row_kind(app, doc, i, txn) {
+        RowKind::Text(text, indent, items) => wrap::layout(&text.text, width, indent, items),
+        RowKind::Body(bi) => match doc.body_dir.and_then(|dir| app.body_view(txn, dir)) {
+            Some(v) => v.breaks(bi, parsed, width).to_vec(),
+            None => return 0,
+        },
+        RowKind::Fixed => return 0,
+    };
+    parts.iter().rposition(|p| p.col <= col).unwrap_or(0)
+}
+
+/// Rows `from..from + n` of doc row `i`, drawn, with where each one is in the row: wrapped at
+/// `width`, or (not wrapping) the columns from the horizontal scroll `hs` on.
+fn row_parts(
+    app: &mut App,
+    doc: &Doc,
+    i: usize,
+    txn: TxnIdx,
+    width: usize,
+    from: usize,
+    n: usize,
+) -> Vec<(Line<'static>, Part)> {
+    let (wrapping, parsed, hs) = (app.prefs.wrap, app.detail.parsed, usize::from(app.detail.hscroll));
+    let theme = app.theme.clone();
+    match row_kind(app, doc, i, txn) {
+        RowKind::Text(text, indent, items) => {
+            if wrapping {
+                let parts = wrap::layout(&text.text, width, indent, items);
+                parts.iter().skip(from).take(n).map(|p| (text.part(p), *p)).collect()
+            } else {
+                let p = text.window(hs, width);
+                vec![(text.part(&p), p)]
+            }
+        }
+        RowKind::Body(bi) => match doc.body_dir.and_then(|dir| app.body_view(txn, dir)) {
+            Some(v) if wrapping => v.wrapped(bi, parsed, &theme, width, from, n),
+            Some(v) => vec![v.window(bi, parsed, &theme, hs, width)],
+            None => Vec::new(),
+        },
+        RowKind::Fixed => Vec::new(),
+    }
+}
+
+/// A stack frame: `at class.method(file:line)`, app frames in the accent.
+fn frame_line(theme: &Theme, f: &StackFrame) -> Line<'static> {
+    let app_frame = !is_framework(&f.c);
+    let loc = match (&f.f, f.l) {
+        (Some(file), Some(l)) => format!("({file}:{l})"),
+        (Some(file), None) => format!("({file})"),
+        _ => "(Unknown Source)".into(),
+    };
+    let style = if app_frame { theme.accent().add_modifier(Modifier::BOLD) } else { theme.dim() };
+    Line::from(vec![
+        Span::styled(if app_frame { "  at " } else { "    at " }, theme.faint()),
+        Span::styled(format!("{}.{}", f.c, f.m), style),
+        Span::styled(loc, if app_frame { theme.text() } else { theme.faint() }),
+    ])
+}
+
+/// A run of framework frames: how many, from which packages, and whether Enter expands it.
+fn frame_run_line(theme: &Theme, stack: &[StackFrame], run: usize, expanded: bool) -> Line<'static> {
+    let mut j = run;
+    while j < stack.len() && is_framework(&stack[j].c) {
+        j += 1;
+    }
+    let mut pkgs: Vec<String> = Vec::new();
+    for f in &stack[run.min(j)..j] {
+        let p = FRAMEWORK_PREFIXES
+            .iter()
+            .find(|p| f.c.starts_with(**p))
+            .map(|p| p.trim_end_matches('.').to_string())
+            .unwrap_or_default();
+        if !pkgs.contains(&p) {
+            pkgs.push(p);
+        }
+    }
+    let n = j.saturating_sub(run);
+    Line::from(vec![
+        Span::styled(if expanded { "  ▾ " } else { "  ▸ " }, theme.faint()),
+        Span::styled(
+            format!("{n} framework frame{} ({})", if n == 1 { "" } else { "s" }, pkgs.join(", ")),
+            theme.faint(),
+        ),
+        Span::styled(if expanded { "" } else { "  Enter expands" }, theme.faint()),
+    ])
+}
+
 /// How this request relates to the other hops of the same call (redirects, auth retries).
 /// Hops are recorded close together, so only nearby transactions are searched.
 fn redirect_note(store: &traffic_police_core::SessionStore, txn: TxnIdx) -> Option<String> {
@@ -587,7 +741,10 @@ fn overview_rows(app: &mut App, txn: TxnIdx, rows: &mut Vec<DocRow>, tokens: &mu
     parts.push(format!("send {}", d(p.send)));
     parts.push(format!("wait {}", d(p.wait)));
     parts.push(format!("receive {}", d(p.receive)));
-    rows.push(DocRow::Line(Line::from(vec![Span::raw(" ".repeat(18)), Span::styled(parts.join(" · "), theme.dim())])));
+    rows.push(DocRow::Line(Line::from(vec![
+        Span::raw(" ".repeat(LABEL_W)),
+        Span::styled(parts.join(" · "), theme.dim()),
+    ])));
     if t.rule_modified() {
         rows.push(blank());
         for hit in &t.rules {
@@ -688,9 +845,8 @@ fn unicode_width_graphemes(s: &str) -> impl Iterator<Item = &str> {
     s.char_indices().map(move |(i, c)| &s[i..i + c.len_utf8()])
 }
 
-/// Render the pane's content rows for the current tab into `area`, with the Overview preview.
-/// A row's text as drawn (before horizontal scrolling), for search; `None` for rows that are
-/// not text (the timing bar, images).
+/// A row's text (all of it, however it wraps), for search, Enter and copy; `None` for rows that
+/// are not text (the timing bar, images).
 pub fn row_text(app: &mut App, doc: &Doc, i: usize, txn: TxnIdx) -> Option<String> {
     match doc.row(i)? {
         DocRow::Line(l) => Some(l.spans.iter().map(|s| s.content.as_ref()).collect()),
@@ -699,18 +855,11 @@ pub fn row_text(app: &mut App, doc: &Doc, i: usize, txn: TxnIdx) -> Option<Strin
             let parsed = app.detail.parsed;
             app.body_view(txn, dir).map(|v| v.plain(bi, parsed))
         }
-        DocRow::Frame { index } => {
-            let t = app.view_store().txn(txn);
-            let f = t.stack.get(index)?;
-            let lead = if is_framework(&f.c) { "    at " } else { "  at " };
-            let loc = match (&f.f, f.l) {
-                (Some(file), Some(l)) => format!("({file}:{l})"),
-                (Some(file), None) => format!("({file})"),
-                _ => "(Unknown Source)".into(),
-            };
-            Some(format!("{lead}{}.{}{loc}", f.c, f.m))
-        }
-        DocRow::FrameRun { .. } | DocRow::TimingBar | DocRow::Image { .. } | DocRow::ImageCont => None,
+        DocRow::Frame { .. } | DocRow::FrameRun { .. } => match row_kind(app, doc, i, txn) {
+            RowKind::Text(text, ..) => Some(text.text.into_owned()),
+            _ => None,
+        },
+        DocRow::TimingBar | DocRow::Image { .. } | DocRow::ImageCont => None,
     }
 }
 
@@ -719,6 +868,7 @@ pub fn draw(app: &mut App, area: Rect, buf: &mut Buffer) {
     let theme = app.theme.clone();
     let focused = app.focus == Focus::Detail;
     app.detail_height = area.height as usize;
+    app.detail_width = area.width as usize;
     let doc = build_doc(app);
     let len = doc.len();
     if len == 0 {
@@ -728,120 +878,91 @@ pub fn draw(app: &mut App, area: Rect, buf: &mut Buffer) {
     let hits = app.search.matches.clone();
     let current_hit = app.search.current;
     app.detail.cursor = app.detail.cursor.min(len - 1);
-    app.clamp_detail_scroll();
-    let scroll = app.detail.scroll.min(len.saturating_sub(1));
+    // the view within the rows as they are now, with the cursor's row on it
+    let cursor = app.detail.cursor;
+    let top = app.detail_top();
+    let top = app.with_detail_lines(&doc, txn, |l| {
+        let top = l.clamp(top);
+        if cursor >= top.line && l.row_of(top, cursor) < l.view { top } else { l.show(top, cursor, 0) }
+    });
+    app.set_detail_top(top);
     let parsed = app.detail.parsed;
-    let hs = app.detail.hscroll;
     let dir = doc.body_dir;
-    let (stack, now) = {
-        let t = app.view_store().txn(txn);
-        (t.stack.clone(), app.now())
-    };
+    let now = app.now();
     let txn_clone = app.view_store().txn(txn).clone();
-    for row in 0..area.height as usize {
-        let i = scroll + row;
-        if i >= len {
-            break;
-        }
-        let y = area.y + row as u16;
-        let selected = focused && i == app.detail.cursor;
+    let (width, view) = (area.width as usize, area.height as usize);
+    let mut y = 0;
+    let mut i = top.line;
+    let mut skip = top.part;
+    while y < view && i < len {
+        let selected = focused && i == cursor;
         let base = if selected { theme.selected() } else { Style::default() };
-        if selected {
-            for x in area.x..area.x + area.width {
-                if let Some(c) = buf.cell_mut((x, y)) {
-                    c.set_style(theme.selected());
-                }
+        let row = doc.row(i);
+        let parts = match row {
+            Some(DocRow::TimingBar | DocRow::Image { .. } | DocRow::ImageCont) | None => Vec::new(),
+            Some(_) => row_parts(app, &doc, i, txn, width, skip, view - y),
+        };
+        let rows = parts.len().max(1);
+        for k in 0..rows.min(view - y) {
+            let ry = area.y + (y + k) as u16;
+            let r = Rect { x: area.x, y: ry, width: area.width, height: 1 };
+            if selected {
+                crate::ui::fill(buf, r, theme.selected());
             }
+            app.hits.add(r, Target::DetailLine(i));
         }
-        app.hits.add(Rect { x: area.x, y, width: area.width, height: 1 }, Target::DetailLine(i));
-        match doc.row(i) {
-            Some(DocRow::Line(l)) => draw_line(buf, area.x, y, area.width, &l, hs, base),
-            Some(DocRow::Body(bi)) => {
-                if let Some(dir) = dir
-                    && let Some(v) = app.body_view(txn, dir)
-                {
-                    let win = Window { skip: usize::from(hs), take: usize::from(area.width) };
-                    let l = v.line(bi, parsed, &theme, win);
-                    draw_line(buf, area.x, y, area.width, &l, 0, base);
-                }
-            }
-            Some(DocRow::Frame { index }) => {
-                if let Some(f) = stack.get(index) {
-                    let app_frame = !is_framework(&f.c);
-                    let loc = match (&f.f, f.l) {
-                        (Some(file), Some(l)) => format!("({file}:{l})"),
-                        (Some(file), None) => format!("({file})"),
-                        _ => "(Unknown Source)".into(),
-                    };
-                    let style = if app_frame { theme.accent().add_modifier(Modifier::BOLD) } else { theme.dim() };
-                    let l = Line::from(vec![
-                        Span::styled(if app_frame { "  at " } else { "    at " }, theme.faint()),
-                        Span::styled(format!("{}.{}", f.c, f.m), style),
-                        Span::styled(loc, if app_frame { theme.text() } else { theme.faint() }),
-                    ]);
-                    draw_line(buf, area.x, y, area.width, &l, hs, base);
-                }
-            }
-            Some(DocRow::FrameRun { run }) => {
-                let mut j = run;
-                while j < stack.len() && is_framework(&stack[j].c) {
-                    j += 1;
-                }
-                let mut pkgs: Vec<String> = Vec::new();
-                for f in &stack[run..j] {
-                    let p = FRAMEWORK_PREFIXES
-                        .iter()
-                        .find(|p| f.c.starts_with(**p))
-                        .map(|p| p.trim_end_matches('.').to_string())
-                        .unwrap_or_default();
-                    if !pkgs.contains(&p) {
-                        pkgs.push(p);
-                    }
-                }
-                let expanded = app.detail.expanded_runs.contains(&run);
-                let n = j - run;
-                let l = Line::from(vec![
-                    Span::styled(if expanded { "  ▾ " } else { "  ▸ " }, theme.faint()),
-                    Span::styled(
-                        format!("{n} framework frame{} ({})", if n == 1 { "" } else { "s" }, pkgs.join(", ")),
-                        theme.faint(),
-                    ),
-                    Span::styled(if expanded { "" } else { "  Enter expands" }, theme.faint()),
-                ]);
-                draw_line(buf, area.x, y, area.width, &l, 0, base);
-            }
-            Some(DocRow::TimingBar) => {
-                draw_timing_bar(&theme, &txn_clone, now, buf, Rect { x: area.x, y, width: area.width, height: 1 })
-            }
+        match row {
+            Some(DocRow::TimingBar) => draw_timing_bar(
+                &theme,
+                &txn_clone,
+                now,
+                buf,
+                Rect { x: area.x, y: area.y + y as u16, width: area.width, height: 1 },
+            ),
             Some(DocRow::Image { rows }) => {
                 if let Some(dir) = dir {
                     let img = app.body_view(txn, dir).and_then(|v| v.image().and_then(|i| i.image.clone()));
                     if let Some(img) = img {
-                        let avail = (area.y + area.height).saturating_sub(y).min(rows);
-                        let r =
-                            Rect { x: area.x + 1, y, width: area.width.saturating_sub(2).min(rows * 4), height: avail };
+                        let ry = area.y + y as u16;
+                        let avail = (area.y + area.height).saturating_sub(ry).min(rows);
+                        let r = Rect {
+                            x: area.x + 1,
+                            y: ry,
+                            width: area.width.saturating_sub(2).min(rows * 4),
+                            height: avail,
+                        };
                         app.images.render(&img, r, buf);
                     }
                 }
             }
-            Some(DocRow::ImageCont) | None => {}
+            _ => {}
         }
-        // search matches on this row, over what was drawn
+        // each row of it, and the search matches over what it shows
         let first = hits.partition_point(|m| m.row < i);
-        for (k, m) in hits.iter().enumerate().skip(first).take_while(|(_, m)| m.row == i) {
-            let style = theme.search_hit(current_hit == Some(k));
-            let from = m.start.saturating_sub(usize::from(hs));
-            let to = m.end.saturating_sub(usize::from(hs)).min(usize::from(area.width));
-            for x in from..to {
-                if let Some(c) = buf.cell_mut((area.x + x as u16, y)) {
-                    c.set_style(style);
+        for (k, (line, part)) in parts.iter().enumerate() {
+            let ry = area.y + (y + k) as u16;
+            draw_line(buf, area.x, ry, area.width, line, 0, base);
+            let shown = line.width().saturating_sub(part.lead);
+            for (h, m) in hits.iter().enumerate().skip(first).take_while(|(_, m)| m.row == i) {
+                let (from, to) = (m.start.max(part.col), m.end.min(part.col + shown));
+                if from >= to {
+                    continue;
+                }
+                let style = theme.search_hit(current_hit == Some(h));
+                for x in part.lead + from - part.col..(part.lead + to - part.col).min(width) {
+                    if let Some(c) = buf.cell_mut((area.x + x as u16, ry)) {
+                        c.set_style(style);
+                    }
                 }
             }
         }
+        y += rows;
+        skip = 0;
+        i += 1;
     }
     // JSON path of the cursor line
     if focused
-        && let Some(DocRow::Body(bi)) = doc.row(app.detail.cursor)
+        && let Some(DocRow::Body(bi)) = doc.row(cursor)
         && let Some(dir) = dir
         && let Some(path) = app.body_view(txn, dir).and_then(|v| v.path_at(bi, parsed))
     {

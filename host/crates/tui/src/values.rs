@@ -15,14 +15,34 @@ use crate::actions::Action;
 use crate::app::{App, Focus, Overlay};
 use crate::detail::draw_line;
 use crate::share::{Menu, MenuAction, MenuItem};
+use crate::wrap::{self, Top};
 
 /// A decoded value in a popup.
 #[derive(Debug, Clone)]
 pub struct Decoded {
     pub title: String,
     pub lines: Vec<StyledLine>,
-    pub scroll: usize,
+    /// The line at the top, and (`[ui] wrap`) how many of its rows are above the box.
+    pub scroll: Top,
+    /// The box's rows and width last time, for paging and wrapping.
     pub page: usize,
+    pub width: usize,
+}
+
+impl Decoded {
+    /// The rows line `i` takes at `width`: later rows start two columns past its indent.
+    fn rows(&self, i: usize, width: usize) -> Vec<wrap::Part> {
+        let text = &self.lines[i].text;
+        wrap::layout(text, width, text.len() - text.trim_start_matches(' ').len() + 2, false)
+    }
+
+    /// Runs `f` over the lines as the box sees them (rows each takes when they wrap).
+    fn with_lines<R>(&self, wrapping: bool, f: impl FnOnce(&mut wrap::Lines) -> R) -> R {
+        let width = self.width.max(1);
+        let mut rows = |i: usize| if wrapping { self.rows(i, width).len() } else { 1 };
+        let mut lines = wrap::Lines { len: self.lines.len(), view: self.page.max(1), rows: &mut rows };
+        f(&mut lines)
+    }
 }
 
 /// A filter token for a value: quotes cannot be escaped, so the text stops at one; long values
@@ -123,26 +143,36 @@ impl App {
     }
 
     pub fn open_decoded(&mut self, title: String, lines: Vec<StyledLine>) {
-        self.decoded = Some(Decoded { title, lines, scroll: 0, page: 10 });
+        self.decoded = Some(Decoded { title, lines, scroll: Top::default(), page: 10, width: 60 });
         self.overlay = Overlay::Decoded;
     }
 
+    /// The mouse wheel over a decoded value: `n` rows down (up when negative).
+    pub fn decoded_wheel(&mut self, n: isize) {
+        let wrapping = self.prefs.wrap;
+        if let Some(d) = &mut self.decoded {
+            d.scroll = d.with_lines(wrapping, |l| l.scroll(d.scroll, n).0);
+        }
+    }
+
     pub fn decoded_key(&mut self, k: KeyEvent) {
-        let half = self.half_page(self.decoded.as_ref().map_or(0, |d| d.page));
+        let half = self.half_page(self.decoded.as_ref().map_or(0, |d| d.page)) as isize;
+        let wrapping = self.prefs.wrap;
         let Some(d) = &mut self.decoded else {
             self.overlay = Overlay::None;
             return;
         };
-        let max = d.lines.len().saturating_sub(d.page.max(1));
+        let page = d.page.max(1) as isize;
+        let by = |d: &mut Decoded, n: isize| d.scroll = d.with_lines(wrapping, |l| l.scroll(d.scroll, n).0);
         match self.keymap.action(&k) {
-            Some(Action::Down) => d.scroll = (d.scroll + 1).min(max),
-            Some(Action::Up) => d.scroll = d.scroll.saturating_sub(1),
-            Some(Action::PageDown) => d.scroll = (d.scroll + d.page.max(1)).min(max),
-            Some(Action::PageUp) => d.scroll = d.scroll.saturating_sub(d.page.max(1)),
-            Some(Action::HalfPageDown) => d.scroll = (d.scroll + half).min(max),
-            Some(Action::HalfPageUp) => d.scroll = d.scroll.saturating_sub(half),
-            Some(Action::Top) => d.scroll = 0,
-            Some(Action::Bottom) => d.scroll = max,
+            Some(Action::Down) => by(d, 1),
+            Some(Action::Up) => by(d, -1),
+            Some(Action::PageDown) => by(d, page),
+            Some(Action::PageUp) => by(d, -page),
+            Some(Action::HalfPageDown) => by(d, half),
+            Some(Action::HalfPageUp) => by(d, -half),
+            Some(Action::Top) => d.scroll = Top::default(),
+            Some(Action::Bottom) => d.scroll = d.with_lines(wrapping, |l| l.last_top()),
             Some(Action::Copy) => {
                 let text = values::plain_text(&d.lines);
                 self.copy_text(text);
@@ -152,29 +182,46 @@ impl App {
     }
 }
 
-/// The popup of a decoded value.
+/// The popup of a decoded value: as wide as its widest line (within the screen), long lines
+/// wrapped (`[ui] wrap`).
 pub fn draw(app: &mut App, area: Rect, buf: &mut Buffer) {
-    let Some(d) = &app.decoded else { return };
+    let wrapping = app.prefs.wrap;
+    let Some(d) = &mut app.decoded else { return };
     let t = &app.theme;
     let widest = d.lines.iter().map(|l| unicode_width::UnicodeWidthStr::width(l.text.as_str())).max().unwrap_or(0);
     let w = (widest as u16 + 6).clamp(50, area.width.saturating_sub(8));
-    let h = (d.lines.len() as u16 + 4).min(area.height.saturating_sub(4));
+    d.width = w.saturating_sub(4) as usize;
+    // as tall as its rows, within the screen
+    let most = area.height.saturating_sub(4);
+    let mut total = 0usize;
+    for i in 0..d.lines.len() {
+        total += if wrapping { d.rows(i, d.width.max(1)).len() } else { 1 };
+        if total + 4 > usize::from(most) {
+            break;
+        }
+    }
+    let h = (total as u16 + 4).min(most);
     let r = crate::ui::centered(area, w, h);
     crate::ui::draw_box(buf, r, &d.title, t);
     let inner = Rect { x: r.x + 2, y: r.y + 1, width: r.width.saturating_sub(4), height: r.height.saturating_sub(3) };
     let rows = inner.height as usize;
-    for (i, l) in d.lines.iter().skip(d.scroll).take(rows).enumerate() {
-        let line = crate::bodyview::styled(l, t);
-        draw_line(buf, inner.x, inner.y + i as u16, inner.width, &line, 0, Style::default());
+    d.page = rows;
+    d.scroll = d.with_lines(wrapping, |l| l.clamp(d.scroll));
+    let (mut y, mut i, mut skip, mut last) = (0, d.scroll.line, d.scroll.part, d.scroll.line);
+    while y < rows && i < d.lines.len() {
+        let text = crate::bodyview::text_of(&d.lines[i], Some(t));
+        let parts = if wrapping { d.rows(i, d.width.max(1)) } else { vec![text.window(0, inner.width as usize)] };
+        for p in parts.iter().skip(skip).take(rows - y) {
+            draw_line(buf, inner.x, inner.y + y as u16, inner.width, &text.part(p), 0, Style::default());
+            y += 1;
+        }
+        (last, i, skip) = (i, i + 1, 0);
     }
-    let more = if d.lines.len() > rows {
-        format!("  ·  lines {}–{} of {}", d.scroll + 1, (d.scroll + rows).min(d.lines.len()), d.lines.len())
+    let more = if d.scroll.line > 0 || i < d.lines.len() {
+        format!("  ·  lines {}–{} of {}", d.scroll.line + 1, last + 1, d.lines.len())
     } else {
         String::new()
     };
     let foot = Line::from(Span::styled(format!("y copies · any other key closes{more}"), t.faint()));
     draw_line(buf, inner.x, r.y + r.height - 2, inner.width, &foot, 0, Style::default());
-    if let Some(d) = &mut app.decoded {
-        d.page = rows;
-    }
 }

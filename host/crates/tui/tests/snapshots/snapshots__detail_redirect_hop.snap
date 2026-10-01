@@ -30,15 +30,15 @@ expression: "detail(12.0, MEDIUM, |t| t.hop > 0, \"\")"
 │ metrics                  6 B protobuf  200          224 ms           ▕   ▐││ Method            GET                                       │
 │ monitor                302 B json      200          1.41 s            ▋  ▐││ Status            200 OK                                    │
 │ events                  17 B json      200          1.14 s            ▌  ▐││ URL               https://cdn.example.app/sdk/v2/config.json│
-│ liveness-model-v3…     150 B json      404          346 ms            ▏  ▐││ Redirect          hop 2 of this call · after http://cdn.exam│
-│ enroll                  72 B json      200          2.08 s            ▕▊ ▐││ Request type      —                                         │
-│ documents               93 B json      200          515 ms            ▕▏ ▐││ Response type     application/json; charset=utf-8           │
-│ monitor                302 B json      200          1.50 s            ▕▋ ▐││ Response size     106 B                                     │
-│ report                 305 B html      500          219 ms             ▏ ▐││ Initiating thread DefaultDispatcher-worker-2  id 59 · call s│
-│ lookup?fields=cou…     101 B json      200          507 ms             ▕ ▐││ Client            OkHttp 4.12.0                             │
-│ monitor                302 B json      200          1.49 s             ▕▌▐││ Protocol          h2                                        │
-│ status?sessionId=…     263 B json      200          326 ms             ▕  ││ Remote address    151.101.1.195:443  connection c-4 (reused)│
-│ threshold                              ···          1.90 s              █ ││ TLS               TLSv1.3 · TLS_AES_128_GCM_SHA256          │
-│ events                  17 B json      200          970 ms              ▌ ││ Certificate       CN=*.example.app · issued by WE1          │
+│ liveness-model-v3…     150 B json      404          346 ms            ▏  ▐││ Redirect          hop 2 of this call ·                      │
+│ enroll                  72 B json      200          2.08 s            ▕▊ ▐││                   after http://cdn.example.app/sdk/config   │
+│ documents               93 B json      200          515 ms            ▕▏ ▐││                   (302)                                     │
+│ monitor                302 B json      200          1.50 s            ▕▋ ▐││ Request type      —                                         │
+│ report                 305 B html      500          219 ms             ▏ ▐││ Response type     application/json; charset=utf-8           │
+│ lookup?fields=cou…     101 B json      200          507 ms             ▕ ▐││ Response size     106 B                                     │
+│ monitor                302 B json      200          1.49 s             ▕▌▐││ Initiating thread DefaultDispatcher-worker-2  id 59 ·       │
+│ status?sessionId=…     263 B json      200          326 ms             ▕  ││                   call site                                 │
+│ threshold                              ···          1.90 s              █ ││ Client            OkHttp 4.12.0                             │
+│ events                  17 B json      200          970 ms              ▌ ││ Protocol          h2                                        │
 ╰───────────────────────────────────────────────────────────────────────────╯╰─────────────────────────────────────────────────────────────╯
  ←→ tabs   ↑↓ move   / search   nN next/previous   y copy   w save   Enter fold   p parsed/source   ? help       ⚠ studio inspector present

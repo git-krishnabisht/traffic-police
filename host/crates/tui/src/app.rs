@@ -27,6 +27,7 @@ use crate::bodyview::BodyView;
 use crate::detail::{self, DocRow};
 use crate::images::Images;
 use crate::theme::Theme;
+use crate::wrap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum View {
@@ -116,7 +117,7 @@ pub enum Overlay {
     Palette,
 }
 
-/// A search match in the detail pane: a row, and display columns in it.
+/// A search match in the detail pane: a row, and display columns in it (however it wraps).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SearchMatch {
     pub row: usize,
@@ -169,7 +170,9 @@ pub struct GraphState {
 pub struct DetailState {
     pub tab: Tab,
     pub cursor: usize,
+    /// The row at the top of the pane, and (`[ui] wrap`) how many of its rows are above it.
     pub scroll: usize,
+    pub scroll_part: usize,
     pub hscroll: u16,
     pub parsed: bool,
     pub original: bool,
@@ -182,6 +185,7 @@ impl Default for DetailState {
             tab: Tab::Overview,
             cursor: 0,
             scroll: 0,
+            scroll_part: 0,
             hscroll: 0,
             parsed: true,
             original: false,
@@ -194,6 +198,8 @@ impl Default for DetailState {
 /// live in the theme and the keymap.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Prefs {
+    /// Wrap lines wider than their box instead of cutting them off (every box of text).
+    pub wrap: bool,
     /// Lines a half-page jump (Ctrl+D, Ctrl+U) moves; 0 is half the box, like Neovim's 'scroll'.
     pub scroll: u16,
     /// The list follows new requests while its cursor is on the newest.
@@ -211,6 +217,7 @@ pub struct Prefs {
 impl Default for Prefs {
     fn default() -> Self {
         Prefs {
+            wrap: true,
             scroll: 0,
             follow: true,
             graph_height: None,
@@ -355,6 +362,8 @@ pub struct App {
     pub detail_open: bool,
     pub detail: DetailState,
     pub detail_height: usize,
+    /// The detail tabs' width when last drawn, for wrapping.
+    pub detail_width: usize,
     pub explorer: crate::explorer::Explorer,
     pub graph: GraphState,
     pub graph_source: GraphSource,
@@ -445,6 +454,7 @@ impl App {
             detail_open: false,
             detail: DetailState::default(),
             detail_height: 10,
+            detail_width: 0,
             explorer: crate::explorer::Explorer::default(),
             graph: GraphState { span: DEFAULT_SPAN, ..Default::default() },
             graph_source: GraphSource::AppTotal,
@@ -726,7 +736,7 @@ impl App {
     /// Another request in the detail pane starts at its top.
     fn reset_detail_position(&mut self) {
         self.detail.cursor = 0;
-        self.detail.scroll = 0;
+        self.set_detail_top(wrap::Top::default());
         self.detail.hscroll = 0;
         self.detail.expanded_runs.clear();
         self.detail.original = false;
@@ -743,7 +753,7 @@ impl App {
         } else {
             self.selected = Some(txn);
             self.detail.cursor = 0;
-            self.detail.scroll = 0;
+            self.set_detail_top(wrap::Top::default());
         }
     }
 
@@ -1265,6 +1275,7 @@ impl App {
         let Ok(re) = regex::RegexBuilder::new(&regex::escape(&self.search.query)).case_insensitive(true).build() else {
             return;
         };
+        // each row whole, so a match where a row wraps is found too
         for i in 0..doc.len() {
             let Some(text) = detail::row_text(self, doc, i, txn) else { continue };
             for m in re.find_iter(&text) {
@@ -1283,7 +1294,15 @@ impl App {
         self.search.current = Some(k);
         self.focus = Focus::Detail;
         self.detail.cursor = m.row;
-        self.clamp_detail_scroll();
+        let Some(txn) = self.selected else { return };
+        let doc = detail::build_doc(self);
+        if self.prefs.wrap {
+            // the row of a wrapped line the match is on
+            let part = detail::row_part_at(self, &doc, m.row, txn, self.detail_width.max(1), m.start);
+            self.show_detail_row(&doc, txn, part);
+            return;
+        }
+        self.show_detail_row(&doc, txn, 0);
         // keep a match on a long line in view
         let hs = usize::from(self.detail.hscroll);
         let width = self.area.width.saturating_sub(4) as usize / 2;
@@ -1591,6 +1610,10 @@ impl App {
                 }
                 return;
             }
+            Action::ScrollLeft | Action::ScrollRight if self.prefs.wrap => {
+                self.flash("long lines wrap here; with [ui] wrap = false they scroll sideways instead");
+                return;
+            }
             Action::ScrollLeft => {
                 self.detail.hscroll = self.detail.hscroll.saturating_sub(20);
                 return;
@@ -1608,18 +1631,19 @@ impl App {
         match a {
             Action::Up => self.detail.cursor = cur.saturating_sub(1),
             Action::Down => self.detail.cursor = (cur + 1).min(len.saturating_sub(1)),
-            Action::PageUp => self.detail.cursor = cur.saturating_sub(page),
-            Action::PageDown => self.detail.cursor = (cur + page).min(len.saturating_sub(1)),
-            Action::HalfPageUp | Action::HalfPageDown => {
-                let n = self.half_page(self.detail_height);
-                let max = len.saturating_sub(self.detail_height.max(1));
-                if a == Action::HalfPageDown {
-                    self.detail.scroll = (self.detail.scroll + n).min(max);
-                    self.detail.cursor = (cur + n).min(len.saturating_sub(1));
+            // the view moves by rows (a page, or half the box), and the cursor with it
+            Action::PageUp | Action::PageDown | Action::HalfPageUp | Action::HalfPageDown => {
+                let n = if matches!(a, Action::PageUp | Action::PageDown) {
+                    page
                 } else {
-                    self.detail.scroll = self.detail.scroll.saturating_sub(n);
-                    self.detail.cursor = cur.saturating_sub(n);
-                }
+                    self.half_page(self.detail_height)
+                };
+                let down = matches!(a, Action::PageDown | Action::HalfPageDown);
+                let top = self.detail_top();
+                let (top, cursor) = self.with_detail_lines(&doc, txn, |l| l.half_page(top, cur, n, down));
+                self.set_detail_top(top);
+                self.detail.cursor = cursor;
+                return;
             }
             Action::Top => self.detail.cursor = 0,
             Action::Bottom => self.detail.cursor = len.saturating_sub(1),
@@ -1643,7 +1667,7 @@ impl App {
                     }
                 }
                 Some(DocRow::Line(_)) => {
-                    if let Some((_, token)) = doc.tokens.iter().find(|(row, _)| *row == cur) {
+                    if let Some((_, token)) = doc.tokens.iter().find(|(r, _)| *r == cur) {
                         let token = token.clone();
                         self.run_value_action(&crate::share::MenuAction::DecodeJwt(token));
                     } else {
@@ -1660,23 +1684,48 @@ impl App {
             },
             _ => {}
         }
-        self.clamp_detail_scroll();
+        // what changed the rows (a fold) is shown as drawn; a move brings the cursor into view
+        if matches!(a, Action::Up | Action::Down | Action::Top | Action::Bottom) {
+            self.show_detail_row(&doc, txn, 0);
+        }
     }
 
-    pub fn clamp_detail_scroll(&mut self) {
-        let h = self.detail_height.max(1);
-        if self.detail.cursor < self.detail.scroll {
-            self.detail.scroll = self.detail.cursor;
-        } else if self.detail.cursor >= self.detail.scroll + h {
-            self.detail.scroll = self.detail.cursor + 1 - h;
-        }
+    /// The detail pane's top: a row, and how many of its rows are above the pane.
+    pub(crate) fn detail_top(&self) -> wrap::Top {
+        wrap::Top { line: self.detail.scroll, part: self.detail.scroll_part }
+    }
+
+    pub(crate) fn set_detail_top(&mut self, top: wrap::Top) {
+        self.detail.scroll = top.line;
+        self.detail.scroll_part = top.part;
+    }
+
+    /// Runs `f` over the detail pane's rows as the view sees them: one screen row each, or
+    /// (`[ui] wrap`) the rows each takes at the pane's width.
+    pub(crate) fn with_detail_lines<R>(
+        &mut self,
+        doc: &detail::Doc,
+        txn: TxnIdx,
+        f: impl FnOnce(&mut wrap::Lines) -> R,
+    ) -> R {
+        let (width, view) = (self.detail_width.max(1), self.detail_height.max(1));
+        let mut rows = |i: usize| detail::row_height(self, doc, i, txn, width);
+        let mut lines = wrap::Lines { len: doc.len(), view, rows: &mut rows };
+        f(&mut lines)
+    }
+
+    /// Brings the cursor's row into view (all of it when it fits; else its row `part`).
+    fn show_detail_row(&mut self, doc: &detail::Doc, txn: TxnIdx, part: usize) {
+        let (top, cursor) = (self.detail_top(), self.detail.cursor);
+        let top = self.with_detail_lines(doc, txn, |l| l.show(top, cursor, part));
+        self.set_detail_top(top);
     }
 
     fn set_tab(&mut self, t: Tab) {
         if self.detail.tab != t {
             self.detail.tab = t;
             self.detail.cursor = 0;
-            self.detail.scroll = 0;
+            self.set_detail_top(wrap::Top::default());
             self.detail.hscroll = 0;
         }
     }
@@ -1726,7 +1775,7 @@ impl App {
         if self.selected == Some(job.txn) {
             self.detail.parsed = true;
             self.detail.cursor = 0;
-            self.detail.scroll = 0;
+            self.set_detail_top(wrap::Top::default());
         }
         if ok {
             self.flash(format!("jq: {}  (| to edit, empty filter clears)", job.filter));
@@ -1810,24 +1859,19 @@ impl App {
         // boxes over the screen take the mouse
         match self.overlay {
             Overlay::Diff => {
-                if let Some(v) = &mut self.diff {
-                    match m.kind {
-                        MouseEventKind::ScrollDown => v.scroll = (v.scroll + 3).min(v.max_scroll()),
-                        MouseEventKind::ScrollUp => v.scroll = v.scroll.saturating_sub(3),
-                        _ => {}
-                    }
+                match m.kind {
+                    MouseEventKind::ScrollDown => self.diff_wheel(3),
+                    MouseEventKind::ScrollUp => self.diff_wheel(-3),
+                    _ => {}
                 }
                 return;
             }
             Overlay::Decoded => {
-                if let Some(d) = &mut self.decoded {
-                    let max = d.lines.len().saturating_sub(d.page.max(1));
-                    match m.kind {
-                        MouseEventKind::ScrollDown => d.scroll = (d.scroll + 3).min(max),
-                        MouseEventKind::ScrollUp => d.scroll = d.scroll.saturating_sub(3),
-                        MouseEventKind::Down(_) => self.overlay = Overlay::None,
-                        _ => {}
-                    }
+                match m.kind {
+                    MouseEventKind::ScrollDown => self.decoded_wheel(3),
+                    MouseEventKind::ScrollUp => self.decoded_wheel(-3),
+                    MouseEventKind::Down(_) => self.overlay = Overlay::None,
+                    _ => {}
                 }
                 return;
             }
@@ -1941,14 +1985,17 @@ impl App {
                 match self.hits.at(x, y) {
                     Some(Target::ExplorerLine(_)) => self.explorer_scroll(down),
                     Some(Target::DetailLine(_) | Target::DetailTab(_)) => {
-                        let doc_len = detail::build_doc(self).len();
-                        let max = doc_len.saturating_sub(self.detail_height.max(1));
-                        self.detail.scroll =
-                            if down { (self.detail.scroll + 3).min(max) } else { self.detail.scroll.saturating_sub(3) };
-                        self.detail.cursor = self
-                            .detail
-                            .cursor
-                            .clamp(self.detail.scroll, self.detail.scroll + self.detail_height.saturating_sub(1));
+                        // the view moves three rows; the cursor stays on it
+                        if let Some(txn) = self.selected {
+                            let doc = detail::build_doc(self);
+                            let (top, cursor) = (self.detail_top(), self.detail.cursor);
+                            let (top, cursor) = self.with_detail_lines(&doc, txn, |l| {
+                                let (top, _) = l.scroll(top, if down { 3 } else { -3 });
+                                (top, l.keep_cursor(top, cursor))
+                            });
+                            self.set_detail_top(top);
+                            self.detail.cursor = cursor;
+                        }
                     }
                     // Shift+wheel moves along the time axis; the wheel alone zooms
                     Some(Target::Graph) if m.modifiers.contains(KeyModifiers::SHIFT) => {

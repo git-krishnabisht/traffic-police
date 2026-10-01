@@ -457,7 +457,7 @@ fn d_on_two_requests_compares_them() {
     // sorted headers, then the next change
     let text = press(&mut app, MEDIUM, "sn");
     assert!(text.contains("headers compared as sets"), "{text}");
-    assert!(app.diff.as_ref().unwrap().scroll > 0);
+    assert!(app.diff.as_ref().unwrap().scroll.line > 0);
     let text = press(&mut app, MEDIUM, "<Esc>");
     assert_eq!(app.overlay, Overlay::None);
     assert!(!text.contains("◆"), "the mark is used up: {text}");
@@ -793,6 +793,89 @@ fn the_body_box_shows_the_request_body_on_its_second_tab() {
     click(&mut app, r.x + 1, r.y);
     assert_eq!(app.explorer.tab, BodyTab::Response);
     assert_eq!(app.focus, Focus::Preview);
+}
+
+#[test]
+fn long_rows_wrap_and_enter_still_acts_on_the_whole_row() {
+    use traffic_police_tui::detail;
+    let mut app = app_at(40.0);
+    let to = goto(&mut app, MEDIUM, path_is("/api/sdk/init"));
+    let text = press(&mut app, MEDIUM, &format!("{to}<Enter>"));
+    let txn = app.selected.unwrap();
+    let doc = detail::build_doc(&mut app);
+    let (row, _) = doc.tokens.first().cloned().expect("a token row");
+    // the token row is wider than the pane at this size: it goes on under its value
+    let width = app.detail_width;
+    assert!(detail::row_height(&mut app, &doc, row, txn, width) > 1);
+    let y = text.lines().position(|l| l.contains("Token             JWT")).expect("the token row");
+    let next = text.lines().nth(y + 1).unwrap();
+    assert!(next.contains(&format!("││{}", " ".repeat(19))), "under the value: {next:?}");
+    // Enter on it decodes the token
+    let text = press(&mut app, MEDIUM, &format!("{}<Enter>", "j".repeat(row)));
+    assert_eq!(app.overlay, Overlay::Decoded, "{text}");
+    press(&mut app, MEDIUM, "<Esc>");
+    // [ui] wrap = false: one row each again, cut at the edge
+    app.prefs.wrap = false;
+    assert_eq!(detail::row_height(&mut app, &doc, row, txn, width), 1);
+}
+
+#[test]
+fn body_lines_wrap_in_the_body_box_and_the_tabs() {
+    use traffic_police_core::model::BodyDir;
+    use traffic_police_tui::detail;
+    let mut app = app_at(40.0);
+    let to = goto(&mut app, MEDIUM, path_is("/oauth/token"));
+    let text = press(&mut app, MEDIUM, &format!("{to}<Enter>"));
+    let txn = app.selected.unwrap();
+    let body = app.body_view(txn, BodyDir::Response).unwrap().decoded.bytes.clone();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let token = json["access_token"].as_str().unwrap().to_string();
+    let end = &token[token.len() - 16..];
+    // the body box shows the token to its end, on the rows under its key
+    assert_eq!(text.matches(end).count(), 1, "{text}");
+    // the Response tab's body too, once the cursor is on it
+    press(&mut app, MEDIUM, "l");
+    let doc = detail::build_doc(&mut app);
+    let row = (0..doc.len())
+        .find(|&i| detail::row_text(&mut app, &doc, i, txn).is_some_and(|t| t.contains(&token)))
+        .expect("the token's line");
+    let width = app.detail_width;
+    assert!(detail::row_height(&mut app, &doc, row, txn, width) > 2);
+    let text = press(&mut app, MEDIUM, &"j".repeat(row));
+    assert_eq!(text.matches(end).count(), 2, "{text}");
+    // not wrapping: cut at the edge in both
+    app.prefs.wrap = false;
+    let text = render_text(&mut app, MEDIUM.0, MEDIUM.1);
+    assert!(!text.contains(end), "{text}");
+}
+
+#[test]
+fn search_finds_text_across_the_break_of_a_wrapped_row() {
+    let mut app = app_at(40.0);
+    let to = goto(&mut app, MEDIUM, path_is("/api/sdk/init"));
+    let text = press(&mut app, MEDIUM, &format!("{to}<Enter>"));
+    // the token row's first two rows on screen, from where the row starts
+    let lines: Vec<Vec<char>> = text.lines().map(|l| l.chars().collect()).collect();
+    let y = lines.iter().position(|l| l.iter().collect::<String>().contains("Token             JWT")).unwrap();
+    let x = (0..lines[y].len()).find(|&x| lines[y][x..].starts_with(&['T', 'o', 'k', 'e', 'n'])).unwrap();
+    let part = |l: &[char]| l[x..].iter().collect::<String>().trim_end_matches('│').trim_end().to_string();
+    let (one, two) = (part(&lines[y]), part(&lines[y + 1]));
+    // the last word of the first and the first of the second are together only in the row
+    let (a, b) = (one.split_whitespace().last().unwrap(), two.split_whitespace().next().unwrap());
+    press(&mut app, MEDIUM, &format!("/{a} {b}<Enter>"));
+    let row = app.detail.cursor;
+    assert!(app.search.matches.iter().any(|m| m.row == row), "{:?}", app.search.matches);
+    // both rows are painted as the current match, also with the body scrolled sideways
+    app.detail.hscroll = 4;
+    let mut term = Terminal::new(TestBackend::new(MEDIUM.0, MEDIUM.1)).unwrap();
+    term.draw(|f| ui::draw(f, &mut app)).unwrap();
+    let buf = term.backend().buffer();
+    let hit = app.theme.search_hit(true).bg.unwrap();
+    let painted = |y: usize, from: usize, n: usize| (from..from + n).all(|c| buf[((x + c) as u16, y as u16)].bg == hit);
+    let a_at = one.chars().count() - a.chars().count();
+    let b_at = two.chars().count() - two.trim_start().chars().count();
+    assert!(painted(y, a_at, a.chars().count()), "{a:?} in {one:?}");
+    assert!(painted(y + 1, b_at, b.chars().count()), "{b:?} in {two:?}");
 }
 
 #[test]

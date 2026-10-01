@@ -20,10 +20,10 @@ expression: "detail(12.0, MEDIUM, |t| t.status() == Some(404), \"l\")"
 │ token                  391 B json      200          513 ms         █     ▐││   "ok": false,                                              │
 │ init                   316 B json      200          2.01 s          ▏    ▐││   "error": {                                                │
 │ monitor                302 B json      200          1.58 s          █    ▐││     "code": "NOT_FOUND",                                    │
-│ events                  17 B json      200          1.45 s          █▏   ▐││     "message": "asset 'liveness-model-v3.json' does not exis│
-│ u_4821.png            4.5 KB png       200          476 ms          █    ▐││     "requestId": "98eec17a-0161-4863-aa72-4f7e54f1f9e6"     │
-│ monitor                302 B json      200          1.53 s           ▊   ▐││   }                                                         │
-│ challenge              144 B json      200          386 ms           ▏   ▐││ }                                                           │
+│ events                  17 B json      200          1.45 s          █▏   ▐││     "message": "asset 'liveness-model-v3.json' does not     │
+│ u_4821.png            4.5 KB png       200          476 ms          █    ▐││       exist",                                               │
+│ monitor                302 B json      200          1.53 s           ▊   ▐││     "requestId": "98eec17a-0161-4863-aa72-4f7e54f1f9e6"     │
+│ challenge              144 B json      200          386 ms           ▏   ▐││   }                                                         │
 │ config                   0 B           302           61 ms           ▏   ▐│╰─────────────────────────────────────────────────────────────╯
 │ ↪ config.json          106 B json      200          195 ms           ▏   ▐│╭─ Overview ─ Response ─ Request ─ Call Stack ────────────────╮
 │ attest                 180 B json      200          2.75 s           ▐█  ▐││ HTTP/2 404 Not Found                                        │

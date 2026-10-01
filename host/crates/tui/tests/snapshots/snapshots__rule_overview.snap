@@ -31,24 +31,24 @@ expression: "detail(40.0, LARGE, modified(), \"G\")"
 │ status?sessionId=session_15bce3a5a9…     263 B json      200          326 ms                              ▐││   "enrollmentSim": null                                                                │
 │ threshold                                                failed       10.0 s █████████▊                   ▐│╰────────────────────────────────────────────────────────────────────────────────────────╯
 │ events                                    17 B json      200          970 ms █▏                           ▐│╭─ Overview ─ Response ─ Request ─ Call Stack ───────────────────────────────────────────╮
-│ status?sessionId=session_15bce3a5a9…     263 B json      200          174 ms  ▏                           ▐││ Status            200 OK                                                               │
-│ fonts.json                                               canceled     380 ms  ▏                           ▐││ URL               https://deepid.example.app/api/sdk/sim-binding/status/?sessionId=sess│
-│ monitor                                  302 B json      200          1.44 s  ▐▉                          ▐││ Request type      —                                                                    │
-│ face-liveness-v3.tflite                 5.0 MB binary    200          6.38 s   ██████▍                    ▐││ Response type     application/json; charset=utf-8                                      │
-│ status?sessionId=session_15bce3a5a9…     263 B json      200          284 ms   █                          ▐││ Response size     264 B                                                                │
-│ monitor                                  302 B json      200          1.56 s    ▐▉                        ▐││ Token             JWT HS256 · expires 06:10:00.000 (in 59 min) · sub user_4821 · iss ht│
-│ ! events                                  17 B json      200          971 ms     ▉                        ▐││ Initiating thread DefaultDispatcher-worker-3  id 60 · call site                        │
-│ status?sessionId=session_15bce3a5a9…     263 B json      200          358 ms     ▍                        ▐││ Client            OkHttp 4.12.0                                                        │
-│ monitor                                  302 B json      200          1.72 s      ▐█                      ▐││ Protocol          h2                                                                   │
-│ status?sessionId=session_15bce3a5a9…     263 B json      200          381 ms      █                        ││ Remote address    34.93.12.207:443  connection c-2 (reused)                            │
-│ status?sessionId=session_15bce3a5a9…     263 B json      200          225 ms       ▕▏                      ││ TLS               TLSv1.3 · TLS_AES_128_GCM_SHA256                                     │
-│ events                                    17 B json      200          1.13 s        █▏                     ││ Certificate       CN=*.example.app · issued by WE1                                     │
-│ monitor                                  302 B json      200          1.38 s        █▋                     ││ Started           00:21.632  (05:10:21.632)                                            │
-│ status?sessionId=session_15bce3a5a9…     263 B json      200          259 ms         ▏                     ││ Duration          327 ms                                                               │
-│ monitor                                  302 B json      200          1.67 s          █▊                   ││                                                                                        │
-│ status?sessionId=session_15bce3a5a9…     263 B json      200          158 ms          █                    ││ Timing            ████████████████████████████████████████████████████████████████████ │
-│ events                                    17 B json      200          995 ms            █                  ││                   queued 500 µs · dns — · connect — · send 100 µs · wait 302 ms · recei│
-│ monitor                                  302 B json      200          1.65 s            ██                 ││                                                                                        │
-│ ✎ status?sessionId=session_15bce3a5…     264 B json      200          327 ms            ▏                  ││ Rule              ✎ "Force verdict pass" changed this response: body edited (1 match), │
+│ status?sessionId=session_15bce3a5a9…     263 B json      200          174 ms  ▏                           ▐││ Response size     264 B                                                                │
+│ fonts.json                                               canceled     380 ms  ▏                           ▐││ Token             JWT HS256 · expires 06:10:00.000 (in 59 min) · sub user_4821 ·       │
+│ monitor                                  302 B json      200          1.44 s  ▐▉                          ▐││                   iss https://auth.example.app  in request header Authorization ·      │
+│ face-liveness-v3.tflite                 5.0 MB binary    200          6.38 s   ██████▍                    ▐││                   Enter decodes                                                        │
+│ status?sessionId=session_15bce3a5a9…     263 B json      200          284 ms   █                          ▐││ Initiating thread DefaultDispatcher-worker-3  id 60 · call site                        │
+│ monitor                                  302 B json      200          1.56 s    ▐▉                        ▐││ Client            OkHttp 4.12.0                                                        │
+│ ! events                                  17 B json      200          971 ms     ▉                        ▐││ Protocol          h2                                                                   │
+│ status?sessionId=session_15bce3a5a9…     263 B json      200          358 ms     ▍                        ▐││ Remote address    34.93.12.207:443  connection c-2 (reused)                            │
+│ monitor                                  302 B json      200          1.72 s      ▐█                      ▐││ TLS               TLSv1.3 · TLS_AES_128_GCM_SHA256                                     │
+│ status?sessionId=session_15bce3a5a9…     263 B json      200          381 ms      █                        ││ Certificate       CN=*.example.app · issued by WE1                                     │
+│ status?sessionId=session_15bce3a5a9…     263 B json      200          225 ms       ▕▏                      ││ Started           00:21.632  (05:10:21.632)                                            │
+│ events                                    17 B json      200          1.13 s        █▏                     ││ Duration          327 ms                                                               │
+│ monitor                                  302 B json      200          1.38 s        █▋                     ││                                                                                        │
+│ status?sessionId=session_15bce3a5a9…     263 B json      200          259 ms         ▏                     ││ Timing            ████████████████████████████████████████████████████████████████████ │
+│ monitor                                  302 B json      200          1.67 s          █▊                   ││                   queued 500 µs · dns — · connect — · send 100 µs · wait 302 ms ·      │
+│ status?sessionId=session_15bce3a5a9…     263 B json      200          158 ms          █                    ││                   receive 24 ms                                                        │
+│ events                                    17 B json      200          995 ms            █                  ││                                                                                        │
+│ monitor                                  302 B json      200          1.65 s            ██                 ││ Rule              ✎ "Force verdict pass" changed this response: body edited (1 match), │
+│ ✎ status?sessionId=session_15bce3a5…     264 B json      200          327 ms            ▏                  ││                   set Cache-Control · o in Response shows the original                 │
 ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────╯╰────────────────────────────────────────────────────────────────────────────────────────╯
  ←→ tabs   ↑↓ move   / search   nN next/previous   y copy   w save   Enter fold   p parsed/source   | jq   Esc close   ? help                                                ⚠ studio inspector present

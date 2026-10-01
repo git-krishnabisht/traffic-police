@@ -142,7 +142,7 @@ fn detail_tabs_for_json_post() {
             12.0,
             MEDIUM,
             init(),
-            "l[<Down><Down><Down><Down><Down><Down><Down><Down><Down><Down><Down><Down><Down><Down>"
+            "l[<Down><Down><Down><Down><Down><Down><Down><Down><Down><Down><Down><Down><Down><Down><Down><Down><Down>"
         )
     );
     snap!("detail_request_json", detail(12.0, MEDIUM, init(), "ll"));
