@@ -46,7 +46,9 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     let header = Rect { height: 1, ..area };
     let network = Rect { y: area.y + 1, height: network_h, ..area };
     let footer = Rect { y: area.y + area.height - 1, height: 1, ..area };
-    let main = Rect { y: network.y + network.height, height: area.height.saturating_sub(network.height + 2), ..area };
+    // the boxes below the graph start `[ui] gap` rows after it
+    let above = if network_h > 0 { network_h + gap_rows(app) } else { 0 };
+    let main = Rect { y: network.y + above, height: area.height.saturating_sub(above + 2), ..area };
     let buf = f.buffer_mut();
     draw_header(app, header, buf);
     if network_h > 0 {
@@ -68,6 +70,19 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         Overlay::Palette => crate::palette::draw(f, app, area),
         Overlay::None => {}
     }
+}
+
+/// Blank rows between boxes one above the other (`[ui] gap`).
+fn gap_rows(app: &App) -> u16 {
+    app.prefs.gap
+}
+
+/// Blank columns between boxes side by side: twice the rows and one more, since a terminal cell
+/// is about twice as tall as it is wide, so the space between any two boxes looks the same (with
+/// no blank row, the borders of boxes one above the other are a row apart, and a column is half
+/// that).
+fn gap_cols(app: &App) -> u16 {
+    app.prefs.gap * 2 + 1
 }
 
 /// A box (`[ui] borders`: rounded unless set), its border highlighted when the panel has focus.
@@ -522,14 +537,14 @@ fn draw_main(app: &mut App, r: Rect, buf: &mut Buffer) {
     let side_by_side = r.width >= app.prefs.side_by_side;
     if app.detail_open && app.selected.is_some() {
         if side_by_side {
-            let lw = (u32::from(r.width) * u32::from(app.split_pct) / 100) as u16;
+            let (lw, gap) = ((u32::from(r.width) * u32::from(app.split_pct) / 100) as u16, gap_cols(app));
             let left = Rect { width: lw, ..r };
-            let right = Rect { x: r.x + lw, width: r.width.saturating_sub(lw), ..r };
+            let right = Rect { x: r.x + lw + gap, width: r.width.saturating_sub(lw + gap), ..r };
             draw_views(app, left, buf);
             draw_detail_pane(app, right, buf);
-            // the two borders where the boxes meet: drag them to resize
+            // the two borders where the boxes meet, and the space between them: drag to resize
             app.hits.add(
-                Rect { x: r.x + lw.saturating_sub(1), width: 2, y: r.y + 1, height: r.height.saturating_sub(2) },
+                Rect { x: r.x + lw.saturating_sub(1), width: gap + 2, y: r.y + 1, height: r.height.saturating_sub(2) },
                 Target::Divider,
             );
         } else {
@@ -1276,10 +1291,12 @@ fn draw_detail_pane(app: &mut App, r: Rect, buf: &mut Buffer) {
         }
         return draw_tabs_box(app, r, buf);
     }
+    // the body box on top, `[ui] gap` rows, then the tabs (at least 8 rows of them)
+    let gap = gap_rows(app);
     let share = u32::from(r.height) * u32::from(app.prefs.body_height) / 100;
-    let top_h = (share as u16).clamp(5, r.height.saturating_sub(8).max(3));
+    let top_h = (share as u16).clamp(5, r.height.saturating_sub(8 + gap).max(3));
     let top = Rect { height: top_h, ..r };
-    let bottom = Rect { y: r.y + top_h, height: r.height.saturating_sub(top_h), ..r };
+    let bottom = Rect { y: r.y + top_h + gap, height: r.height.saturating_sub(top_h + gap), ..r };
     crate::explorer::draw(app, top, buf);
     draw_tabs_box(app, bottom, buf);
 }

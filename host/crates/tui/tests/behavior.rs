@@ -181,11 +181,12 @@ fn dragging_the_divider_and_the_graph() {
     app.handle_mouse(mouse(MouseEventKind::Drag(MouseButton::Left), 56, d.y + 2));
     app.handle_mouse(mouse(MouseEventKind::Up(MouseButton::Left), 56, d.y + 2));
     assert_eq!(app.split_pct, 40);
-    // the detail box now starts at column 56, where its left border meets the list's right one
+    // the list's right border is at column 55 now, and the detail box starts a blank column later
     let text = render_text(&mut app, MEDIUM.0, MEDIUM.1);
     let row = text.lines().nth(14).unwrap();
     assert_eq!(row.chars().nth(55), Some('│'), "{text}");
-    assert_eq!(row.chars().nth(56), Some('│'), "{text}");
+    assert_eq!(row.chars().nth(56), Some(' '), "{text}");
+    assert_eq!(row.chars().nth(57), Some('│'), "{text}");
 
     let g = app.hits.rect_of(Target::Graph).expect("graph");
     app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), g.x + 20, g.y + 2));
@@ -811,7 +812,7 @@ fn long_rows_wrap_and_enter_still_acts_on_the_whole_row() {
     assert!(detail::row_height(&mut app, &doc, row, txn, width) > 1);
     let y = text.lines().position(|l| l.contains("Token             JWT")).expect("the token row");
     let next = text.lines().nth(y + 1).unwrap();
-    assert!(next.contains(&format!("││{}", " ".repeat(19))), "under the value: {next:?}");
+    assert!(next.contains(&format!("│ │{}", " ".repeat(19))), "under the value: {next:?}");
     // Enter on it decodes the token
     let text = press(&mut app, MEDIUM, &format!("{}<Enter>", "j".repeat(row)));
     assert_eq!(app.overlay, Overlay::Decoded, "{text}");
@@ -832,9 +833,16 @@ fn body_lines_wrap_in_the_body_box_and_the_tabs() {
     let body = app.body_view(txn, BodyDir::Response).unwrap().decoded.bytes.clone();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     let token = json["access_token"].as_str().unwrap().to_string();
-    let end = &token[token.len() - 16..];
-    // the body box shows the token to its end, on the rows under its key
-    assert_eq!(text.matches(end).count(), 1, "{text}");
+    // the request's side of the screen, its rows run together without borders and indents: a
+    // wrapped line is whole there, a cut one is not
+    let top = text.lines().find(|l| l.starts_with("╭─ Requests")).expect("the boxes");
+    let x = top.chars().enumerate().filter(|(_, c)| *c == '╭').nth(1).expect("the request's boxes").0;
+    let joined = |text: &str| -> String {
+        let rows = text.lines().map(|l| l.chars().skip(x).collect::<String>());
+        rows.map(|r| r.trim_matches(|c| c == '│' || c == ' ').to_string()).collect()
+    };
+    // the body box shows the whole token, on the rows under its key
+    assert_eq!(joined(&text).matches(&token).count(), 1, "{text}");
     // the Response tab's body too, once the cursor is on it
     press(&mut app, MEDIUM, "l");
     let doc = detail::build_doc(&mut app);
@@ -844,11 +852,11 @@ fn body_lines_wrap_in_the_body_box_and_the_tabs() {
     let width = app.detail_width;
     assert!(detail::row_height(&mut app, &doc, row, txn, width) > 2);
     let text = press(&mut app, MEDIUM, &"j".repeat(row));
-    assert_eq!(text.matches(end).count(), 2, "{text}");
+    assert_eq!(joined(&text).matches(&token).count(), 2, "{text}");
     // not wrapping: cut at the edge in both
     app.prefs.wrap = false;
     let text = render_text(&mut app, MEDIUM.0, MEDIUM.1);
-    assert!(!text.contains(end), "{text}");
+    assert_eq!(joined(&text).matches(&token).count(), 0, "{text}");
 }
 
 #[test]
@@ -894,4 +902,29 @@ fn hidden_boxes_take_no_room_and_no_focus() {
     assert_eq!(app.focus, Focus::List, "Tab skips the hidden graph and body box");
     press(&mut app, MEDIUM, "<Tab>");
     assert_eq!(app.focus, Focus::Detail);
+}
+
+#[test]
+fn boxes_are_the_same_distance_apart_both_ways() {
+    for gap in [0usize, 1] {
+        let mut app = app_at(12.0);
+        app.prefs.gap = gap as u16;
+        let text = press(&mut app, MEDIUM, "<Enter>");
+        let rows: Vec<Vec<char>> = text.lines().map(|l| l.chars().collect()).collect();
+        let s = |y: usize| rows[y].iter().collect::<String>();
+        // one above the other: the list and the request's boxes start `gap` rows below the graph's
+        let graph_end = (0..rows.len()).find(|&y| rows[y].first() == Some(&'╰')).expect("the graph's box");
+        let top = graph_end + 1 + gap;
+        assert!(s(top).starts_with("╭─ Requests"), "gap {gap}: {:?}", s(top));
+        assert!((graph_end + 1..top).all(|y| s(y).trim().is_empty()), "gap {gap}: {text}");
+        // side by side: 2 × gap + 1 blank columns between them, the same space to the eye
+        let between = " ".repeat(2 * gap + 1);
+        assert!(s(top).contains(&format!("╮{between}╭")), "gap {gap}: {:?}", s(top));
+        // the body box over the tabs, `gap` rows apart
+        let x = (0..rows[top].len()).filter(|&x| rows[top][x] == '╭').nth(1).expect("the request's boxes");
+        let tabs = (top..rows.len()).find(|&y| s(y).contains("╭─ Overview")).expect("the tabs");
+        assert_eq!(rows[tabs - 1 - gap][x], '╰', "gap {gap}: {text}");
+        let blank = |y: usize| rows[y].get(x..).is_none_or(|r| r.iter().all(|c| *c == ' '));
+        assert!((tabs - gap..tabs).all(blank), "gap {gap}: {text}");
+    }
 }

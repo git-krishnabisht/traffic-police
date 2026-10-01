@@ -15,30 +15,30 @@ expression: "detail(40.0, MEDIUM, |t| t.url.query.is_some(), \"ll\")"
 │        0 ━━━━━━━━━━━┛━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ │
 │          00:10.000            00:15.000             00:20.000            00:25.000            00:30.000            00:35.000             │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-╭─ Requests 60 ─ Connection ─ Thread ─ Rules ───────────────────────────────╮╭─ lookup?fields=country,re… ─ Response body ─ Request body ──╮
-│ Name                  Size  Type      Status         Time   Timeline      ││ {                                                           │
-│ token                391 B  json      200          513 ms                ▐││   "ip": "49.36.•.•",                                        │
-│ init                 316 B  json      200          2.01 s                ▐││   "country": "IN",                                          │
-│ monitor              302 B  json      200          1.58 s                ▐││   "region": "KA",                                           │
-│ events                17 B  json      200          1.45 s                ▐││   "city": "Bengaluru",                                      │
-│ u_4821.png          4.5 KB  png       200          476 ms                ▐││   "carrier": "Airtel",                                      │
-│ monitor              302 B  json      200          1.53 s                ▐││   "asn": 45609                                              │
-│ challenge            144 B  json      200          386 ms                ▐││ }                                                           │
-│ config                 0 B            302           61 ms                ▐│╰─────────────────────────────────────────────────────────────╯
-│ ↪ config.json        106 B  json      200          195 ms                 │╭─ Overview ─ Response ─ Request ─ Call Stack ────────────────╮
-│ attest               180 B  json      200          2.75 s                 ││ GET /v1/lookup?fields=country,region,carrier HTTP/1.1       │
-│ metrics                6 B  protobuf  200          224 ms                 ││                                                             │
-│ monitor              302 B  json      200          1.41 s                 ││ Query parameters (1)                                        │
-│ events                17 B  json      200          1.14 s                 ││ fields = country,region,carrier                             │
-│ liveness-model-…     150 B  json      404          346 ms                 ││                                                             │
-│ enroll                72 B  json      200          2.08 s                 ││ Headers (4)                                                 │
-│ documents             93 B  json      200          515 ms                 ││ User-Agent: Dalvik/2.1.0 (Linux; U; Android 16; Pixel 8     │
-│ monitor              302 B  json      200          1.50 s                 ││   Build/BP41.250725.006)                                    │
-│ report               305 B  html      500          219 ms                 ││ Host: geo.example.app                                       │
-│ lookup?fields=c…     101 B  json      200          507 ms                 ││ Connection: Keep-Alive                                      │
-│ monitor              302 B  json      200          1.49 s   ▍             ││ Accept-Encoding: gzip                                       │
-│ status?sessionI…     263 B  json      200          326 ms                 ││                                                             │
-│ threshold                             failed       10.0 s   ████▍         ││ No body                                                     │
-│ events                17 B  json      200          970 ms   ▏             ││                                                             │
-╰───────────────────────────────────────────────────────────────────────────╯╰─────────────────────────────────────────────────────────────╯
+╭─ Requests 60 ─ Connection ─ Thread ─ Rules ───────────────────────────────╮ ╭─ lookup?fields=country,r… ─ Response body ─ Request body ──╮
+│ Name                  Size  Type      Status         Time   Timeline      │ │ {                                                          │
+│ token                391 B  json      200          513 ms                ▐│ │   "ip": "49.36.•.•",                                       │
+│ init                 316 B  json      200          2.01 s                ▐│ │   "country": "IN",                                         │
+│ monitor              302 B  json      200          1.58 s                ▐│ │   "region": "KA",                                          │
+│ events                17 B  json      200          1.45 s                ▐│ │   "city": "Bengaluru",                                     │
+│ u_4821.png          4.5 KB  png       200          476 ms                ▐│ │   "carrier": "Airtel",                                     │
+│ monitor              302 B  json      200          1.53 s                ▐│ │   "asn": 45609                                             │
+│ challenge            144 B  json      200          386 ms                ▐│ │ }                                                          │
+│ config                 0 B            302           61 ms                ▐│ ╰────────────────────────────────────────────────────────────╯
+│ ↪ config.json        106 B  json      200          195 ms                 │ ╭─ Overview ─ Response ─ Request ─ Call Stack ───────────────╮
+│ attest               180 B  json      200          2.75 s                 │ │ GET /v1/lookup?fields=country,region,carrier HTTP/1.1      │
+│ metrics                6 B  protobuf  200          224 ms                 │ │                                                            │
+│ monitor              302 B  json      200          1.41 s                 │ │ Query parameters (1)                                       │
+│ events                17 B  json      200          1.14 s                 │ │ fields = country,region,carrier                            │
+│ liveness-model-…     150 B  json      404          346 ms                 │ │                                                            │
+│ enroll                72 B  json      200          2.08 s                 │ │ Headers (4)                                                │
+│ documents             93 B  json      200          515 ms                 │ │ User-Agent: Dalvik/2.1.0 (Linux; U; Android 16; Pixel 8    │
+│ monitor              302 B  json      200          1.50 s                 │ │   Build/BP41.250725.006)                                   │
+│ report               305 B  html      500          219 ms                 │ │ Host: geo.example.app                                      │
+│ lookup?fields=c…     101 B  json      200          507 ms                 │ │ Connection: Keep-Alive                                     │
+│ monitor              302 B  json      200          1.49 s   ▍             │ │ Accept-Encoding: gzip                                      │
+│ status?sessionI…     263 B  json      200          326 ms                 │ │                                                            │
+│ threshold                             failed       10.0 s   ████▍         │ │ No body                                                    │
+│ events                17 B  json      200          970 ms   ▏             │ │                                                            │
+╰───────────────────────────────────────────────────────────────────────────╯ ╰────────────────────────────────────────────────────────────╯
  ←→ tabs   ↑↓ move   / search   nN next/previous   y copy   w save   Enter fold   p parsed/source   ? help       ⚠ studio inspector present

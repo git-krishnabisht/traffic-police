@@ -212,6 +212,9 @@ pub struct Prefs {
     pub side_by_side: u16,
     /// Key hints in the footer.
     pub hints: bool,
+    /// Blank rows between boxes one above the other; boxes side by side get `2 × gap + 1`
+    /// columns, since a terminal cell is about twice as tall as it is wide.
+    pub gap: u16,
 }
 
 impl Default for Prefs {
@@ -224,6 +227,7 @@ impl Default for Prefs {
             body_height: 40,
             side_by_side: crate::ui::SIDE_BY_SIDE_WIDTH,
             hints: true,
+            gap: 0,
         }
     }
 }

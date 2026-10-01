@@ -335,6 +335,7 @@ wrap = true                   # wrap long lines in every box (false: cut them; <
 scroll = 0                    # lines Ctrl+D and Ctrl+U move: 0 is half the box, as in Neovim
 follow = true                 # follow new requests while the cursor is on the newest
 hints = true                  # the key hints in the footer
+gap = 0                       # blank rows between boxes; side by side they get 2 × gap + 1 columns
 clipboard = "auto"            # auto, osc52, native, off
 images = true                 # false: half-blocks (as --no-images)
 fps = 60                      # frames drawn a second at most (10-240); a still screen draws none
@@ -362,6 +363,11 @@ path = "/opt/android-sdk/platform-tools/adb"   # the adb doctor compares with th
 memory = "256mb"              # body bytes kept in memory before the rest goes to disk
 spill_dir = "/var/tmp"        # where that goes (a private directory, removed on exit)
 ```
+
+`gap` is the space between boxes. A terminal cell is about twice as tall as it is wide, so boxes
+side by side get twice as many blank columns as boxes one above the other get rows, and one more:
+with `gap = 0` the borders above each other are on neighbouring rows and the borders side by side
+one blank column apart, which looks the same; `gap = 1` gives one blank row and three columns.
 
 `sort` takes a column's name as the list's header shows it, in lowercase with `-` for spaces
 (`status`, `size`, `time`, `req-size`); `timeline` is the order the requests started in. `time`

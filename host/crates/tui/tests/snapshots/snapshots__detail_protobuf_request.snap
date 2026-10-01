@@ -15,30 +15,30 @@ expression: "detail(12.0, MEDIUM, path_is(\"/v1/metrics\"), \"ll\")"
 │        0                                                                             ━━┛        ┗━━━┛    ┗┛             ┗┛  ┗┛    ┗━┛ ┗━ │
 │                                                                                      00:00.000            00:05.000            00:10.000 │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-╭─ Requests 26 ─ Connection ─ Thread ─ Rules ───────────────────────────────╮╭─ metrics ─ Response body ─ Request body ─── protobuf · 6 B ─╮
-│ Name                  Size  Type      Status         Time   Timeline      ││ 1: 4                                                        │
-│ token                391 B  json      200          513 ms           █    ▐││ 2: "ok"                                                     │
-│ init                 316 B  json      200          2.01 s           █▎   ▐││                                                             │
-│ monitor              302 B  json      200          1.58 s           ▐▏   ▐││                                                             │
-│ events                17 B  json      200          1.45 s           █▍   ▐││                                                             │
-│ u_4821.png          4.5 KB  png       200          476 ms            ▏   ▐││                                                             │
-│ monitor              302 B  json      200          1.53 s            ▐   ▐││                                                             │
-│ challenge            144 B  json      200          386 ms            ▏   ▐││                                                             │
-│ config                 0 B            302           61 ms            ▏   ▐│╰─────────────────────────────────────────────────────────────╯
-│ ↪ config.json        106 B  json      200          195 ms            ▏   ▐│╭─ Overview ─ Response ─ Request ─ Call Stack ────────────────╮
-│ attest               180 B  json      200          2.75 s            ▐▉  ▐││ POST /v1/metrics HTTP/2                                     │
-│ metrics                6 B  protobuf  200          224 ms             ▏  ▐││                                                             │
-│ monitor              302 B  json      200          1.41 s             ▌  ▐││ Headers (8)                                                 │
-│ events                17 B  json      200          1.14 s             ▌  ▐││ Host: telemetry.example.app                                 │
-│ liveness-model-…     150 B  json      404          346 ms             ▏  ▐││ Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCIsIm│
-│ enroll                72 B  json      200          2.08 s              ▉ ▐││   tpZCI6InNkay0yMDI2LTA5In0.eyJzdWIiOiJ1c2VyXzQ4MjEiLCJpc3Mi│
-│ documents             93 B  json      200          515 ms              █ ▐││   OiJodHRwczovL2F1dGguZXhhbXBsZS5hcHAiLCJhdWQiOiJkZWVwaWQtc2│
-│ monitor              302 B  json      200          1.50 s              ▊ ▐││   RrIiwic2NvcGUiOiJzZGs6c2Vzc2lvbiBzZGs6dGVsZW1ldHJ5IiwiaWF0│
-│ report               305 B  html      500          219 ms              ▏ ▐││   IjoxNzkwNjU4NjAwLCJleHAiOjE3OTA2NjIyMDB9.gbW5DLdhPS-      │
-│ lookup?fields=c…     101 B  json      200          507 ms              ▕ ▐││   Aufb4O_qjlH8Cw_9plDv0GVXKzKXIM7h                          │
-│ monitor              302 B  json      200          1.49 s              ▕▌▐││ Content-Type: application/x-protobuf                        │
-│ status?sessionI…     263 B  json      200          326 ms               ▏ ││ Content-Length: 158                                         │
-│ threshold                             ···          1.90 s               █ ││ X-Sdk-Version: 2.4.1                                        │
-│ events                17 B  json      200          970 ms               ▏ ││ X-Request-Id: 52090611-3ae5-4ba8-afa8-dc89fc4012fb          │
-╰───────────────────────────────────────────────────────────────────────────╯╰─────────────────────────────────────────────────────────────╯
+╭─ Requests 26 ─ Connection ─ Thread ─ Rules ───────────────────────────────╮ ╭─ metrics ─ Response body ─ Request body ── protobuf · 6 B ─╮
+│ Name                  Size  Type      Status         Time   Timeline      │ │ 1: 4                                                       │
+│ token                391 B  json      200          513 ms           █    ▐│ │ 2: "ok"                                                    │
+│ init                 316 B  json      200          2.01 s           █▎   ▐│ │                                                            │
+│ monitor              302 B  json      200          1.58 s           ▐▏   ▐│ │                                                            │
+│ events                17 B  json      200          1.45 s           █▍   ▐│ │                                                            │
+│ u_4821.png          4.5 KB  png       200          476 ms            ▏   ▐│ │                                                            │
+│ monitor              302 B  json      200          1.53 s            ▐   ▐│ │                                                            │
+│ challenge            144 B  json      200          386 ms            ▏   ▐│ │                                                            │
+│ config                 0 B            302           61 ms            ▏   ▐│ ╰────────────────────────────────────────────────────────────╯
+│ ↪ config.json        106 B  json      200          195 ms            ▏   ▐│ ╭─ Overview ─ Response ─ Request ─ Call Stack ───────────────╮
+│ attest               180 B  json      200          2.75 s            ▐▉  ▐│ │ POST /v1/metrics HTTP/2                                    │
+│ metrics                6 B  protobuf  200          224 ms             ▏  ▐│ │                                                            │
+│ monitor              302 B  json      200          1.41 s             ▌  ▐│ │ Headers (8)                                                │
+│ events                17 B  json      200          1.14 s             ▌  ▐│ │ Host: telemetry.example.app                                │
+│ liveness-model-…     150 B  json      404          346 ms             ▏  ▐│ │ Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCIsI│
+│ enroll                72 B  json      200          2.08 s              ▉ ▐│ │   mtpZCI6InNkay0yMDI2LTA5In0.eyJzdWIiOiJ1c2VyXzQ4MjEiLCJpc3│
+│ documents             93 B  json      200          515 ms              █ ▐│ │   MiOiJodHRwczovL2F1dGguZXhhbXBsZS5hcHAiLCJhdWQiOiJkZWVwaWQ│
+│ monitor              302 B  json      200          1.50 s              ▊ ▐│ │   tc2RrIiwic2NvcGUiOiJzZGs6c2Vzc2lvbiBzZGs6dGVsZW1ldHJ5Iiwi│
+│ report               305 B  html      500          219 ms              ▏ ▐│ │   aWF0IjoxNzkwNjU4NjAwLCJleHAiOjE3OTA2NjIyMDB9.gbW5DLdhPS- │
+│ lookup?fields=c…     101 B  json      200          507 ms              ▕ ▐│ │   Aufb4O_qjlH8Cw_9plDv0GVXKzKXIM7h                         │
+│ monitor              302 B  json      200          1.49 s              ▕▌▐│ │ Content-Type: application/x-protobuf                       │
+│ status?sessionI…     263 B  json      200          326 ms               ▏ │ │ Content-Length: 158                                        │
+│ threshold                             ···          1.90 s               █ │ │ X-Sdk-Version: 2.4.1                                       │
+│ events                17 B  json      200          970 ms               ▏ │ │ X-Request-Id: 52090611-3ae5-4ba8-afa8-dc89fc4012fb         │
+╰───────────────────────────────────────────────────────────────────────────╯ ╰────────────────────────────────────────────────────────────╯
  ←→ tabs   ↑↓ move   / search   nN next/previous   y copy   w save   Enter fold   p parsed/source   ? help       ⚠ studio inspector present

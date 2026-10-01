@@ -24,6 +24,7 @@
 //! scroll = 0                  # lines Ctrl+D and Ctrl+U move (0: half the box, like Neovim)
 //! follow = true               # follow new requests while the cursor is on the newest
 //! hints = true                # key hints in the footer
+//! gap = 0                     # blank rows between boxes; side by side 2 × gap + 1 columns
 //! clipboard = "auto"          # auto, osc52, native, off
 //! images = true               # false draws images with half-blocks (as --no-images)
 //! fps = 60                    # frames drawn a second at most (10-240); a still screen draws none
@@ -76,6 +77,8 @@ const GRAPH_HEIGHT_RANGE: std::ops::RangeInclusive<u16> = 0..=40;
 const BODY_HEIGHT_RANGE: std::ops::RangeInclusive<u16> = 15..=85;
 /// `[ui] side_by_side`: the width from which the detail pane sits beside the list.
 const SIDE_BY_SIDE_RANGE: std::ops::RangeInclusive<u16> = 100..=500;
+/// `[ui] gap`: blank rows between boxes one above the other.
+const GAP_RANGE: std::ops::RangeInclusive<u16> = 0..=4;
 
 /// A `[ui]` setting checked against its valid values: the name, the value, the check, and what
 /// to use instead.
@@ -125,6 +128,7 @@ pub struct Ui {
     pub scroll: Option<Spanned<u16>>,
     pub follow: Option<bool>,
     pub hints: Option<bool>,
+    pub gap: Option<Spanned<u16>>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -315,7 +319,7 @@ impl Loaded {
                 found.push((v.span().start, format!("[ui] {name} {:?}: use {choices}", v.get_ref())));
             }
         }
-        let numbers: [NumberCheck; 4] = [
+        let numbers: [NumberCheck; 5] = [
             (
                 "scroll",
                 &ui.scroll,
@@ -340,6 +344,7 @@ impl Loaded {
                 |n| SIDE_BY_SIDE_RANGE.contains(&n),
                 format!("{} to {} (columns)", SIDE_BY_SIDE_RANGE.start(), SIDE_BY_SIDE_RANGE.end()),
             ),
+            ("gap", &ui.gap, |n| GAP_RANGE.contains(&n), format!("0 to {} (rows)", GAP_RANGE.end())),
         ];
         for (name, value, valid, choices) in numbers {
             if let Some(v) = value
@@ -515,6 +520,9 @@ impl Loaded {
         }
         if let Some(h) = ui.hints {
             p.hints = h;
+        }
+        if let Some(n) = number(&ui.gap).filter(|n| GAP_RANGE.contains(n)) {
+            p.gap = n;
         }
         if let Some(v) = word(&ui.view).and_then(|v| View::parse(&v)) {
             app.view = v;
@@ -704,13 +712,14 @@ wrap = false
 scroll = 10
 follow = false
 hints = false
+gap = 2
 "#;
         let l = parse(text);
         assert!(l.problems.is_empty(), "{:?}", l.problems);
         let mut app = App::new(traffic_police_core::SessionStore::new(), Theme::default());
         l.apply_ui(&mut app);
         let p = &app.prefs;
-        assert_eq!((p.wrap, p.scroll, p.follow, p.hints), (false, 10, false, false));
+        assert_eq!((p.wrap, p.scroll, p.follow, p.hints, p.gap), (false, 10, false, false, 2));
         assert_eq!((p.graph_height, p.body_height, p.side_by_side), (Some(0), 0, 200));
         assert_eq!((app.view, app.detail.tab, app.explorer.tab), (View::Threads, Tab::CallStack, BodyTab::Request));
         assert_eq!(app.graph_source, GraphSource::Captured);
@@ -739,7 +748,7 @@ hints = false
 
     #[test]
     fn bad_settings_and_colors_name_their_line() {
-        let text = "[ui]\nborders = \"dotted\"\nscroll = 900\nbody_height = 5\ntab = \"headers\"\n\
+        let text = "[ui]\nborders = \"dotted\"\nscroll = 900\nbody_height = 5\ntab = \"headers\"\ngap = 9\n\
                     [colors]\naccent = \"blue\"\ncolour = \"#000000\"\nselection = \"#000000\"\n\
                     [colors.dark]\nselection = \"#12345\"\n";
         let l = parse(text);
@@ -748,9 +757,10 @@ hints = false
             "line 3: [ui] scroll 900: use 0 (half the box) to 500",
             "line 4: [ui] body_height 5: use 15 to 85 (percent), or 0 for no body box",
             "line 5: [ui] tab \"headers\": use overview, response, request or call-stack",
-            "line 7: [colors] accent: use a color like \"#61afef\"",
-            "line 8: [colors] \"colour\" is not a color's name; the names: text, dim,",
-            "line 11: [colors.dark] selection: use a color like \"#61afef\"",
+            "line 6: [ui] gap 9: use 0 to 4 (rows)",
+            "line 8: [colors] accent: use a color like \"#61afef\"",
+            "line 9: [colors] \"colour\" is not a color's name; the names: text, dim,",
+            "line 12: [colors.dark] selection: use a color like \"#61afef\"",
         ];
         assert_eq!(l.problems.len(), want.len(), "{:?}", l.problems);
         for (got, want) in l.problems.iter().zip(want) {
