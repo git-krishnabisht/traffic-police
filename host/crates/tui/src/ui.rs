@@ -1303,8 +1303,11 @@ fn draw_tabs_box(app: &mut App, r: Rect, buf: &mut Buffer) {
         app.hits.add(*rect, Target::DetailTab(tab));
     }
     let content = Rect { x: inner.x + 1, width: inner.width.saturating_sub(1), ..inner };
-    detail::draw(app, content, buf);
-    // bottom border: the search, and where in its matches the cursor is
+    let path = detail::draw(app, content, buf);
+    // bottom border: the search and where in its matches the cursor is; on the right, the JSON
+    // path of the cursor line
+    let bottom = r.y + r.height.saturating_sub(1);
+    let mut room = r;
     if !app.search.query.is_empty() {
         let n = app.search.matches.len();
         let at = match app.search.current {
@@ -1317,7 +1320,13 @@ fn draw_tabs_box(app: &mut App, r: Rect, buf: &mut Buffer) {
             Span::styled(truncate(&app.search.query, 30), t.accent()),
             Span::styled(format!(" · {at}"), t.dim()),
         ];
-        border_labels(buf, r, r.y + r.height.saturating_sub(1), false, vec![label]);
+        if let Some(l) = border_labels(buf, r, bottom, false, vec![label]).first() {
+            let from = l.x + l.width;
+            room = Rect { x: from, width: (r.x + r.width).saturating_sub(from), ..r };
+        }
+    }
+    if let Some(path) = path {
+        border_labels(buf, room, bottom, true, vec![vec![Span::styled(path, t.accent())]]);
     }
 }
 

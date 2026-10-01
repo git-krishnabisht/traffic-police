@@ -39,6 +39,6 @@ expression: "detail(12.0, MEDIUM, init(),\n\"l[<Down><Down><Down><Down><Down><Do
 │ monitor              302 B  json      200          1.49 s              ▕▌▐││   "ok": true,                                               │
 │ status?sessionI…     263 B  json      200          326 ms               ▏ ││   "sessionId": "session_15bce3a5a963c9fde0ebe700e9d76981",  │
 │ threshold                             ···          1.90 s               █ ││   "deepid": "-a02mRsDvpclHF1i8eoravsWmApTcmegxpqeKsY",      │
-│ events                17 B  json      200          970 ms               ▏ ││   "config": {…},  4 keys                           $.config │
-╰───────────────────────────────────────────────────────────────────────────╯╰─────────────────────────────────────────────────────────────╯
+│ events                17 B  json      200          970 ms               ▏ ││   "config": {…},  4 keys                                    │
+╰───────────────────────────────────────────────────────────────────────────╯╰────────────────────────────────────────────────── $.config ─╯
  ←→ tabs   ↑↓ move   / search   nN next/previous   y copy   w save   Enter fold   p parsed/source   ? help       ⚠ studio inspector present

@@ -863,8 +863,10 @@ pub fn row_text(app: &mut App, doc: &Doc, i: usize, txn: TxnIdx) -> Option<Strin
     }
 }
 
-pub fn draw(app: &mut App, area: Rect, buf: &mut Buffer) {
-    let Some(txn) = app.selected else { return };
+/// Draws the current tab into `area`; returns the cursor line's JSON path, for the box's border
+/// (drawn over the last row, it would hide what is there).
+pub fn draw(app: &mut App, area: Rect, buf: &mut Buffer) -> Option<String> {
+    let txn = app.selected?;
     let theme = app.theme.clone();
     let focused = app.focus == Focus::Detail;
     app.detail_height = area.height as usize;
@@ -872,7 +874,7 @@ pub fn draw(app: &mut App, area: Rect, buf: &mut Buffer) {
     let doc = build_doc(app);
     let len = doc.len();
     if len == 0 {
-        return;
+        return None;
     }
     app.refresh_search(&doc);
     let hits = app.search.matches.clone();
@@ -960,25 +962,10 @@ pub fn draw(app: &mut App, area: Rect, buf: &mut Buffer) {
         skip = 0;
         i += 1;
     }
-    // JSON path of the cursor line
-    if focused
-        && let Some(DocRow::Body(bi)) = doc.row(cursor)
-        && let Some(dir) = dir
-        && let Some(path) = app.body_view(txn, dir).and_then(|v| v.path_at(bi, parsed))
-    {
-        let y = area.y + area.height.saturating_sub(1);
-        let text = format!(" {path} ");
-        let w = (text.chars().count() as u16).min(area.width);
-        let x = area.x + area.width - w;
-        draw_line(
-            buf,
-            x,
-            y,
-            w,
-            &Line::styled(text, theme.accent().add_modifier(Modifier::REVERSED)),
-            0,
-            Style::default(),
-        );
+    // the JSON path of the cursor line
+    match (focused, doc.row(cursor), dir) {
+        (true, Some(DocRow::Body(bi)), Some(dir)) => app.body_view(txn, dir).and_then(|v| v.path_at(bi, parsed)),
+        _ => None,
     }
 }
 
