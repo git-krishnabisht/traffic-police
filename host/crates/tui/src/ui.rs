@@ -37,14 +37,21 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         return;
     }
     // header · Network box · Requests (and Detail) boxes · key hints
-    let graph_h = (area.height / 4).clamp(8, 14);
+    let network_h = match app.prefs.graph_height {
+        // [ui] graph_height = 0: no graph
+        Some(0) => 0,
+        Some(h) => h.min(area.height / 2) + 2,
+        None => (area.height / 4).clamp(8, 14) + 2,
+    };
     let header = Rect { height: 1, ..area };
-    let network = Rect { y: area.y + 1, height: graph_h + 2, ..area };
+    let network = Rect { y: area.y + 1, height: network_h, ..area };
     let footer = Rect { y: area.y + area.height - 1, height: 1, ..area };
     let main = Rect { y: network.y + network.height, height: area.height.saturating_sub(network.height + 2), ..area };
     let buf = f.buffer_mut();
     draw_header(app, header, buf);
-    draw_graph(app, network, buf);
+    if network_h > 0 {
+        draw_graph(app, network, buf);
+    }
     draw_main(app, main, buf);
     draw_footer(app, footer, buf);
     match app.overlay {
@@ -63,13 +70,11 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     }
 }
 
-/// A rounded box, its border highlighted when the panel has focus. Returns the inside.
+/// A box (`[ui] borders`: rounded unless set), its border highlighted when the panel has focus.
+/// Returns the inside.
 pub(crate) fn panel(buf: &mut Buffer, r: Rect, focused: bool, t: &Theme) -> Rect {
     let style = t.border(focused);
-    ratatui::widgets::Block::bordered()
-        .border_type(ratatui::widgets::BorderType::Rounded)
-        .border_style(style)
-        .render(r, buf);
+    ratatui::widgets::Block::bordered().border_type(t.borders).border_style(style).render(r, buf);
     Rect { x: r.x + 1, y: r.y + 1, width: r.width.saturating_sub(2), height: r.height.saturating_sub(2) }
 }
 
@@ -514,7 +519,7 @@ pub fn draw_bar(buf: &mut Buffer, area: Rect, (left, right): (Ts, Ts), seg: Segm
 // --- main area ---------------------------------------------------------------------------------
 
 fn draw_main(app: &mut App, r: Rect, buf: &mut Buffer) {
-    let side_by_side = r.width >= SIDE_BY_SIDE_WIDTH;
+    let side_by_side = r.width >= app.prefs.side_by_side;
     if app.detail_open && app.selected.is_some() {
         if side_by_side {
             let lw = (u32::from(r.width) * u32::from(app.split_pct) / 100) as u16;
@@ -1236,9 +1241,17 @@ fn draw_rules(app: &mut App, r: Rect, buf: &mut Buffer) {
     }
 }
 
-/// The request's side: the body explorer on top, the tabs below.
+/// The request's side: the body explorer on top (`[ui] body_height` of it; none at 0), the
+/// tabs below.
 fn draw_detail_pane(app: &mut App, r: Rect, buf: &mut Buffer) {
-    let top_h = (r.height * 2 / 5).clamp(5, r.height.saturating_sub(8).max(3));
+    if app.prefs.body_height == 0 {
+        if app.focus == Focus::Preview {
+            app.focus = Focus::Detail;
+        }
+        return draw_tabs_box(app, r, buf);
+    }
+    let share = u32::from(r.height) * u32::from(app.prefs.body_height) / 100;
+    let top_h = (share as u16).clamp(5, r.height.saturating_sub(8).max(3));
     let top = Rect { height: top_h, ..r };
     let bottom = Rect { y: r.y + top_h, height: r.height.saturating_sub(top_h), ..r };
     crate::explorer::draw(app, top, buf);
@@ -1495,7 +1508,9 @@ fn draw_footer(app: &App, r: Rect, buf: &mut Buffer) {
     }
     let right_w: usize = right.iter().map(|s| s.content.width()).sum();
     // left: the hints that fit; the last one (help) stays longest
-    let mut items: Vec<(String, &str)> = hints(app)
+    // `[ui] hints = false`: no key hints (messages still show)
+    let shown = if app.prefs.hints { hints(app) } else { Vec::new() };
+    let mut items: Vec<(String, &str)> = shown
         .into_iter()
         .map(|(actions, label)| (actions.iter().map(|&a| app.keymap.key_label(a)).collect::<String>(), label))
         .filter(|(keys, _)| !keys.is_empty())
@@ -1522,7 +1537,7 @@ pub(crate) fn centered(area: Rect, w: u16, h: u16) -> Rect {
 pub(crate) fn draw_box(buf: &mut Buffer, r: Rect, title: &str, theme: &Theme) {
     fill(buf, r, Style::default().bg(theme.selected_bg().map(|_| Color::Reset).unwrap_or(Color::Reset)));
     ratatui::widgets::Block::bordered()
-        .border_type(ratatui::widgets::BorderType::Rounded)
+        .border_type(theme.borders)
         .title(format!(" {title} "))
         .border_style(theme.accent())
         .render(r, buf);

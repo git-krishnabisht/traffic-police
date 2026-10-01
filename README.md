@@ -254,7 +254,8 @@ Mouse: click rows and tabs, double-click a row to open it, wheel to scroll (on t
 wheel zooms and Shift+wheel moves in time), drag on the graph to select a range, drag the divider
 to resize the panes.
 
-Every key can be changed in the config file (below).
+Every key can be changed in the config file (below), and so can the layout, the colors and the
+borders.
 
 ### Filters
 
@@ -316,13 +317,28 @@ optional; `traffic-police doctor` reports mistakes with their line.
 ```toml
 [ui]
 theme = "dark"                # auto, dark, light (--theme wins)
+borders = "rounded"           # rounded, plain, double, thick
 graph_style = "heavy"         # heavy, lines, area, braille
+graph = "app"                 # the graph at start: app (all app traffic) or requests (T switches)
+graph_height = 12            # rows of the graph, 0 hides it (by default a quarter of the screen, 8-14)
 time = "wall"                 # relative (since the session started) or wall (clock time)
 columns = ["method", "host"]  # optional columns shown besides the default ones
+sort = "status desc"          # the list's order at start: a column's name, desc for the reverse
+collapse = false              # start with repeated calls collapsed
+view = "connections"          # the view at start: connections, threads, rules
 divider = 55                  # the list's share of the width, in percent (25-80)
+side_by_side = 140            # from this width on, the detail pane sits beside the list (100-500)
+tab = "overview"              # the tab a request opens on: overview, response, request, call-stack
+body_height = 40              # the body box's share of the detail pane, percent (15-85), 0 hides it
+hints = true                  # the key hints in the footer
 clipboard = "auto"            # auto, osc52, native, off
 images = true                 # false: half-blocks (as --no-images)
 fps = 60                      # frames drawn a second at most (10-240); a still screen draws none
+
+[colors]                      # any color as "#rrggbb", with both palettes
+accent = "#61afef"
+[colors.dark]                 # only with the dark palette ([colors.light]: the light one)
+selection = "#2a4a7f"
 
 [capture]
 body_cap = "10mb"             # bytes kept of each body
@@ -342,6 +358,28 @@ path = "/opt/android-sdk/platform-tools/adb"   # the adb doctor compares with th
 memory = "256mb"              # body bytes kept in memory before the rest goes to disk
 spill_dir = "/var/tmp"        # where that goes (a private directory, removed on exit)
 ```
+
+`sort` takes a column's name as the list's header shows it, in lowercase with `-` for spaces
+(`status`, `size`, `time`, `req-size`); `timeline` is the order the requests started in. `time`
+sorts by how long a request took.
+
+The colors `[colors]` can set, by name:
+
+| Name | Paints |
+|---|---|
+| `text` `dim` `faint` | text; labels and secondary text; hints and the least important text |
+| `accent` | the focused box, links, highlights |
+| `selection` | the selected row's background |
+| `border` | box borders |
+| `receiving` `sending` `waiting` | received and sent bytes (the graph, timing bars); waiting for the server |
+| `ok` `redirect` `client-error` `server-error` | 2xx; 1xx and 3xx; 4xx and warnings; 5xx, failures and errors |
+| `marker` | timeline markers |
+| `key` `string` `number` `keyword` | JSON keys, form fields and header names; strings; numbers; `true` `false` `null` |
+| `tag` `attribute` | XML and HTML tags and attributes |
+| `graph-selection` | the selected range on the graph |
+| `search-match` `search-current` `search-current-text` | search matches, the current one, and its text |
+
+On a terminal with 256 or 16 colors each color is drawn as the nearest one it has.
 
 `fps` is the most frames traffic-police draws in a second: 60 unless you set it, from 10 to 240.
 A live view is drawn that often, because the clock moves the graph and the bars. A still one,

@@ -691,3 +691,19 @@ fn save_a_body_and_export_har() {
     assert!(init["timings"]["wait"].as_f64().unwrap() >= 0.0);
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+#[test]
+fn hidden_boxes_take_no_room_and_no_focus() {
+    let mut app = app_at(12.0);
+    app.prefs.graph_height = Some(0);
+    app.prefs.body_height = 0;
+    app.prefs.hints = false;
+    let text = press(&mut app, MEDIUM, "<Enter>");
+    assert!(!text.contains("Network"), "no graph: {text}");
+    assert!(!text.contains("response body"), "no body box: {text}");
+    assert!(!text.contains("? help"), "no key hints: {text}");
+    press(&mut app, MEDIUM, "<Tab>");
+    assert_eq!(app.focus, Focus::List, "Tab skips the hidden graph and body box");
+    press(&mut app, MEDIUM, "<Tab>");
+    assert_eq!(app.focus, Focus::Detail);
+}

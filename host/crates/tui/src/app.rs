@@ -35,6 +35,18 @@ pub enum View {
     Rules,
 }
 
+impl View {
+    /// `[ui] view`: connections, threads or rules.
+    pub fn parse(s: &str) -> Option<View> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "connections" | "connection" => Some(View::Connections),
+            "threads" | "thread" => Some(View::Threads),
+            "rules" => Some(View::Rules),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Focus {
     Graph,
@@ -54,6 +66,18 @@ pub enum Tab {
 
 impl Tab {
     pub const ALL: [Tab; 4] = [Tab::Overview, Tab::Response, Tab::Request, Tab::CallStack];
+
+    /// `[ui] tab`: overview, response, request or call-stack.
+    pub fn parse(s: &str) -> Option<Tab> {
+        match s.trim().to_ascii_lowercase().replace(['_', ' '], "-").as_str() {
+            "overview" => Some(Tab::Overview),
+            "response" => Some(Tab::Response),
+            "request" => Some(Tab::Request),
+            "call-stack" | "stack" => Some(Tab::CallStack),
+            _ => None,
+        }
+    }
+
     pub fn title(self) -> &'static str {
         match self {
             Tab::Overview => "Overview",
@@ -163,6 +187,26 @@ impl Default for DetailState {
             original: false,
             expanded_runs: HashSet::new(),
         }
+    }
+}
+
+/// `[ui]` settings for layout and movement (ARCHITECTURE.md §5.13); colors, borders and keys
+/// live in the theme and the keymap.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Prefs {
+    /// Rows of the traffic graph: `None` sizes it to the screen (8 to 14); 0 hides it.
+    pub graph_height: Option<u16>,
+    /// The body box's share of the detail pane, in percent; 0 hides the box.
+    pub body_height: u16,
+    /// From this width on, the detail pane sits beside the list instead of covering it.
+    pub side_by_side: u16,
+    /// Key hints in the footer.
+    pub hints: bool,
+}
+
+impl Default for Prefs {
+    fn default() -> Self {
+        Prefs { graph_height: None, body_height: 40, side_by_side: crate::ui::SIDE_BY_SIDE_WIDTH, hints: true }
     }
 }
 
@@ -310,6 +354,8 @@ pub struct App {
     pub wall_labels: bool,
     pub columns: Vec<Column>,
     pub split_pct: u16,
+    /// Layout and movement settings from `[ui]`.
+    pub prefs: Prefs,
     pub overlay: Overlay,
     pub jq_input: Input,
     pub filter_input: Input,
@@ -394,6 +440,7 @@ impl App {
             wall_labels: false,
             columns: Column::DEFAULT.to_vec(),
             split_pct: 55,
+            prefs: Prefs::default(),
             overlay: Overlay::None,
             jq_input: Input::default(),
             filter_input: Input::default(),
@@ -1306,11 +1353,17 @@ impl App {
     }
 
     fn cycle_focus(&mut self, dir: i32) {
-        let order: Vec<Focus> = if self.detail_open {
+        let mut order: Vec<Focus> = if self.detail_open {
             vec![Focus::Graph, Focus::List, Focus::Preview, Focus::Detail]
         } else {
             vec![Focus::Graph, Focus::List]
         };
+        // hidden boxes take no focus
+        order.retain(|f| match f {
+            Focus::Graph => self.prefs.graph_height != Some(0),
+            Focus::Preview => self.prefs.body_height > 0,
+            _ => true,
+        });
         let i = order.iter().position(|&f| f == self.focus).unwrap_or(1) as i32;
         let n = order.len() as i32;
         self.focus = order[((i + dir).rem_euclid(n)) as usize];

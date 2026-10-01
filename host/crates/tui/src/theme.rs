@@ -2,6 +2,7 @@
 //! (ARCHITECTURE.md §5.13).
 
 use ratatui::style::{Color, Modifier, Style};
+use ratatui::widgets::BorderType;
 use traffic_police_core::decode::Tok;
 use traffic_police_core::model::StatusClass;
 
@@ -60,7 +61,30 @@ impl Palette {
 pub struct Theme {
     pub depth: Depth,
     pub palette: Palette,
+    /// How boxes are drawn (`[ui] borders`).
+    pub borders: BorderType,
     rgb: RgbSet,
+}
+
+/// `[ui] borders`: rounded (the default), plain, double or thick.
+pub fn parse_borders(s: &str) -> Option<BorderType> {
+    match s.trim().to_ascii_lowercase().as_str() {
+        "rounded" => Some(BorderType::Rounded),
+        "plain" => Some(BorderType::Plain),
+        "double" => Some(BorderType::Double),
+        "thick" => Some(BorderType::Thick),
+        _ => None,
+    }
+}
+
+/// `#rrggbb` (or `rrggbb`).
+pub fn parse_hex(s: &str) -> Option<(u8, u8, u8)> {
+    let h = s.trim().trim_start_matches('#');
+    if h.len() != 6 || !h.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+    let v = |i: usize| u8::from_str_radix(&h[i..i + 2], 16).ok();
+    Some((v(0)?, v(2)?, v(4)?))
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -86,9 +110,70 @@ struct RgbSet {
     tag: (u8, u8, u8),
     attr: (u8, u8, u8),
     graph_sel: (u8, u8, u8),
-    /// Search matches in the detail pane, and the current one.
+    /// Search matches in the detail pane, and the current one (with its text).
     hit_bg: (u8, u8, u8),
     hit_current_bg: (u8, u8, u8),
+    hit_current_fg: (u8, u8, u8),
+}
+
+/// The colors `[colors]` can set, by name, with what each one paints.
+pub const COLOR_SLOTS: &[(&str, &str)] = &[
+    ("text", "text"),
+    ("dim", "labels and secondary text"),
+    ("faint", "hints and the least important text"),
+    ("accent", "the focused box, links, highlights"),
+    ("selection", "the selected row's background"),
+    ("border", "box borders"),
+    ("receiving", "received bytes: the graph, timing bars"),
+    ("sending", "sent bytes: the graph, timing bars"),
+    ("waiting", "waiting for the server: timing bars"),
+    ("ok", "2xx statuses"),
+    ("redirect", "1xx and 3xx statuses"),
+    ("client-error", "4xx statuses, warnings"),
+    ("server-error", "5xx statuses, failures, errors"),
+    ("marker", "timeline markers"),
+    ("key", "JSON keys, form fields, header names"),
+    ("string", "strings"),
+    ("number", "numbers"),
+    ("keyword", "true, false, null"),
+    ("tag", "XML and HTML tags"),
+    ("attribute", "XML and HTML attributes"),
+    ("graph-selection", "the selected range on the graph"),
+    ("search-match", "search matches"),
+    ("search-current", "the current search match"),
+    ("search-current-text", "the current search match's text"),
+];
+
+impl RgbSet {
+    fn slot(&mut self, name: &str) -> Option<&mut (u8, u8, u8)> {
+        Some(match name {
+            "text" => &mut self.fg,
+            "dim" => &mut self.dim,
+            "faint" => &mut self.faint,
+            "accent" => &mut self.accent,
+            "selection" => &mut self.sel_bg,
+            "border" => &mut self.border,
+            "receiving" => &mut self.recv,
+            "sending" => &mut self.send,
+            "waiting" => &mut self.wait,
+            "ok" => &mut self.ok,
+            "redirect" => &mut self.redirect,
+            "client-error" => &mut self.client_err,
+            "server-error" => &mut self.server_err,
+            "marker" => &mut self.marker,
+            "key" => &mut self.key,
+            "string" => &mut self.string,
+            "number" => &mut self.number,
+            "keyword" => &mut self.keyword,
+            "tag" => &mut self.tag,
+            "attribute" => &mut self.attr,
+            "graph-selection" => &mut self.graph_sel,
+            "search-match" => &mut self.hit_bg,
+            "search-current" => &mut self.hit_current_bg,
+            "search-current-text" => &mut self.hit_current_fg,
+            _ => return None,
+        })
+    }
 }
 
 const DARK: RgbSet = RgbSet {
@@ -115,6 +200,7 @@ const DARK: RgbSet = RgbSet {
     graph_sel: (52, 58, 80),
     hit_bg: (110, 92, 40),
     hit_current_bg: (229, 192, 90),
+    hit_current_fg: (20, 20, 20),
 };
 
 const LIGHT: RgbSet = RgbSet {
@@ -141,6 +227,7 @@ const LIGHT: RgbSet = RgbSet {
     graph_sel: (222, 230, 246),
     hit_bg: (255, 236, 170),
     hit_current_bg: (255, 196, 60),
+    hit_current_fg: (20, 20, 20),
 };
 
 fn ansi256((r, g, b): (u8, u8, u8)) -> u8 {
@@ -208,7 +295,23 @@ fn ansi16((r, g, b): (u8, u8, u8)) -> Color {
 
 impl Theme {
     pub fn new(palette: Palette, depth: Depth) -> Self {
-        Theme { depth, palette, rgb: if palette == Palette::Light { LIGHT } else { DARK } }
+        Theme {
+            depth,
+            palette,
+            borders: BorderType::Rounded,
+            rgb: if palette == Palette::Light { LIGHT } else { DARK },
+        }
+    }
+
+    /// Sets one color by its `[colors]` name (see [`COLOR_SLOTS`]); false for an unknown name.
+    pub fn set_color(&mut self, name: &str, rgb: (u8, u8, u8)) -> bool {
+        match self.rgb.slot(name) {
+            Some(slot) => {
+                *slot = rgb;
+                true
+            }
+            None => false,
+        }
     }
 
     fn c(&self, rgb: (u8, u8, u8)) -> Color {
@@ -278,7 +381,7 @@ impl Theme {
             };
         }
         let bg = if current { self.rgb.hit_current_bg } else { self.rgb.hit_bg };
-        let fg = if current { (20, 20, 20) } else { self.rgb.fg };
+        let fg = if current { self.rgb.hit_current_fg } else { self.rgb.fg };
         let s = Style::default().bg(self.c(bg)).fg(self.c(fg));
         if current { s.add_modifier(Modifier::BOLD) } else { s }
     }
@@ -341,5 +444,32 @@ impl Theme {
 impl Default for Theme {
     fn default() -> Self {
         Theme::new(Palette::Dark, Depth::TrueColor)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn colors_and_borders_parse() {
+        assert_eq!(parse_hex("#61afef"), Some((0x61, 0xaf, 0xef)));
+        assert_eq!(parse_hex("61AFEF"), Some((0x61, 0xaf, 0xef)));
+        assert_eq!(parse_hex("#61afe"), None);
+        assert_eq!(parse_hex("blue"), None);
+        assert_eq!(parse_borders("Double"), Some(BorderType::Double));
+        assert_eq!(parse_borders("dotted"), None);
+    }
+
+    #[test]
+    fn every_named_color_can_be_set() {
+        let mut t = Theme::new(Palette::Dark, Depth::TrueColor);
+        for (name, _) in COLOR_SLOTS {
+            assert!(t.set_color(name, (1, 2, 3)), "{name}");
+        }
+        assert!(!t.set_color("colour", (1, 2, 3)));
+        assert_eq!(t.text().fg, Some(Color::Rgb(1, 2, 3)));
+        assert_eq!(t.recv(), Color::Rgb(1, 2, 3));
+        assert_eq!(t.selected().bg, Some(Color::Rgb(1, 2, 3)));
     }
 }

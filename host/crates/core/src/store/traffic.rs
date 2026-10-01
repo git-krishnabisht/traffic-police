@@ -21,6 +21,15 @@ pub enum GraphSource {
 }
 
 impl GraphSource {
+    /// `[ui] graph`: `app` (all app traffic) or `requests` (the captured requests).
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "app" => Some(GraphSource::AppTotal),
+            "requests" => Some(GraphSource::Captured),
+            _ => None,
+        }
+    }
+
     pub fn toggled(self) -> Self {
         match self {
             GraphSource::AppTotal => GraphSource::Captured,

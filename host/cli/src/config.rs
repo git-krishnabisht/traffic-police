@@ -6,13 +6,28 @@
 //! ```toml
 //! [ui]
 //! theme = "dark"              # auto, dark, light (--theme wins)
+//! borders = "rounded"         # rounded, plain, double, thick
 //! graph_style = "heavy"       # heavy, lines, area, braille
+//! graph = "app"               # what the graph starts with: app (all app traffic) or requests (T switches)
+//! graph_height = 12           # rows of the graph (0 hides it); by default a quarter of the screen
 //! time = "wall"               # relative (since the session started) or wall (clock time)
 //! columns = ["method", "host"] # optional columns shown beside the default ones
+//! sort = "status desc"        # the list's starting order: a column, `desc` for the reverse
+//! collapse = false            # start with repeated calls collapsed
+//! view = "connections"        # the view at start: connections, threads, rules
 //! divider = 55                # the list's share of the width, in percent (25-80)
+//! side_by_side = 140          # from this width on the detail pane sits beside the list
+//! tab = "overview"            # the detail tab a request opens on: overview, response, request, call-stack
+//! body_height = 40            # the body box's share of the detail pane, percent (15-85; 0 hides it)
+//! hints = true                # key hints in the footer
 //! clipboard = "auto"          # auto, osc52, native, off
 //! images = true               # false draws images with half-blocks (as --no-images)
 //! fps = 60                    # frames drawn a second at most (10-240); a still screen draws none
+//!
+//! [colors]                    # any color, as #rrggbb, for both palettes (the names: README, Config)
+//! accent = "#61afef"
+//! [colors.dark]               # only with the dark palette (and [colors.light] with the light one)
+//! selection = "#2a4a7f"
 //!
 //! [capture]
 //! body_cap = "10mb"           # bytes of each body kept (also 1048576)
@@ -39,12 +54,26 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 use toml::Spanned;
 use traffic_police_adb::Adb;
-use traffic_police_core::rows::Column;
+use traffic_police_core::rows::{Column, Sort};
+use traffic_police_core::store::GraphSource;
 use traffic_police_proto::msg::CaptureConfig;
 use traffic_police_tui::App;
-use traffic_police_tui::app::FPS_RANGE;
+use traffic_police_tui::app::{FPS_RANGE, Tab, View};
 use traffic_police_tui::graph::GraphStyle;
 use traffic_police_tui::share::ClipboardMode;
+use traffic_police_tui::theme::{COLOR_SLOTS, Palette, Theme, parse_borders, parse_hex};
+
+/// `[ui] graph_height`: rows of the graph; 0 hides it.
+const GRAPH_HEIGHT_RANGE: std::ops::RangeInclusive<u16> = 0..=40;
+/// `[ui] body_height`: the body box's share of the detail pane (0 hides it).
+const BODY_HEIGHT_RANGE: std::ops::RangeInclusive<u16> = 15..=85;
+/// `[ui] side_by_side`: the width from which the detail pane sits beside the list.
+const SIDE_BY_SIDE_RANGE: std::ops::RangeInclusive<u16> = 100..=500;
+
+/// A `[ui]` setting checked against its valid values: the name, the value, the check, and what
+/// to use instead.
+type WordCheck<'a> = (&'a str, &'a Option<Spanned<String>>, fn(&str) -> bool, &'a str);
+type NumberCheck<'a> = (&'a str, &'a Option<Spanned<u16>>, fn(u16) -> bool, String);
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -59,6 +88,9 @@ pub struct Config {
     pub adb: AdbSection,
     #[serde(default)]
     pub storage: Storage,
+    /// `name = "#rrggbb"` for both palettes, and `dark` / `light` tables for one.
+    #[serde(default)]
+    pub colors: toml::Table,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -72,6 +104,16 @@ pub struct Ui {
     pub clipboard: Option<Spanned<String>>,
     pub images: Option<bool>,
     pub fps: Option<Spanned<u16>>,
+    pub borders: Option<Spanned<String>>,
+    pub graph: Option<Spanned<String>>,
+    pub graph_height: Option<Spanned<u16>>,
+    pub sort: Option<Spanned<String>>,
+    pub collapse: Option<bool>,
+    pub view: Option<Spanned<String>>,
+    pub side_by_side: Option<Spanned<u16>>,
+    pub tab: Option<Spanned<String>>,
+    pub body_height: Option<Spanned<u16>>,
+    pub hints: Option<bool>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -247,6 +289,48 @@ impl Loaded {
             let (min, max) = (FPS_RANGE.start(), FPS_RANGE.end());
             found.push((f.span().start, format!("[ui] fps {}: use {min} to {max} (frames a second)", f.get_ref())));
         }
+        let words: [WordCheck; 5] = [
+            ("borders", &ui.borders, |s| parse_borders(s).is_some(), "rounded, plain, double or thick"),
+            ("graph", &ui.graph, |s| GraphSource::parse(s).is_some(), "app or requests"),
+            ("sort", &ui.sort, |s| Sort::parse(s).is_some(), "a column's name, like \"status\" or \"time desc\""),
+            ("view", &ui.view, |s| View::parse(s).is_some(), "connections, threads or rules"),
+            ("tab", &ui.tab, |s| Tab::parse(s).is_some(), "overview, response, request or call-stack"),
+        ];
+        for (name, value, valid, choices) in words {
+            if let Some(v) = value
+                && !valid(v.get_ref())
+            {
+                found.push((v.span().start, format!("[ui] {name} {:?}: use {choices}", v.get_ref())));
+            }
+        }
+        let numbers: [NumberCheck; 3] = [
+            (
+                "graph_height",
+                &ui.graph_height,
+                |n| GRAPH_HEIGHT_RANGE.contains(&n),
+                format!("0 (no graph) to {} rows", GRAPH_HEIGHT_RANGE.end()),
+            ),
+            (
+                "body_height",
+                &ui.body_height,
+                |n| n == 0 || BODY_HEIGHT_RANGE.contains(&n),
+                format!("{} to {} (percent), or 0 for no body box", BODY_HEIGHT_RANGE.start(), BODY_HEIGHT_RANGE.end()),
+            ),
+            (
+                "side_by_side",
+                &ui.side_by_side,
+                |n| SIDE_BY_SIDE_RANGE.contains(&n),
+                format!("{} to {} (columns)", SIDE_BY_SIDE_RANGE.start(), SIDE_BY_SIDE_RANGE.end()),
+            ),
+        ];
+        for (name, value, valid, choices) in numbers {
+            if let Some(v) = value
+                && !valid(*v.get_ref())
+            {
+                found.push((v.span().start, format!("[ui] {name} {}: use {choices}", v.get_ref())));
+            }
+        }
+        found.extend(self.color_problems());
         for (what, v) in
             [("[capture] body_cap", &self.config.capture.body_cap), ("[storage] memory", &self.config.storage.memory)]
         {
@@ -272,6 +356,81 @@ impl Loaded {
         for (at, what) in found {
             let line = self.line(at);
             self.problems.push(format!("line {line}: {what}"));
+        }
+    }
+
+    /// `[colors]`: unknown names and values that are not `#rrggbb`, each at its line.
+    fn color_problems(&self) -> Vec<(usize, String)> {
+        let mut out = Vec::new();
+        let names: Vec<&str> = COLOR_SLOTS.iter().map(|(n, _)| *n).collect();
+        let mut check = |section: &str, key: &str, value: &toml::Value| {
+            let at = self.key_offset(section, key);
+            if !names.contains(&key) {
+                out.push((at, format!("[{section}] {key:?} is not a color's name; the names: {}", names.join(", "))));
+            } else if value.as_str().and_then(parse_hex).is_none() {
+                out.push((at, format!("[{section}] {key}: use a color like \"#61afef\"")));
+            }
+        };
+        for (key, value) in &self.config.colors {
+            match (key.as_str(), value) {
+                ("dark" | "light", toml::Value::Table(t)) => {
+                    for (k, v) in t {
+                        check(&format!("colors.{key}"), k, v);
+                    }
+                }
+                _ => check("colors", key, value),
+            }
+        }
+        out
+    }
+
+    /// Where `key = …` is in the file, for a problem's line: in `[section]` when it is there,
+    /// else anywhere (an inline table), else the start.
+    fn key_offset(&self, section: &str, key: &str) -> usize {
+        let mut current = String::new();
+        let mut anywhere = None;
+        let mut at = 0;
+        for line in self.text.split_inclusive('\n') {
+            let t = line.trim_start();
+            if let Some(name) = t.strip_prefix('[').and_then(|r| r.split_once(']')).map(|(n, _)| n) {
+                current = name.trim().to_string();
+            } else if let Some(rest) = t.strip_prefix(key)
+                && rest.trim_start().starts_with('=')
+            {
+                let here = at + (line.len() - t.len());
+                if current == section {
+                    return here;
+                }
+                anywhere.get_or_insert(here);
+            }
+            at += line.len();
+        }
+        anywhere.unwrap_or(0)
+    }
+
+    /// `[ui] borders` and `[colors]`, applied to the theme (invalid ones were reported).
+    pub fn apply_theme(&self, theme: &mut Theme) {
+        if let Some(b) = self.config.ui.borders.as_ref().and_then(|b| parse_borders(b.get_ref())) {
+            theme.borders = b;
+        }
+        let palette = match theme.palette {
+            Palette::Dark => "dark",
+            Palette::Light => "light",
+        };
+        let mut set = |key: &str, value: &toml::Value| {
+            if let Some(rgb) = value.as_str().and_then(parse_hex) {
+                theme.set_color(key, rgb);
+            }
+        };
+        for (key, value) in &self.config.colors {
+            if !matches!(key.as_str(), "dark" | "light") {
+                set(key, value);
+            }
+        }
+        if let Some(toml::Value::Table(t)) = self.config.colors.get(palette) {
+            for (key, value) in t {
+                set(key, value);
+            }
         }
     }
 
@@ -314,6 +473,36 @@ impl Loaded {
         }
         if let Some(f) = ui.fps.as_ref().map(|f| *f.get_ref()).filter(|f| FPS_RANGE.contains(f)) {
             app.fps = f;
+        }
+        let number = |v: &Option<Spanned<u16>>| v.as_ref().map(|v| *v.get_ref());
+        let word = |v: &Option<Spanned<String>>| v.as_ref().map(|v| v.get_ref().clone());
+        let p = &mut app.prefs;
+        if let Some(n) = number(&ui.graph_height).filter(|n| GRAPH_HEIGHT_RANGE.contains(n)) {
+            p.graph_height = Some(n);
+        }
+        if let Some(n) = number(&ui.body_height).filter(|n| *n == 0 || BODY_HEIGHT_RANGE.contains(n)) {
+            p.body_height = n;
+        }
+        if let Some(n) = number(&ui.side_by_side).filter(|n| SIDE_BY_SIDE_RANGE.contains(n)) {
+            p.side_by_side = n;
+        }
+        if let Some(h) = ui.hints {
+            p.hints = h;
+        }
+        if let Some(v) = word(&ui.view).and_then(|v| View::parse(&v)) {
+            app.view = v;
+        }
+        if let Some(t) = word(&ui.tab).and_then(|t| Tab::parse(&t)) {
+            app.detail.tab = t;
+        }
+        if let Some(g) = word(&ui.graph).and_then(|g| GraphSource::parse(&g)) {
+            app.graph_source = g;
+        }
+        if let Some(s) = word(&ui.sort).and_then(|s| Sort::parse(&s)) {
+            app.rows.set_sort(s);
+        }
+        if let Some(c) = ui.collapse {
+            app.rows.set_collapse(c);
         }
         for (name, keys) in &self.config.keymap {
             let _ = app.keymap.apply(&[(name.clone(), key_list(keys.get_ref()))]);
@@ -395,6 +584,7 @@ fn server(s: &str) -> Option<(String, u16)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use traffic_police_tui::theme::Depth;
 
     #[test]
     fn a_full_file_applies() {
@@ -464,6 +654,80 @@ memory = 1048576
         let mut app = App::new(traffic_police_core::SessionStore::new(), traffic_police_tui::Theme::default());
         l.apply_ui(&mut app);
         assert_eq!((app.graph_style, app.fps), (GraphStyle::Heavy, traffic_police_tui::app::DEFAULT_FPS));
+    }
+
+    #[test]
+    fn layout_behavior_and_start_settings_apply() {
+        let text = r#"
+[ui]
+borders = "double"
+graph = "requests"
+graph_height = 0
+sort = "status desc"
+collapse = true
+view = "threads"
+side_by_side = 200
+tab = "call-stack"
+body_height = 0
+hints = false
+"#;
+        let l = parse(text);
+        assert!(l.problems.is_empty(), "{:?}", l.problems);
+        let mut app = App::new(traffic_police_core::SessionStore::new(), Theme::default());
+        l.apply_ui(&mut app);
+        let p = &app.prefs;
+        assert!(!p.hints);
+        assert_eq!((p.graph_height, p.body_height, p.side_by_side), (Some(0), 0, 200));
+        assert_eq!((app.view, app.detail.tab), (View::Threads, Tab::CallStack));
+        assert_eq!(app.graph_source, GraphSource::Captured);
+        assert_eq!(app.rows.sort, Sort { column: Column::Status, descending: true });
+        assert!(app.rows.collapse);
+        let mut theme = Theme::default();
+        l.apply_theme(&mut theme);
+        assert_eq!(Some(theme.borders), parse_borders("double"));
+    }
+
+    #[test]
+    fn colors_apply_to_both_palettes_or_to_one() {
+        let text = "[colors]\naccent = \"#112233\"\n[colors.dark]\nselection = \"#445566\"\n[colors.light]\nselection = \"#778899\"\n";
+        let l = parse(text);
+        assert!(l.problems.is_empty(), "{:?}", l.problems);
+        for (palette, selection) in [(Palette::Dark, (0x44, 0x55, 0x66)), (Palette::Light, (0x77, 0x88, 0x99))] {
+            let mut theme = Theme::new(palette, Depth::TrueColor);
+            l.apply_theme(&mut theme);
+            let mut want = Theme::new(palette, Depth::TrueColor);
+            want.set_color("accent", (0x11, 0x22, 0x33));
+            want.set_color("selection", selection);
+            assert_eq!((theme.accent(), theme.selected()), (want.accent(), want.selected()), "{palette:?}");
+            assert_eq!(theme.text(), Theme::new(palette, Depth::TrueColor).text(), "the rest is unchanged");
+        }
+    }
+
+    #[test]
+    fn bad_settings_and_colors_name_their_line() {
+        let text = "[ui]\nborders = \"dotted\"\nbody_height = 5\ntab = \"headers\"\n\
+                    [colors]\naccent = \"blue\"\ncolour = \"#000000\"\nselection = \"#000000\"\n\
+                    [colors.dark]\nselection = \"#12345\"\n";
+        let l = parse(text);
+        let want = [
+            "line 2: [ui] borders \"dotted\": use rounded, plain, double or thick",
+            "line 3: [ui] body_height 5: use 15 to 85 (percent), or 0 for no body box",
+            "line 4: [ui] tab \"headers\": use overview, response, request or call-stack",
+            "line 6: [colors] accent: use a color like \"#61afef\"",
+            "line 7: [colors] \"colour\" is not a color's name; the names: text, dim,",
+            "line 10: [colors.dark] selection: use a color like \"#61afef\"",
+        ];
+        assert_eq!(l.problems.len(), want.len(), "{:?}", l.problems);
+        for (got, want) in l.problems.iter().zip(want) {
+            assert!(got.starts_with(want), "{got:?} should start with {want:?}");
+        }
+        // the valid settings beside them still apply
+        let mut theme = Theme::default();
+        l.apply_theme(&mut theme);
+        let mut black = Theme::default();
+        black.set_color("selection", (0, 0, 0));
+        assert_eq!(theme.selected(), black.selected());
+        assert_eq!(theme.accent(), Theme::default().accent());
     }
 
     #[test]

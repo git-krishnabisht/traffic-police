@@ -66,6 +66,26 @@ pub struct Sort {
     pub descending: bool,
 }
 
+impl Sort {
+    /// `[ui] sort`: a column's name (`status`, `req-size`; `timeline` is the start order), and
+    /// `desc` after it for the reverse.
+    pub fn parse(s: &str) -> Option<Sort> {
+        let mut words = s.split_whitespace();
+        let name = words.next()?.to_ascii_lowercase().replace('_', "-");
+        let descending = match words.next().map(str::to_ascii_lowercase).as_deref() {
+            None | Some("asc" | "ascending") => false,
+            Some("desc" | "descending") => true,
+            _ => return None,
+        };
+        if words.next().is_some() {
+            return None;
+        }
+        let all = Column::DEFAULT.into_iter().chain(Column::OPTIONAL);
+        let column = all.into_iter().find(|c| c.title().to_ascii_lowercase().replace(' ', "-") == name)?;
+        Some(Sort { column, descending })
+    }
+}
+
 impl Default for Sort {
     /// Chronological (request start), which the Timeline column stands for.
     fn default() -> Self {

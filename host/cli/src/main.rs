@@ -233,7 +233,8 @@ fn main() -> anyhow::Result<()> {
     let settings = config::load();
     settings.apply_storage();
     let theme_arg = cli.theme.or_else(|| settings.theme().and_then(|t| ThemeArg::from_str(t, true).ok()));
-    let theme = theme(theme_arg.unwrap_or(ThemeArg::Auto));
+    let mut theme = theme(theme_arg.unwrap_or(ThemeArg::Auto));
+    settings.apply_theme(&mut theme);
     let images = !cli.no_images && settings.images();
     let log_file = cli.log_file.clone();
     match cli.command {
