@@ -3,14 +3,14 @@ source: crates/tui/tests/snapshots.rs
 expression: "frame(12.0, SMALL, \"?\")"
 ---
  traffic-police  Pixel 8 [demo]  com.example.shop  pid 4312  ● LIVE  ✎ 1 rule active    26 requests
-╭─ Network · all app traffic ────────────────────────── ━ Receiving 3.3 KB/s   ━ Sending 1.2 KB/s ─╮
-│  16 KB/s                                                      ┊                                  │
-│                                                               ┊        ┏┓                        │
-│                                                               ┊        ┃┃           ┏┓           │
+╭─ Network · all app traffic ────────────────────────── ━ Receiving 3.9 KB/s   ━ Sending 2.5 KB/s ─╮
+│  16 KB/s                                                        ┊                                │
+│                                                                 ┊        ⢠⡀                      │
+│                                                                 ┊        ⡞⣇           ⢀          │
 │ 8.╭ keys ────────────────────────────────────────────────────────────────────────────────────╮   │
-│   │ Move     ↑/k up · ↓/j down · ←/h left · →/l right · g/Home top · G/End/Ctrl+g bottom     │   │
-│   │          PgUp page up · PgDn page down · Ctrl+u/Ctrl+p ½ page up · Ctrl+d ½ page down    │━┏ │
-│   │          Enter open/decode · Esc back · Tab next panel · Shift+Tab previous panel        │━┛ │
+│   │ Move     ↑/k up · ↓/j down · ←/h left · →/l right · g/Home top · G/End/Ctrl+g bottom     │⣄  │
+│   │          PgUp page up · PgDn page down · Ctrl+u/Ctrl+p ½ page up · Ctrl+d ½ page down    │⡀⠑ │
+│   │          Enter open/decode · Esc back · Tab next panel · Shift+Tab previous panel        │⠈⠢ │
 │   │ Views    1 connections · 2 threads · 3 rules                                             │   │
 ╰───│ List     c collapse · s sort · S reverse · C columns · / filter · m pin · r new rule     │───╯
 ╭─ R│          d diff                                                                          │───╮

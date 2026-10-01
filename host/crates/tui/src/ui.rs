@@ -1,5 +1,7 @@
 //! Drawing: layout and every widget except the detail tabs (ARCHITECTURE.md §5.8).
 
+use std::time::Instant;
+
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -13,7 +15,7 @@ use traffic_police_core::fmt::{self, NS_PER_MS, NS_PER_SEC, Ts};
 use traffic_police_core::model::{Transaction, TxnIdx};
 use traffic_police_core::phases::Segments;
 use traffic_police_core::rows::{Column, Row};
-use traffic_police_core::store::SessionStore;
+use traffic_police_core::store::{GraphSource, SessionStore};
 use unicode_width::UnicodeWidthStr;
 
 use crate::actions::Action;
@@ -292,28 +294,58 @@ fn draw_graph(app: &mut App, panel_r: Rect, buf: &mut Buffer) {
     let t = app.theme.clone();
     let focused = app.focus == Focus::Graph;
     let r = panel(buf, panel_r, focused, &t);
-    let (left, right) = app.window();
+    let (left, right) = app.graph_window();
     let plot =
         Rect { x: r.x + GUTTER, y: r.y, width: r.width.saturating_sub(GUTTER + 1), height: r.height.saturating_sub(1) };
-    // braille resolves two samples per cell; the other styles one per column
-    let per_cell = if app.graph_style == GraphStyle::Braille { 2 } else { 1 };
+    // the braille styles resolve two values per cell; the others one per column
+    let per_cell = if matches!(app.graph_style, GraphStyle::Smooth | GraphStyle::Braille) { 2 } else { 1 };
     let n = (plot.width as usize * per_cell).max(2);
-    // Columns are fixed slices of time and the window ends at the last complete one: a moving
-    // window would re-slice every frame (values jitter) and the newest slice would dip while it
-    // fills. The graph lags "now" by at most one column.
+    // Columns are fixed slices of time and the window ends on one: a window ending anywhere
+    // would re-slice the traffic every frame, and the shapes would wobble as they scroll.
     let bucket_ns = (right.saturating_sub(left) / n as u64).max(1);
     let right = right / bucket_ns * bucket_ns;
     let left = right.saturating_sub(bucket_ns * n as u64);
-    let b = app.view_store().traffic().buckets(app.graph_source, left, right, n);
-    let max = b.rx.iter().chain(b.tx.iter()).copied().fold(0.0f64, f64::max);
-    let ymax = fmt::nice_rate_ceil(max.max(1024.0));
+    app.graph.drawn = Some((left, right));
+    // no line before the session started or after "now"
+    let origin = app.view_store().origin();
+    let now = app.now();
+    let shown = |i: usize| {
+        let t = left + i as u64 * bucket_ns + bucket_ns / 2;
+        t >= origin && t <= now
+    };
+    let traffic = app.view_store().traffic();
+    let (source, rx, tx, lead_in) = if app.graph_style == GraphStyle::Smooth {
+        // smoothing reaches past the window's ends: take the traffic there too, so a shape
+        // stays the same while it scrolls through
+        let tick = graph::TICK_NS as f64 / bucket_ns as f64;
+        let reach = graph::smooth_reach(tick, true);
+        let from = left.saturating_sub(reach as u64 * bucket_ns);
+        let lead = ((left - from) / bucket_ns) as usize;
+        let b = traffic.buckets(app.graph_source, from, right + reach as u64 * bucket_ns, lead + n + reach);
+        let spiky = b.source == GraphSource::Captured;
+        let (rx, tx) = (graph::smooth(&b.rx, tick, spiky), graph::smooth(&b.tx, tick, spiky));
+        // the column before the window too: the line comes in from there as it scrolls
+        let lead_in = lead.checked_sub(1).filter(|_| left - bucket_ns / 2 >= origin).map(|i| (rx[i], tx[i]));
+        (b.source, rx[lead..lead + n].to_vec(), tx[lead..lead + n].to_vec(), lead_in)
+    } else {
+        let b = traffic.buckets(app.graph_source, left, right, n);
+        (b.source, b.rx, b.tx, None)
+    };
+    let max = (0..n).filter(|&i| shown(i)).map(|i| rx[i].max(tx[i])).fold(0.0, f64::max);
+    let scale = match app.graph.scale {
+        // tests draw at a fixed time: no easing
+        Some(s) if app.now_override.is_none() => s.next(max, Instant::now()),
+        _ => graph::Scale::new(max, Instant::now()),
+    };
+    app.graph.scale = Some(scale);
+    let ymax = scale.shown;
     // border: title and source on the left, the legend on the right, notes at the bottom
     let title_style =
         if focused { t.accent().add_modifier(Modifier::BOLD) } else { t.title().add_modifier(Modifier::BOLD) };
-    let src = if b.source == app.graph_source {
+    let src = if source == app.graph_source {
         app.graph_source.label().to_string()
     } else {
-        format!("{} (whole-app data not available)", b.source.label())
+        format!("{} (whole-app data not available)", source.label())
     };
     let mut notes: Vec<Vec<Span>> = Vec::new();
     if !app.is_live() {
@@ -332,7 +364,7 @@ fn draw_graph(app: &mut App, panel_r: Rect, buf: &mut Buffer) {
         let k = (v.len() / 20).max(1);
         v[v.len().saturating_sub(k)..].iter().sum::<f64>() / k as f64
     };
-    let (rx_now, tx_now) = if app.is_live() { (last(&b.rx), last(&b.tx)) } else { (0.0, 0.0) };
+    let (rx_now, tx_now) = if app.is_live() { (last(&rx), last(&tx)) } else { (0.0, 0.0) };
     let legend = vec![
         Span::styled("━ ", Style::default().fg(t.recv()).add_modifier(Modifier::BOLD)),
         Span::styled(format!("Receiving {}", if app.is_live() { fmt::rate(rx_now) } else { "—".into() }), t.text()),
@@ -368,14 +400,6 @@ fn draw_graph(app: &mut App, panel_r: Rect, buf: &mut Buffer) {
         }
     }
     // chart
-    // no line before the session started or after "now"
-    let origin = app.view_store().origin();
-    let now = app.now();
-    let bucket_ns = right.saturating_sub(left) as f64 / n as f64;
-    let shown = |i: usize| {
-        let t = left as f64 + (i as f64 + 0.5) * bucket_ns;
-        t >= origin as f64 && t <= now as f64
-    };
     let points = |v: &[f64]| -> Vec<(f64, f64)> {
         v.iter().enumerate().filter(|&(i, _)| shown(i)).map(|(i, v)| (i as f64 + 0.5, *v)).collect()
     };
@@ -384,8 +408,16 @@ fn draw_graph(app: &mut App, panel_r: Rect, buf: &mut Buffer) {
     let send_style = Style::default().fg(t.send()).add_modifier(Modifier::BOLD);
     let recv_style = Style::default().fg(t.recv()).add_modifier(Modifier::BOLD);
     match app.graph_style {
+        GraphStyle::Smooth => {
+            let (rx_in, tx_in) = lead_in.unzip();
+            let lines = |lead_in: Option<f64>, v: &[f64]| -> Vec<Option<f64>> {
+                lead_in.map(Some).into_iter().chain(columns(v)).collect()
+            };
+            let (rx, tx) = (lines(rx_in, &rx), lines(tx_in, &tx));
+            graph::draw_curves(buf, plot, &[(&tx, send_style), (&rx, recv_style)], ymax);
+        }
         GraphStyle::Braille => {
-            let (rx, tx) = (points(&b.rx), points(&b.tx));
+            let (rx, tx) = (points(&rx), points(&tx));
             let chart = Chart::new(vec![
                 Dataset::default()
                     .marker(Marker::Braille)
@@ -404,12 +436,12 @@ fn draw_graph(app: &mut App, panel_r: Rect, buf: &mut Buffer) {
         }
         GraphStyle::Heavy | GraphStyle::Lines => {
             let heavy = app.graph_style == GraphStyle::Heavy;
-            graph::draw_steps(buf, plot, &columns(&b.tx), ymax, send_style, heavy);
-            graph::draw_steps(buf, plot, &columns(&b.rx), ymax, recv_style, heavy);
+            graph::draw_steps(buf, plot, &columns(&tx), ymax, send_style, heavy);
+            graph::draw_steps(buf, plot, &columns(&rx), ymax, recv_style, heavy);
         }
         GraphStyle::Area => {
-            graph::draw_area(buf, plot, &columns(&b.rx), ymax, Style::default().fg(t.recv()));
-            graph::draw_steps(buf, plot, &columns(&b.tx), ymax, send_style, false);
+            graph::draw_area(buf, plot, &columns(&rx), ymax, Style::default().fg(t.recv()));
+            graph::draw_steps(buf, plot, &columns(&tx), ymax, send_style, false);
         }
     }
     // markers (attach, detach, pause, ...)

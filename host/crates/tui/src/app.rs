@@ -164,6 +164,11 @@ pub struct GraphState {
     /// Start of a range selection in progress.
     pub anchor: Option<Ts>,
     pub selection: Option<(Ts, Ts)>,
+    /// The window the graph was last drawn with: ends on a column, and while following live
+    /// a little before "now" ([`App::graph_window`]). The mouse picks times from it.
+    pub drawn: Option<(Ts, Ts)>,
+    /// The top of the graph's y axis.
+    pub scale: Option<crate::graph::Scale>,
 }
 
 #[derive(Debug, Clone)]
@@ -592,6 +597,18 @@ impl App {
         self.graph.selection.unwrap_or_else(|| self.window())
     }
 
+    /// The graph's window: [`window`](Self::window), but while it follows "now" with an app
+    /// connected, [`LAG_NS`](crate::graph::LAG_NS) before it, where the app's counters have
+    /// arrived.
+    pub fn graph_window(&self) -> (Ts, Ts) {
+        let (left, right) = self.window();
+        if self.graph.pinned_right.is_some() || !self.store.sources().any(|s| s.ended.is_none()) {
+            return (left, right);
+        }
+        let lag = crate::graph::LAG_NS;
+        (left.saturating_sub(lag), right.saturating_sub(lag))
+    }
+
     pub fn is_live(&self) -> bool {
         self.graph.pinned_right.is_none() && self.frozen.is_none()
     }
@@ -852,7 +869,7 @@ impl App {
         if x < r.x || x >= r.x + r.width {
             return None;
         }
-        let (left, right) = self.window();
+        let (left, right) = self.graph.drawn.unwrap_or_else(|| self.graph_window());
         let frac = f64::from(x - r.x) / f64::from(r.width.max(1));
         Some(left + ((right - left) as f64 * frac) as u64)
     }
@@ -1817,6 +1834,7 @@ impl App {
         if self.message.as_ref().is_some_and(|(_, at)| at.elapsed() < Duration::from_secs(5))
             || self.jq_running > 0
             || self.bodies.building()
+            || self.graph.scale.is_some_and(|s| s.easing())
         {
             return true;
         }

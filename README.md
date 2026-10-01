@@ -321,7 +321,7 @@ optional; `traffic-police doctor` reports mistakes with their line.
 [ui]
 theme = "dark"                # auto, dark, light (--theme wins)
 borders = "rounded"           # rounded, plain, double, thick
-graph_style = "heavy"         # heavy, lines, area, braille
+graph_style = "smooth"        # smooth, heavy, lines, area, braille
 graph = "app"                 # the graph at start: app (all app traffic) or requests (T switches)
 graph_height = 12            # rows of the graph, 0 hides it (by default a quarter of the screen, 8-14)
 time = "wall"                 # relative (since the session started) or wall (clock time)

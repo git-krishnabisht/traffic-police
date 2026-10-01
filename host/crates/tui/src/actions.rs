@@ -169,7 +169,7 @@ pub const ACTIONS: &[Info] = &[
     info!(SelectRange, "select-range", Live, "range", "Select a time range (again to apply)", ["v"]),
     info!(GraphSource, "graph-source", Graph, "source", "Graph: whole-app traffic or captured requests", ["T"]),
     info!(TimeLabels, "time-labels", Graph, "clock", "Time axis: since start or wall clock", ["t"]),
-    info!(GraphStyle, "graph-style", Graph, "style", "Graph style: heavy, lines, area, braille", []),
+    info!(GraphStyle, "graph-style", Graph, "style", "Graph style: smooth, heavy, lines, area, braille", []),
     info!(Collapse, "collapse", List, "collapse", "Collapse repeated calls", ["c"]),
     info!(Sort, "sort", List, "sort", "Sort by the next column", ["s"]),
     info!(SortReverse, "sort-reverse", List, "reverse", "Reverse the sort", ["S"]),

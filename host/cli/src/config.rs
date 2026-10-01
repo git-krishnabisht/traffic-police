@@ -7,7 +7,7 @@
 //! [ui]
 //! theme = "dark"              # auto, dark, light (--theme wins)
 //! borders = "rounded"         # rounded, plain, double, thick
-//! graph_style = "heavy"       # heavy, lines, area, braille
+//! graph_style = "smooth"      # smooth, heavy, lines, area, braille
 //! graph = "app"               # what the graph starts with: app (all app traffic) or requests (T switches)
 //! graph_height = 12           # rows of the graph (0 hides it); by default a quarter of the screen
 //! time = "wall"               # relative (since the session started) or wall (clock time)
@@ -271,7 +271,7 @@ impl Loaded {
         {
             found.push((
                 g.span().start,
-                format!("[ui] graph_style {:?}: use heavy, lines, area or braille", g.get_ref()),
+                format!("[ui] graph_style {:?}: use smooth, heavy, lines, area or braille", g.get_ref()),
             ));
         }
         if let Some(t) = &ui.time
