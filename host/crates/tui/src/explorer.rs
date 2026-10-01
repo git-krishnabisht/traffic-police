@@ -1,6 +1,7 @@
-//! The body explorer: the top half of the detail pane shows the response body, and with focus
-//! `j`/`k` move through it, `h` folds (or goes to the enclosing object or array), `l` unfolds
-//! (or steps into it), Enter folds or opens the value menu on a single value.
+//! The body explorer: the top of the detail pane shows the response body or, on its second tab
+//! (`b`, or a click on the tab), the request body. With focus `j`/`k` move through it, `h` folds
+//! (or goes to the enclosing object or array), `l` unfolds (or steps into it), Enter folds or
+//! opens the value menu on a single value.
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -13,12 +14,43 @@ use crate::actions::Action;
 use crate::app::{App, Focus, Target};
 use crate::bodyview::Window;
 use crate::detail::draw_line;
+use unicode_width::UnicodeWidthStr;
+
+/// Which body the box shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BodyTab {
+    #[default]
+    Response,
+    Request,
+}
+
+impl BodyTab {
+    pub const ALL: [BodyTab; 2] = [BodyTab::Response, BodyTab::Request];
+
+    pub fn title(self) -> &'static str {
+        match self {
+            BodyTab::Response => "Response body",
+            BodyTab::Request => "Request body",
+        }
+    }
+
+    /// `[ui] body`: `response` or `request`.
+    pub fn parse(s: &str) -> Option<BodyTab> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "response" => Some(BodyTab::Response),
+            "request" => Some(BodyTab::Request),
+            _ => None,
+        }
+    }
+}
 
 /// Where the explorer is.
 #[derive(Debug, Clone, Default)]
 pub struct Explorer {
     /// The request and body the cursor belongs to (it starts over for another).
     shown: Option<(TxnIdx, BodyDir)>,
+    /// The body shown; it stays as chosen when another request is selected.
+    pub tab: BodyTab,
     pub cursor: usize,
     pub scroll: usize,
     /// Rows shown last time, for paging.
@@ -26,19 +58,38 @@ pub struct Explorer {
 }
 
 impl App {
-    /// The body the explorer shows: the response as the app received it (or the original, `o`).
+    /// The body the explorer shows: the request body on its second tab, else the response as
+    /// the app received it (or the original, `o`).
     pub fn explorer_body(&self) -> Option<(TxnIdx, BodyDir)> {
         let txn = self.selected?;
-        Some((txn, self.response_dir(txn)))
+        Some(match self.explorer.tab {
+            BodyTab::Request => (txn, BodyDir::Request),
+            BodyTab::Response => (txn, self.response_dir(txn)),
+        })
     }
 
     /// Starts over when the request or body changed.
     fn explorer_sync(&mut self) -> Option<(TxnIdx, BodyDir)> {
         let now = self.explorer_body();
         if self.explorer.shown != now {
-            self.explorer = Explorer { shown: now, height: self.explorer.height, ..Explorer::default() };
+            self.explorer =
+                Explorer { shown: now, tab: self.explorer.tab, height: self.explorer.height, ..Explorer::default() };
         }
         now
+    }
+
+    /// `b`: the other body.
+    pub fn toggle_body_tab(&mut self) {
+        let next = match self.explorer.tab {
+            BodyTab::Response => BodyTab::Request,
+            BodyTab::Request => BodyTab::Response,
+        };
+        self.set_body_tab(next);
+    }
+
+    pub fn set_body_tab(&mut self, tab: BodyTab) {
+        self.explorer.tab = tab;
+        self.explorer_sync();
     }
 
     pub fn explorer_action(&mut self, a: Action) {
@@ -144,30 +195,73 @@ pub fn draw(app: &mut App, r: Rect, buf: &mut Buffer) {
         app.hits.add(*c, Target::DetailClose);
     }
     let room = close.first().map_or(r, |c| Rect { width: c.x.saturating_sub(r.x), ..r });
-    let (name, what) = {
+    let (name, qualifier) = {
         let tx = app.view_store().txn(txn);
-        let what = match dir {
-            BodyDir::Delivered => "response body (as delivered)",
-            _ if tx.rule_modified() => "response body (original)",
-            _ => "response body",
+        let qualifier = match dir {
+            BodyDir::Delivered => " (as delivered)",
+            BodyDir::Response if tx.rule_modified() => " (original)",
+            _ => "",
         };
-        (tx.url.name(), what)
+        (tx.url.name(), qualifier)
     };
     let title_style =
         if focused { t.accent().add_modifier(Modifier::BOLD) } else { t.title().add_modifier(Modifier::BOLD) };
-    let mut labels = vec![
-        vec![Span::styled(crate::ui::truncate(&name, 28), title_style)],
-        vec![Span::styled(what, if focused { t.text() } else { t.dim() })],
-    ];
+    // the request's name, then the two bodies as tabs (as the detail tabs are drawn); the tabs
+    // keep their room, and the name gets what is left
+    let tabs = |qualified: bool| -> Vec<Vec<Span<'static>>> {
+        BodyTab::ALL
+            .into_iter()
+            .map(|tab| {
+                let style = if app.explorer.tab == tab {
+                    if focused {
+                        t.accent().add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
+                    } else {
+                        t.text().add_modifier(Modifier::UNDERLINED)
+                    }
+                } else {
+                    t.dim()
+                };
+                let mut label = vec![Span::styled(tab.title(), style)];
+                if qualified && app.explorer.tab == tab && tab == BodyTab::Response && !qualifier.is_empty() {
+                    label.push(Span::styled(qualifier, t.dim()));
+                }
+                label
+            })
+            .collect()
+    };
+    let width = |labels: &[Vec<Span<'static>>]| -> usize {
+        labels.iter().map(|l| l.iter().map(|s| s.content.width()).sum::<usize>() + 3).sum()
+    };
+    let room_w = usize::from(room.width).saturating_sub(4);
+    let mut tab_labels = tabs(true);
+    if width(&tab_labels) + 10 > room_w {
+        tab_labels = tabs(false);
+    }
+    let name_w = room_w.saturating_sub(width(&tab_labels) + 3).min(28);
+    let mut labels = Vec::new();
+    if name_w >= 6 {
+        labels.push(vec![Span::styled(crate::ui::truncate(&name, name_w), title_style)]);
+    }
+    let named = !labels.is_empty();
+    labels.extend(tab_labels);
     let content = Rect { x: inner.x + 1, width: inner.width.saturating_sub(1), ..inner };
     app.explorer.height = content.height as usize;
     let message = |app: &App| -> Option<String> {
         let tx = app.view_store().txn(txn);
-        let has_body = tx.resp_body.id.is_some() || tx.delivered_body.is_some();
+        let has_body = match dir {
+            BodyDir::Request => tx.req_body.id.is_some(),
+            _ => tx.resp_body.id.is_some() || tx.delivered_body.is_some(),
+        };
         if has_body {
             return app.body_decoding(txn, dir).then(|| "decoding…".to_string());
         }
-        Some(if let Some(f) = &tx.failure {
+        Some(if dir == BodyDir::Request {
+            if tx.req_body.total > 0 {
+                format!("request body not captured ({} sent)", fmt::bytes(tx.req_body.total))
+            } else {
+                "no request body".into()
+            }
+        } else if let Some(f) = &tx.failure {
             format!("no response · {}: {}", f.short_class(), f.message.clone().unwrap_or_default())
         } else if tx.state.is_open() {
             "waiting for the response…".into()
@@ -176,17 +270,28 @@ pub fn draw(app: &mut App, r: Rect, buf: &mut Buffer) {
         })
     };
     let note = message(app);
+    // the tabs are mouse targets; what the body is goes to the right, when there is room
+    let title = |app: &mut App, buf: &mut Buffer, labels: Vec<Vec<Span<'static>>>, info: Option<String>| {
+        let at = crate::ui::border_labels(buf, room, r.y, false, labels);
+        for (rect, tab) in at.iter().skip(usize::from(named)).zip(BodyTab::ALL) {
+            app.hits.add(*rect, Target::ExplorerTab(tab));
+        }
+        if let Some(info) = info {
+            let from = at.last().map_or(room.x, |l| l.x + l.width);
+            let rest = Rect { x: from, width: (room.x + room.width).saturating_sub(from), ..room };
+            crate::ui::border_labels(buf, rest, r.y, true, vec![vec![Span::styled(info, t.faint())]]);
+        }
+    };
     let Some(view) = app.body_view(txn, dir) else {
-        crate::ui::border_labels(buf, room, r.y, false, labels);
+        title(app, buf, labels, None);
         let l = Line::styled(note.unwrap_or_default(), t.dim());
         draw_line(buf, content.x, content.y, content.width, &l, 0, Style::default());
         return;
     };
     let len = view.len(true);
-    let kind = format!("{} · {}", view.decoded.kind.label(), fmt::bytes(view.decoded.bytes.len() as u64));
-    labels.push(vec![Span::styled(kind, t.faint())]);
+    let mut info = format!("{} · {}", view.decoded.kind.label(), fmt::bytes(view.decoded.bytes.len() as u64));
     if let Some(img) = view.image().and_then(|i| i.image.clone()) {
-        crate::ui::border_labels(buf, room, r.y, false, labels);
+        title(app, buf, labels, Some(info));
         let area = Rect { x: content.x, y: content.y, width: content.width, height: content.height };
         app.images.render(&img, area, buf);
         return;
@@ -212,11 +317,12 @@ pub fn draw(app: &mut App, r: Rect, buf: &mut Buffer) {
         app.hits.add(Rect { x: inner.x, y, width: inner.width, height: 1 }, Target::ExplorerLine(i));
     }
     if len > content.height as usize {
-        labels.push(vec![Span::styled(format!("{}/{len}", cursor + 1), t.faint())]);
+        info.push_str(&format!(" · {}/{len}", cursor + 1));
     }
-    crate::ui::border_labels(buf, room, r.y, false, labels);
+    title(app, buf, labels, Some(info));
     if focused {
-        let hint = vec![Span::styled("h fold · l unfold · Enter value", t.faint())];
+        let other = app.keymap.key_label(Action::BodyTab);
+        let hint = vec![Span::styled(format!("{other} other body · h fold · l unfold · Enter value"), t.faint())];
         crate::ui::border_labels(buf, r, r.y + r.height.saturating_sub(1), true, vec![hint]);
     }
 }

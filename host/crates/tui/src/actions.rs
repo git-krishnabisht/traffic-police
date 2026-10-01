@@ -51,6 +51,7 @@ pub enum Action {
     Export,
     Parsed,
     Original,
+    BodyTab,
     Jq,
     ScrollLeft,
     ScrollRight,
@@ -166,6 +167,7 @@ pub const ACTIONS: &[Info] = &[
     info!(Export, "export", Session, "export", "Export: HAR or session file", ["e"]),
     info!(Parsed, "parsed", Detail, "parsed/source", "Parsed or source view of the body", ["p"]),
     info!(Original, "original", Detail, "original", "Original or rule-modified response", ["o"]),
+    info!(BodyTab, "body-tab", Detail, "req/resp body", "Body box: the response body or the request body", ["b"]),
     info!(Jq, "jq", Detail, "jq", "jq filter on the body (empty clears)", ["|"]),
     info!(ScrollLeft, "scroll-left", Detail, "scroll left", "Scroll the body left", ["<"]),
     info!(ScrollRight, "scroll-right", Detail, "scroll right", "Scroll the body right", [">"]),
@@ -395,6 +397,8 @@ mod tests {
         assert_eq!(m.action(&ev(KeyCode::Char('G'), KeyModifiers::NONE)), Some(Action::Bottom));
         assert_eq!(m.action(&ev(KeyCode::BackTab, KeyModifiers::SHIFT)), Some(Action::FocusPrev));
         assert_eq!(m.key_label(Action::Pause), "Space");
+        // b switches the body box between the response and the request body
+        assert_eq!(m.action(&ev(KeyCode::Char('b'), KeyModifiers::NONE)), Some(Action::BodyTab));
     }
 
     #[test]

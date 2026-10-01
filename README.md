@@ -238,7 +238,7 @@ traffic-police tail --mode attach -p com.example.app       # the commands withou
 | Views | `1` Connection View · `2` Thread View · `3` Rules |
 | Rules | `r` on a request: a new rule that matches it · in the Rules view: `Space` on or off · `Enter` edit in `$EDITOR` |
 | Detail pane | `Enter` open · `Esc` close · `h` `l` or `←` `→` switch tabs · `p` parsed or source · `o` original or rule-modified response |
-| Body explorer | The box above the tabs shows the response body; `Shift+Tab` from the tabs (or `Tab` from the list, or a click) goes there: `j` `k` move · `h` fold, or go up to the enclosing object · `l` unfold, or step in · `Enter` fold, or the value menu on a single value · `[` `]` fold or unfold all |
+| Body explorer | The box above the tabs shows the response body, and `b` (or a click on its tab) the request body; `Shift+Tab` from the tabs (or `Tab` from the list, or a click) goes there: `j` `k` move · `h` fold, or go up to the enclosing object · `l` unfold, or step in · `Enter` fold, or the value menu on a single value · `[` `]` fold or unfold all |
 | Bodies | `Enter` fold or unfold JSON · `[` fold all · `]` unfold all · <code>&#124;</code> jq filter (empty filter clears) · `<` `>` scroll sideways |
 | Call Stack | `Enter` on a framework group expands it · `Enter` on an app frame opens `$EDITOR` there (needs source roots, below) |
 | Live | `Space` pause or resume recording · `F` freeze the view (capture continues) · `L` back to live · `+` `-` zoom · `0` reset zoom · `v` select a time range (`v` or `Enter` again to apply) |
@@ -329,6 +329,7 @@ view = "connections"          # the view at start: connections, threads, rules
 divider = 55                  # the list's share of the width, in percent (25-80)
 side_by_side = 140            # from this width on, the detail pane sits beside the list (100-500)
 tab = "overview"              # the tab a request opens on: overview, response, request, call-stack
+body = "response"             # the body box's tab at start: response or request (b switches)
 body_height = 40              # the body box's share of the detail pane, percent (15-85), 0 hides it
 hints = true                  # the key hints in the footer
 clipboard = "auto"            # auto, osc52, native, off

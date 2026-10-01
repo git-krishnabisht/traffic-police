@@ -693,6 +693,29 @@ fn save_a_body_and_export_har() {
 }
 
 #[test]
+fn the_body_box_shows_the_request_body_on_its_second_tab() {
+    use traffic_police_tui::explorer::BodyTab;
+    let mut app = app_at(40.0);
+    let to = goto(&mut app, MEDIUM, path_is("/api/sdk/init"));
+    let text = press(&mut app, MEDIUM, &format!("{to}<Enter>"));
+    assert!(text.contains("Response body") && text.contains("Request body"), "{text}");
+    assert_eq!(app.explorer.tab, BodyTab::Response);
+    // init posts {"sdkVersion":"2.4.1","platform":"android"}
+    let text = press(&mut app, MEDIUM, "b");
+    assert_eq!(app.explorer.tab, BodyTab::Request);
+    assert!(text.contains("\"sdkVersion\": \"2.4.1\""), "{text}");
+    // the tab stays when another request is opened
+    press(&mut app, MEDIUM, "<Esc>j<Enter>");
+    assert_eq!(app.explorer.tab, BodyTab::Request);
+    // a click on the other tab
+    render_text(&mut app, MEDIUM.0, MEDIUM.1);
+    let r = app.hits.rect_of(Target::ExplorerTab(BodyTab::Response)).expect("the Response body tab");
+    click(&mut app, r.x + 1, r.y);
+    assert_eq!(app.explorer.tab, BodyTab::Response);
+    assert_eq!(app.focus, Focus::Preview);
+}
+
+#[test]
 fn hidden_boxes_take_no_room_and_no_focus() {
     let mut app = app_at(12.0);
     app.prefs.graph_height = Some(0);
@@ -700,7 +723,7 @@ fn hidden_boxes_take_no_room_and_no_focus() {
     app.prefs.hints = false;
     let text = press(&mut app, MEDIUM, "<Enter>");
     assert!(!text.contains("Network"), "no graph: {text}");
-    assert!(!text.contains("response body"), "no body box: {text}");
+    assert!(!text.contains("Request body"), "no body box: {text}");
     assert!(!text.contains("? help"), "no key hints: {text}");
     press(&mut app, MEDIUM, "<Tab>");
     assert_eq!(app.focus, Focus::List, "Tab skips the hidden graph and body box");

@@ -18,6 +18,7 @@
 //! divider = 55                # the list's share of the width, in percent (25-80)
 //! side_by_side = 140          # from this width on the detail pane sits beside the list
 //! tab = "overview"            # the detail tab a request opens on: overview, response, request, call-stack
+//! body = "response"           # the body box's tab: response or request (b switches)
 //! body_height = 40            # the body box's share of the detail pane, percent (15-85; 0 hides it)
 //! hints = true                # key hints in the footer
 //! clipboard = "auto"          # auto, osc52, native, off
@@ -59,6 +60,7 @@ use traffic_police_core::store::GraphSource;
 use traffic_police_proto::msg::CaptureConfig;
 use traffic_police_tui::App;
 use traffic_police_tui::app::{FPS_RANGE, Tab, View};
+use traffic_police_tui::explorer::BodyTab;
 use traffic_police_tui::graph::GraphStyle;
 use traffic_police_tui::share::ClipboardMode;
 use traffic_police_tui::theme::{COLOR_SLOTS, Palette, Theme, parse_borders, parse_hex};
@@ -112,6 +114,7 @@ pub struct Ui {
     pub view: Option<Spanned<String>>,
     pub side_by_side: Option<Spanned<u16>>,
     pub tab: Option<Spanned<String>>,
+    pub body: Option<Spanned<String>>,
     pub body_height: Option<Spanned<u16>>,
     pub hints: Option<bool>,
 }
@@ -289,12 +292,13 @@ impl Loaded {
             let (min, max) = (FPS_RANGE.start(), FPS_RANGE.end());
             found.push((f.span().start, format!("[ui] fps {}: use {min} to {max} (frames a second)", f.get_ref())));
         }
-        let words: [WordCheck; 5] = [
+        let words: [WordCheck; 6] = [
             ("borders", &ui.borders, |s| parse_borders(s).is_some(), "rounded, plain, double or thick"),
             ("graph", &ui.graph, |s| GraphSource::parse(s).is_some(), "app or requests"),
             ("sort", &ui.sort, |s| Sort::parse(s).is_some(), "a column's name, like \"status\" or \"time desc\""),
             ("view", &ui.view, |s| View::parse(s).is_some(), "connections, threads or rules"),
             ("tab", &ui.tab, |s| Tab::parse(s).is_some(), "overview, response, request or call-stack"),
+            ("body", &ui.body, |s| BodyTab::parse(s).is_some(), "response or request"),
         ];
         for (name, value, valid, choices) in words {
             if let Some(v) = value
@@ -495,6 +499,9 @@ impl Loaded {
         if let Some(t) = word(&ui.tab).and_then(|t| Tab::parse(&t)) {
             app.detail.tab = t;
         }
+        if let Some(b) = word(&ui.body).and_then(|b| BodyTab::parse(&b)) {
+            app.explorer.tab = b;
+        }
         if let Some(g) = word(&ui.graph).and_then(|g| GraphSource::parse(&g)) {
             app.graph_source = g;
         }
@@ -668,6 +675,7 @@ collapse = true
 view = "threads"
 side_by_side = 200
 tab = "call-stack"
+body = "request"
 body_height = 0
 hints = false
 "#;
@@ -678,7 +686,7 @@ hints = false
         let p = &app.prefs;
         assert!(!p.hints);
         assert_eq!((p.graph_height, p.body_height, p.side_by_side), (Some(0), 0, 200));
-        assert_eq!((app.view, app.detail.tab), (View::Threads, Tab::CallStack));
+        assert_eq!((app.view, app.detail.tab, app.explorer.tab), (View::Threads, Tab::CallStack, BodyTab::Request));
         assert_eq!(app.graph_source, GraphSource::Captured);
         assert_eq!(app.rows.sort, Sort { column: Column::Status, descending: true });
         assert!(app.rows.collapse);

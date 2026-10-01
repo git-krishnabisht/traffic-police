@@ -14,19 +14,19 @@ expression: "frame(12.0, SMALL, \"?\")"
 │   │ Views    1 connections · 2 threads · 3 rules                                             │   │
 ╰───│ List     c collapse · s sort · S reverse · C columns · / filter · m pin · r new rule     │───╯
 ╭─ R│          d diff                                                                          │───╮
-│ Na│ Detail   n next match · N previous match · p parsed/source · o original · | jq           │   │
-│ mo│          < scroll left · > scroll right · [ fold all · ] unfold all                      │   │
-│ ev│ Live     Space pause · F freeze · L live · +/= zoom in · - zoom out · 0 reset zoom       │   │
-│ li│          v range                                                                         │   │
-│ en│ Graph    T source · t clock                                                              │   │
-│ do│ Session  y copy · w save body · e export · : commands · ? help · x clear · q quit        │   │
-│ mo│ Mouse    click rows and tabs · double-click opens                                        │   │
-│ re│          wheel scrolls (zooms on the graph; Shift+wheel moves in time)                   │  ▐│
-│ lo│          drag the graph to select a range, the border between boxes to resize            │▎ ▐│
-│ mo│                                                                                          │██▐│
-│ st│ any key closes                                                                           │▏ ▐│
-│ th╰──────────────────────────────────────────────────────────────────────────────────────────╯▐█▐│
-│ events                               17 B json      200          970 ms                       ▐▍▐│
+│ Na│ Detail   n next match · N previous match · p parsed/source · o original                  │   │
+│ mo│          b req/resp body · | jq · < scroll left · > scroll right · [ fold all            │   │
+│ ev│          ] unfold all                                                                    │   │
+│ li│ Live     Space pause · F freeze · L live · +/= zoom in · - zoom out · 0 reset zoom       │   │
+│ en│          v range                                                                         │   │
+│ do│ Graph    T source · t clock                                                              │   │
+│ mo│ Session  y copy · w save body · e export · : commands · ? help · x clear · q quit        │   │
+│ re│ Mouse    click rows and tabs · double-click opens                                        │  ▐│
+│ lo│          wheel scrolls (zooms on the graph; Shift+wheel moves in time)                   │▎ ▐│
+│ mo│          drag the graph to select a range, the border between boxes to resize            │██▐│
+│ st│                                                                                          │▏ ▐│
+│ th│ any key closes                                                                           │▐█▐│
+│ ev╰──────────────────────────────────────────────────────────────────────────────────────────╯▐▍▐│
 │ status?sessionId=session_15bce…     263 B json      200          174 ms                        ▏▐│
 │ fonts.json                                          canceled     380 ms                        ▏▐│
 │ monitor                                             ···          500 ms                        ▐ │

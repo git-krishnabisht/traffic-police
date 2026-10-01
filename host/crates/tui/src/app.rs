@@ -219,6 +219,7 @@ pub enum Target {
     DetailTab(Tab),
     DetailLine(usize),
     DetailClose,
+    ExplorerTab(crate::explorer::BodyTab),
     ExplorerLine(usize),
     Divider,
     Graph,
@@ -1167,6 +1168,8 @@ impl App {
             Action::Export => self.open_export_menu(),
             Action::Diff => self.diff_action(),
             Action::Palette => self.open_palette(),
+            Action::BodyTab if self.detail_open => self.toggle_body_tab(),
+            Action::BodyTab => self.flash("open a request (Enter) to see its bodies"),
             _ => match self.focus {
                 Focus::Graph => self.graph_action(a),
                 Focus::List => match self.view {
@@ -1799,6 +1802,10 @@ impl App {
                         self.set_tab(t);
                     }
                     Some(Target::DetailClose) => self.close_detail(),
+                    Some(Target::ExplorerTab(tab)) => {
+                        self.focus = Focus::Preview;
+                        self.set_body_tab(tab);
+                    }
                     Some(Target::ExplorerLine(i)) => self.explorer_click(i, double),
                     Some(Target::DetailLine(i)) => {
                         self.focus = Focus::Detail;
