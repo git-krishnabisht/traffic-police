@@ -82,11 +82,14 @@ impl App {
             return;
         };
         let page = v.page.max(1);
+        let half = self.half_page(v.page);
         match self.keymap.action(&k) {
             Some(Action::Down) => v.scroll += 1,
             Some(Action::Up) => v.scroll = v.scroll.saturating_sub(1),
             Some(Action::PageDown) => v.scroll += page,
             Some(Action::PageUp) => v.scroll = v.scroll.saturating_sub(page),
+            Some(Action::HalfPageDown) => v.scroll += half,
+            Some(Action::HalfPageUp) => v.scroll = v.scroll.saturating_sub(half),
             Some(Action::Top) => v.scroll = 0,
             Some(Action::Bottom) => v.scroll = v.max_scroll(),
             Some(Action::FindNext) => match v.change_starts().into_iter().find(|&s| s.saturating_sub(2) > v.scroll) {

@@ -1428,6 +1428,7 @@ fn hints(app: &App) -> Vec<(&'static [Action], &'static str)> {
         (_, Focus::Preview, _) => vec![
             (&[A::Up, A::Down], "move"),
             (&[A::BodyTab], "other body"),
+            (&[A::HalfPageDown], "half page"),
             (&[A::Left], "fold/up"),
             (&[A::Right], "unfold/in"),
             (&[A::Activate], "fold/decode"),

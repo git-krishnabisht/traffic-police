@@ -128,6 +128,7 @@ impl App {
     }
 
     pub fn decoded_key(&mut self, k: KeyEvent) {
+        let half = self.half_page(self.decoded.as_ref().map_or(0, |d| d.page));
         let Some(d) = &mut self.decoded else {
             self.overlay = Overlay::None;
             return;
@@ -138,6 +139,8 @@ impl App {
             Some(Action::Up) => d.scroll = d.scroll.saturating_sub(1),
             Some(Action::PageDown) => d.scroll = (d.scroll + d.page.max(1)).min(max),
             Some(Action::PageUp) => d.scroll = d.scroll.saturating_sub(d.page.max(1)),
+            Some(Action::HalfPageDown) => d.scroll = (d.scroll + half).min(max),
+            Some(Action::HalfPageUp) => d.scroll = d.scroll.saturating_sub(half),
             Some(Action::Top) => d.scroll = 0,
             Some(Action::Bottom) => d.scroll = max,
             Some(Action::Copy) => {

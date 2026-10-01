@@ -194,6 +194,8 @@ impl Default for DetailState {
 /// live in the theme and the keymap.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Prefs {
+    /// Lines a half-page jump (Ctrl+D, Ctrl+U) moves; 0 is half the box, like Neovim's 'scroll'.
+    pub scroll: u16,
     /// Rows of the traffic graph: `None` sizes it to the screen (8 to 14); 0 hides it.
     pub graph_height: Option<u16>,
     /// The body box's share of the detail pane, in percent; 0 hides the box.
@@ -206,7 +208,13 @@ pub struct Prefs {
 
 impl Default for Prefs {
     fn default() -> Self {
-        Prefs { graph_height: None, body_height: 40, side_by_side: crate::ui::SIDE_BY_SIDE_WIDTH, hints: true }
+        Prefs {
+            scroll: 0,
+            graph_height: None,
+            body_height: 40,
+            side_by_side: crate::ui::SIDE_BY_SIDE_WIDTH,
+            hints: true,
+        }
     }
 }
 
@@ -701,6 +709,11 @@ impl App {
             self.detail.original = false;
         }
         self.clamp_list_offset();
+    }
+
+    /// Lines a half-page jump moves in a box `visible` rows tall (`[ui] scroll`, else half).
+    pub(crate) fn half_page(&self, visible: usize) -> usize {
+        if self.prefs.scroll > 0 { usize::from(self.prefs.scroll) } else { (visible / 2).max(1) }
     }
 
     pub fn select_txn(&mut self, txn: TxnIdx) {
@@ -1404,6 +1417,15 @@ impl App {
             Action::Down => self.select_row(cur + 1),
             Action::PageUp => self.select_row(cur.saturating_sub(self.page())),
             Action::PageDown => self.select_row(cur + self.page()),
+            Action::HalfPageUp | Action::HalfPageDown => {
+                // like Neovim: the view and the cursor move together
+                let n = self.half_page(self.list_height);
+                let down = a == Action::HalfPageDown;
+                let max_offset = len.saturating_sub(self.list_height.max(1));
+                self.list_offset =
+                    if down { (self.list_offset + n).min(max_offset) } else { self.list_offset.saturating_sub(n) };
+                self.select_row(if down { cur + n } else { cur.saturating_sub(n) });
+            }
             Action::Top => self.select_row(0),
             Action::Bottom => self.select_row(len - 1),
             Action::Activate | Action::Right => {
@@ -1481,6 +1503,12 @@ impl App {
         match a {
             Action::Up => self.rules_cursor = self.rules_cursor.saturating_sub(1),
             Action::Down => self.rules_cursor = (self.rules_cursor + 1).min(n - 1),
+            Action::HalfPageUp => {
+                self.rules_cursor = self.rules_cursor.saturating_sub(self.half_page(self.list_height))
+            }
+            Action::HalfPageDown => {
+                self.rules_cursor = (self.rules_cursor + self.half_page(self.list_height)).min(n - 1)
+            }
             Action::Top => self.rules_cursor = 0,
             Action::Bottom => self.rules_cursor = n - 1,
             _ => {}
@@ -1493,6 +1521,8 @@ impl App {
             Action::Right => self.pan(0.05),
             Action::PageUp => self.pan(-0.5),
             Action::PageDown => self.pan(0.5),
+            Action::HalfPageUp => self.pan(-0.25),
+            Action::HalfPageDown => self.pan(0.25),
             Action::Activate => {
                 if let (Some(a), Some(c)) = (self.graph.anchor.take(), self.graph.cursor) {
                     self.apply_graph_selection(a, c);
@@ -1554,6 +1584,17 @@ impl App {
             Action::Down => self.detail.cursor = (cur + 1).min(len.saturating_sub(1)),
             Action::PageUp => self.detail.cursor = cur.saturating_sub(page),
             Action::PageDown => self.detail.cursor = (cur + page).min(len.saturating_sub(1)),
+            Action::HalfPageUp | Action::HalfPageDown => {
+                let n = self.half_page(self.detail_height);
+                let max = len.saturating_sub(self.detail_height.max(1));
+                if a == Action::HalfPageDown {
+                    self.detail.scroll = (self.detail.scroll + n).min(max);
+                    self.detail.cursor = (cur + n).min(len.saturating_sub(1));
+                } else {
+                    self.detail.scroll = self.detail.scroll.saturating_sub(n);
+                    self.detail.cursor = cur.saturating_sub(n);
+                }
+            }
             Action::Top => self.detail.cursor = 0,
             Action::Bottom => self.detail.cursor = len.saturating_sub(1),
             Action::FoldAll | Action::UnfoldAll => {

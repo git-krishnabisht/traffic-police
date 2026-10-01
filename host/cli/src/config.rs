@@ -20,6 +20,7 @@
 //! tab = "overview"            # the detail tab a request opens on: overview, response, request, call-stack
 //! body = "response"           # the body box's tab: response or request (b switches)
 //! body_height = 40            # the body box's share of the detail pane, percent (15-85; 0 hides it)
+//! scroll = 0                  # lines Ctrl+D and Ctrl+U move (0: half the box, like Neovim)
 //! hints = true                # key hints in the footer
 //! clipboard = "auto"          # auto, osc52, native, off
 //! images = true               # false draws images with half-blocks (as --no-images)
@@ -65,6 +66,8 @@ use traffic_police_tui::graph::GraphStyle;
 use traffic_police_tui::share::ClipboardMode;
 use traffic_police_tui::theme::{COLOR_SLOTS, Palette, Theme, parse_borders, parse_hex};
 
+/// `[ui] scroll`: lines a half-page jump moves (0: half the box).
+const SCROLL_RANGE: std::ops::RangeInclusive<u16> = 0..=500;
 /// `[ui] graph_height`: rows of the graph; 0 hides it.
 const GRAPH_HEIGHT_RANGE: std::ops::RangeInclusive<u16> = 0..=40;
 /// `[ui] body_height`: the body box's share of the detail pane (0 hides it).
@@ -116,6 +119,7 @@ pub struct Ui {
     pub tab: Option<Spanned<String>>,
     pub body: Option<Spanned<String>>,
     pub body_height: Option<Spanned<u16>>,
+    pub scroll: Option<Spanned<u16>>,
     pub hints: Option<bool>,
 }
 
@@ -307,7 +311,13 @@ impl Loaded {
                 found.push((v.span().start, format!("[ui] {name} {:?}: use {choices}", v.get_ref())));
             }
         }
-        let numbers: [NumberCheck; 3] = [
+        let numbers: [NumberCheck; 4] = [
+            (
+                "scroll",
+                &ui.scroll,
+                |n| SCROLL_RANGE.contains(&n),
+                format!("0 (half the box) to {}", SCROLL_RANGE.end()),
+            ),
             (
                 "graph_height",
                 &ui.graph_height,
@@ -481,6 +491,9 @@ impl Loaded {
         let number = |v: &Option<Spanned<u16>>| v.as_ref().map(|v| *v.get_ref());
         let word = |v: &Option<Spanned<String>>| v.as_ref().map(|v| v.get_ref().clone());
         let p = &mut app.prefs;
+        if let Some(n) = number(&ui.scroll).filter(|n| SCROLL_RANGE.contains(n)) {
+            p.scroll = n;
+        }
         if let Some(n) = number(&ui.graph_height).filter(|n| GRAPH_HEIGHT_RANGE.contains(n)) {
             p.graph_height = Some(n);
         }
@@ -677,6 +690,7 @@ side_by_side = 200
 tab = "call-stack"
 body = "request"
 body_height = 0
+scroll = 10
 hints = false
 "#;
         let l = parse(text);
@@ -684,7 +698,7 @@ hints = false
         let mut app = App::new(traffic_police_core::SessionStore::new(), Theme::default());
         l.apply_ui(&mut app);
         let p = &app.prefs;
-        assert!(!p.hints);
+        assert_eq!((p.scroll, p.hints), (10, false));
         assert_eq!((p.graph_height, p.body_height, p.side_by_side), (Some(0), 0, 200));
         assert_eq!((app.view, app.detail.tab, app.explorer.tab), (View::Threads, Tab::CallStack, BodyTab::Request));
         assert_eq!(app.graph_source, GraphSource::Captured);
@@ -713,17 +727,18 @@ hints = false
 
     #[test]
     fn bad_settings_and_colors_name_their_line() {
-        let text = "[ui]\nborders = \"dotted\"\nbody_height = 5\ntab = \"headers\"\n\
+        let text = "[ui]\nborders = \"dotted\"\nscroll = 900\nbody_height = 5\ntab = \"headers\"\n\
                     [colors]\naccent = \"blue\"\ncolour = \"#000000\"\nselection = \"#000000\"\n\
                     [colors.dark]\nselection = \"#12345\"\n";
         let l = parse(text);
         let want = [
             "line 2: [ui] borders \"dotted\": use rounded, plain, double or thick",
-            "line 3: [ui] body_height 5: use 15 to 85 (percent), or 0 for no body box",
-            "line 4: [ui] tab \"headers\": use overview, response, request or call-stack",
-            "line 6: [colors] accent: use a color like \"#61afef\"",
-            "line 7: [colors] \"colour\" is not a color's name; the names: text, dim,",
-            "line 10: [colors.dark] selection: use a color like \"#61afef\"",
+            "line 3: [ui] scroll 900: use 0 (half the box) to 500",
+            "line 4: [ui] body_height 5: use 15 to 85 (percent), or 0 for no body box",
+            "line 5: [ui] tab \"headers\": use overview, response, request or call-stack",
+            "line 7: [colors] accent: use a color like \"#61afef\"",
+            "line 8: [colors] \"colour\" is not a color's name; the names: text, dim,",
+            "line 11: [colors.dark] selection: use a color like \"#61afef\"",
         ];
         assert_eq!(l.problems.len(), want.len(), "{:?}", l.problems);
         for (got, want) in l.problems.iter().zip(want) {

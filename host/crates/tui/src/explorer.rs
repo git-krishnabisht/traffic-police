@@ -1,7 +1,7 @@
 //! The body explorer: the top of the detail pane shows the response body or, on its second tab
-//! (`b`, or a click on the tab), the request body. With focus `j`/`k` move through it, `h` folds
-//! (or goes to the enclosing object or array), `l` unfolds (or steps into it), Enter folds or
-//! opens the value menu on a single value.
+//! (`b`, or a click on the tab), the request body. With focus `j`/`k` move through it, Ctrl+D and
+//! Ctrl+U by half the box, `h` folds (or goes to the enclosing object or array), `l` unfolds (or
+//! steps into it), Enter folds or opens the value menu on a single value.
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -98,6 +98,7 @@ impl App {
             return self.close_detail();
         }
         let page = self.explorer.height.max(2) - 1;
+        let half = self.half_page(self.explorer.height);
         let cur = self.explorer.cursor;
         let mut value_menu = false;
         let next = {
@@ -109,6 +110,8 @@ impl App {
                 Action::Down => (cur + 1).min(len.saturating_sub(1)),
                 Action::PageUp => cur.saturating_sub(page),
                 Action::PageDown => (cur + page).min(len.saturating_sub(1)),
+                Action::HalfPageUp => cur.saturating_sub(half),
+                Action::HalfPageDown => (cur + half).min(len.saturating_sub(1)),
                 Action::Top => 0,
                 Action::Bottom => len.saturating_sub(1),
                 // fold, or go up to the enclosing object or array
@@ -145,6 +148,16 @@ impl App {
                 _ => cur,
             }
         };
+        // like Neovim, a half-page jump moves the view with the cursor
+        match a {
+            Action::HalfPageDown => {
+                let len = self.body_view(txn, dir).map_or(0, |v| v.len(true));
+                let max = len.saturating_sub(self.explorer.height.max(1));
+                self.explorer.scroll = (self.explorer.scroll + half).min(max);
+            }
+            Action::HalfPageUp => self.explorer.scroll = self.explorer.scroll.saturating_sub(half),
+            _ => {}
+        }
         self.explorer.cursor = next;
         self.clamp_explorer_scroll();
         if value_menu {

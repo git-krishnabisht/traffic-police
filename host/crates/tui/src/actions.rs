@@ -19,6 +19,8 @@ pub enum Action {
     Bottom,
     PageUp,
     PageDown,
+    HalfPageUp,
+    HalfPageDown,
     Activate,
     Back,
     FocusNext,
@@ -121,6 +123,22 @@ pub const ACTIONS: &[Info] = &[
     info!(Bottom, "bottom", Move, "bottom", "Go to the bottom", ["G", "end"]),
     info!(PageUp, "page-up", Move, "page up", "Page up", ["pgup"]),
     info!(PageDown, "page-down", Move, "page down", "Page down", ["pgdn"]),
+    info!(
+        HalfPageUp,
+        "half-page-up",
+        Move,
+        "½ page up",
+        "Up half a box, like Neovim's Ctrl+U ([ui] scroll sets the jump)",
+        ["ctrl+u", "ctrl+p"]
+    ),
+    info!(
+        HalfPageDown,
+        "half-page-down",
+        Move,
+        "½ page down",
+        "Down half a box, like Neovim's Ctrl+D ([ui] scroll sets the jump)",
+        ["ctrl+d"]
+    ),
     info!(
         Activate,
         "open",
@@ -397,7 +415,10 @@ mod tests {
         assert_eq!(m.action(&ev(KeyCode::Char('G'), KeyModifiers::NONE)), Some(Action::Bottom));
         assert_eq!(m.action(&ev(KeyCode::BackTab, KeyModifiers::SHIFT)), Some(Action::FocusPrev));
         assert_eq!(m.key_label(Action::Pause), "Space");
-        // b switches the body box between the response and the request body
+        // Neovim's half-page jumps (Ctrl+P too)
+        assert_eq!(m.action(&ev(KeyCode::Char('d'), KeyModifiers::CONTROL)), Some(Action::HalfPageDown));
+        assert_eq!(m.action(&ev(KeyCode::Char('u'), KeyModifiers::CONTROL)), Some(Action::HalfPageUp));
+        assert_eq!(m.action(&ev(KeyCode::Char('p'), KeyModifiers::CONTROL)), Some(Action::HalfPageUp));
         assert_eq!(m.action(&ev(KeyCode::Char('b'), KeyModifiers::NONE)), Some(Action::BodyTab));
     }
 

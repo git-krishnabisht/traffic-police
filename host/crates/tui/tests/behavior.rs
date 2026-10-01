@@ -693,6 +693,42 @@ fn save_a_body_and_export_har() {
 }
 
 #[test]
+fn half_page_jumps_move_the_view_and_the_cursor() {
+    let mut app = app_at(40.0);
+    render_text(&mut app, MEDIUM.0, MEDIUM.1);
+    press(&mut app, MEDIUM, "g");
+    let half = app.list_height / 2;
+    press(&mut app, MEDIUM, "<C-d>");
+    assert_eq!((app.list_cursor, app.list_offset), (half, half), "like Neovim's Ctrl+D");
+    press(&mut app, MEDIUM, "<C-u>");
+    assert_eq!((app.list_cursor, app.list_offset), (0, 0));
+    press(&mut app, MEDIUM, "<C-d><C-p>");
+    assert_eq!(app.list_cursor, 0, "Ctrl+P goes up too");
+    // [ui] scroll sets the jump
+    app.prefs.scroll = 3;
+    press(&mut app, MEDIUM, "<C-d>");
+    assert_eq!(app.list_cursor, 3);
+
+    // the body box: init's response body is 18 lines
+    app.prefs.scroll = 0;
+    let to = goto(&mut app, MEDIUM, path_is("/api/sdk/init"));
+    press(&mut app, MEDIUM, &format!("{to}<Enter><S-Tab>"));
+    assert_eq!(app.focus, Focus::Preview);
+    let half = app.explorer.height / 2;
+    press(&mut app, MEDIUM, "<C-d>");
+    assert_eq!(app.explorer.cursor, half);
+    press(&mut app, MEDIUM, "<C-u>");
+    assert_eq!(app.explorer.cursor, 0);
+
+    // the detail tabs
+    press(&mut app, MEDIUM, "<Tab>");
+    assert_eq!(app.focus, Focus::Detail);
+    let half = app.detail_height / 2;
+    press(&mut app, MEDIUM, "<C-d>");
+    assert_eq!(app.detail.cursor, half);
+}
+
+#[test]
 fn the_body_box_shows_the_request_body_on_its_second_tab() {
     use traffic_police_tui::explorer::BodyTab;
     let mut app = app_at(40.0);

@@ -16,20 +16,20 @@ expression: "frame(12.0, MEDIUM, \"?\")"
 │                                                                                      00:00.000            00:05.000            00:10.000 │
 ╰──────────╭ keys ──────────────────────────────────────────────────────────────────────────────────────────────────────────────╮──────────╯
 ╭─ Requests│ Move     ↑/k up · ↓/j down · ←/h left · →/l right · g/Home top · G/End bottom · PgUp page up · PgDn page down      │──────────╮
-│ Name     │          Enter open/decode · Esc back · Tab next panel · Shift+Tab previous panel                                  │          │
-│ events   │ Views    1 connections · 2 threads · 3 rules                                                                       │          │
-│ u_4821.pn│ List     c collapse · s sort · S reverse · C columns · / filter · m pin · r new rule · d diff                      │          │
-│ monitor  │ Detail   n next match · N previous match · p parsed/source · o original · b req/resp body · | jq · < scroll left   │         ▐│
-│ challenge│          > scroll right · [ fold all · ] unfold all                                                                │         ▐│
-│ config   │ Live     Space pause · F freeze · L live · +/= zoom in · - zoom out · 0 reset zoom · v range                       │         ▐│
-│ ↪ config.│ Graph    T source · t clock                                                                                        │         ▐│
-│ attest   │ Session  y copy · w save body · e export · : commands · ? help · x clear · q quit                                  │██▏      ▐│
-│ metrics  │ Mouse    click rows and tabs · double-click opens · wheel scrolls (zooms on the graph; Shift+wheel moves in time)  │         ▐│
-│ monitor  │          drag the graph to select a range, the border between boxes to resize                                      │█▉       ▐│
-│ events   │                                                                                                                    │█▉       ▐│
-│ liveness-│ any key closes                                                                                                     │ ▌       ▐│
-│ enroll   ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯  ▐██▍   ▐│
-│ documents                                                  93 B json      200          515 ms                                    █▎     ▐│
+│ Name     │          Ctrl+u/Ctrl+p ½ page up · Ctrl+d ½ page down · Enter open/decode · Esc back · Tab next panel              │          │
+│ events   │          Shift+Tab previous panel                                                                                  │          │
+│ u_4821.pn│ Views    1 connections · 2 threads · 3 rules                                                                       │          │
+│ monitor  │ List     c collapse · s sort · S reverse · C columns · / filter · m pin · r new rule · d diff                      │         ▐│
+│ challenge│ Detail   n next match · N previous match · p parsed/source · o original · b req/resp body · | jq · < scroll left   │         ▐│
+│ config   │          > scroll right · [ fold all · ] unfold all                                                                │         ▐│
+│ ↪ config.│ Live     Space pause · F freeze · L live · +/= zoom in · - zoom out · 0 reset zoom · v range                       │         ▐│
+│ attest   │ Graph    T source · t clock                                                                                        │██▏      ▐│
+│ metrics  │ Session  y copy · w save body · e export · : commands · ? help · x clear · q quit                                  │         ▐│
+│ monitor  │ Mouse    click rows and tabs · double-click opens · wheel scrolls (zooms on the graph; Shift+wheel moves in time)  │█▉       ▐│
+│ events   │          drag the graph to select a range, the border between boxes to resize                                      │█▉       ▐│
+│ liveness-│                                                                                                                    │ ▌       ▐│
+│ enroll   │ any key closes                                                                                                     │  ▐██▍   ▐│
+│ documents╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯  █▎     ▐│
 │ monitor                                                   302 B json      200          1.50 s                                    ▕█▊    ▐│
 │ report                                                    305 B html      500          219 ms                                      ▏    ▐│
 │ lookup?fields=country,region,carrier                      101 B json      200          507 ms                                       █   ▐│

@@ -41,7 +41,7 @@ pub struct Palette {
 }
 
 /// Actions that make no sense from a list: moving around, and the palette itself.
-const LEFT_OUT: [Action; 12] = [
+const LEFT_OUT: [Action; 14] = [
     Action::Up,
     Action::Down,
     Action::Left,
@@ -50,6 +50,8 @@ const LEFT_OUT: [Action; 12] = [
     Action::Bottom,
     Action::PageUp,
     Action::PageDown,
+    Action::HalfPageUp,
+    Action::HalfPageDown,
     Action::ScrollLeft,
     Action::ScrollRight,
     Action::Back,
