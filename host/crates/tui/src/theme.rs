@@ -123,7 +123,7 @@ pub const COLOR_SLOTS: &[(&str, &str)] = &[
     ("faint", "hints and the least important text"),
     ("accent", "the focused box, links, highlights"),
     ("selection", "the selected row's background"),
-    ("border", "box borders"),
+    ("border", "the borders of boxes without focus (the focused one is the accent)"),
     ("receiving", "received bytes: the graph, timing bars"),
     ("sending", "sent bytes: the graph, timing bars"),
     ("waiting", "waiting for the server: timing bars"),
@@ -182,7 +182,8 @@ const DARK: RgbSet = RgbSet {
     faint: (92, 98, 108),
     accent: (97, 175, 239),
     sel_bg: (38, 62, 110),
-    border: (70, 76, 86),
+    // the borders of boxes without focus, as bright as the text (the focused one is the accent)
+    border: (220, 223, 228),
     recv: (74, 158, 255),
     send: (242, 166, 72),
     wait: (120, 126, 136),

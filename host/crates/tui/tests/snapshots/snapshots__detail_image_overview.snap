@@ -16,29 +16,29 @@ expression: "detail(12.0, MEDIUM, path_ends(\".png\"), \"\")"
 │                                                                                      00:00.000            00:05.000            00:10.000 │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ Requests 26 ─ Connection ─ Thread ─ Rules ───────────────────────────────╮╭─ u_4821.png ─ Response body ─ Request body ─────────────────╮
-│ Name                    Size Type      Status         Time Timeline       ││ ▄▄▄▄▄▄▄▄▄▄                                                  │
-│ token                  391 B json      200          513 ms         █     ▐││ ▄▄▄▄▄▄▄▄▄▄                                                  │
-│ init                   316 B json      200          2.01 s          ▏    ▐││ ▄▄▀▀▀ ▀▀▄▄                                                  │
-│ monitor                302 B json      200          1.58 s          █    ▐││ ▄▄▄▄▄▄▄▄▄▄                                                  │
-│ events                  17 B json      200          1.45 s          █▏   ▐││ ▄        ▄                                                  │
-│ u_4821.png            4.5 KB png       200          476 ms          █    ▐││                                                             │
-│ monitor                302 B json      200          1.53 s           ▊   ▐││                                                             │
-│ challenge              144 B json      200          386 ms           ▏   ▐││                                                             │
-│ config                   0 B           302           61 ms           ▏   ▐│╰─────────────────────────────────────────────────────────────╯
-│ ↪ config.json          106 B json      200          195 ms           ▏   ▐│╭─ Overview ─ Response ─ Request ─ Call Stack ────────────────╮
-│ attest                 180 B json      200          2.75 s           ▐█  ▐││ Request           u_4821.png                                │
-│ metrics                  6 B protobuf  200          224 ms           ▕   ▐││ Method            GET                                       │
-│ monitor                302 B json      200          1.41 s            ▋  ▐││ Status            200 OK                                    │
-│ events                  17 B json      200          1.14 s            ▌  ▐││ URL               https://cdn.example.app/avatars/u_4821.png│
-│ liveness-model-v3…     150 B json      404          346 ms            ▏  ▐││ Request type      —                                         │
-│ enroll                  72 B json      200          2.08 s            ▕▊ ▐││ Response type     image/png                                 │
-│ documents               93 B json      200          515 ms            ▕▏ ▐││ Response size     4.5 KB                                    │
-│ monitor                302 B json      200          1.50 s            ▕▋ ▐││ Initiating thread glide-source-thread-0  id 64 · call site  │
-│ report                 305 B html      500          219 ms             ▏ ▐││ Client            OkHttp 4.12.0                             │
-│ lookup?fields=cou…     101 B json      200          507 ms             ▕ ▐││ Protocol          h2                                        │
-│ monitor                302 B json      200          1.49 s             ▕▌▐││ Remote address    151.101.1.195:443  connection c-4 (new)   │
-│ status?sessionId=…     263 B json      200          326 ms             ▕  ││ TLS               TLSv1.3 · TLS_AES_128_GCM_SHA256          │
-│ threshold                              ···          1.90 s              █ ││ Certificate       CN=*.example.app · issued by WE1          │
-│ events                  17 B json      200          970 ms              ▌ ││ Started           00:03.000  (05:10:03.000)                 │
+│ Name                  Size  Type      Status         Time   Timeline      ││ ▄▄▄▄▄▄▄▄▄▄                                                  │
+│ token                391 B  json      200          513 ms           █    ▐││ ▄▄▄▄▄▄▄▄▄▄                                                  │
+│ init                 316 B  json      200          2.01 s           █▎   ▐││ ▄▄▀▀▀ ▀▀▄▄                                                  │
+│ monitor              302 B  json      200          1.58 s           ▐▏   ▐││ ▄▄▄▄▄▄▄▄▄▄                                                  │
+│ events                17 B  json      200          1.45 s           █▍   ▐││ ▄        ▄                                                  │
+│ u_4821.png          4.5 KB  png       200          476 ms            ▏   ▐││                                                             │
+│ monitor              302 B  json      200          1.53 s            ▐   ▐││                                                             │
+│ challenge            144 B  json      200          386 ms            ▏   ▐││                                                             │
+│ config                 0 B            302           61 ms            ▏   ▐│╰─────────────────────────────────────────────────────────────╯
+│ ↪ config.json        106 B  json      200          195 ms            ▏   ▐│╭─ Overview ─ Response ─ Request ─ Call Stack ────────────────╮
+│ attest               180 B  json      200          2.75 s            ▐▉  ▐││ Request           u_4821.png                                │
+│ metrics                6 B  protobuf  200          224 ms             ▏  ▐││ Method            GET                                       │
+│ monitor              302 B  json      200          1.41 s             ▌  ▐││ Status            200 OK                                    │
+│ events                17 B  json      200          1.14 s             ▌  ▐││ URL               https://cdn.example.app/avatars/u_4821.png│
+│ liveness-model-…     150 B  json      404          346 ms             ▏  ▐││ Request type      —                                         │
+│ enroll                72 B  json      200          2.08 s              ▉ ▐││ Response type     image/png                                 │
+│ documents             93 B  json      200          515 ms              █ ▐││ Response size     4.5 KB                                    │
+│ monitor              302 B  json      200          1.50 s              ▊ ▐││ Initiating thread glide-source-thread-0  id 64 · call site  │
+│ report               305 B  html      500          219 ms              ▏ ▐││ Client            OkHttp 4.12.0                             │
+│ lookup?fields=c…     101 B  json      200          507 ms              ▕ ▐││ Protocol          h2                                        │
+│ monitor              302 B  json      200          1.49 s              ▕▌▐││ Remote address    151.101.1.195:443  connection c-4 (new)   │
+│ status?sessionI…     263 B  json      200          326 ms               ▏ ││ TLS               TLSv1.3 · TLS_AES_128_GCM_SHA256          │
+│ threshold                             ···          1.90 s               █ ││ Certificate       CN=*.example.app · issued by WE1          │
+│ events                17 B  json      200          970 ms               ▏ ││ Started           00:03.000  (05:10:03.000)                 │
 ╰───────────────────────────────────────────────────────────────────────────╯╰─────────────────────────────────────────────────────────────╯
  ←→ tabs   ↑↓ move   / search   nN next/previous   y copy   w save   Enter fold   p parsed/source   ? help       ⚠ studio inspector present

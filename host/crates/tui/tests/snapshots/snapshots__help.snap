@@ -23,22 +23,22 @@ expression: "frame(12.0, MEDIUM, \"?\")"
 │ challenge│ Detail   n next match · N previous match · p parsed/source · o original · b req/resp body · | jq · < scroll left   │         ▐│
 │ config   │          > scroll right · [ fold all · ] unfold all                                                                │         ▐│
 │ ↪ config.│ Live     Space pause · F freeze · L live · +/= zoom in · - zoom out · 0 reset zoom · v range                       │         ▐│
-│ attest   │ Graph    T source · t clock                                                                                        │██▏      ▐│
+│ attest   │ Graph    T source · t clock                                                                                        │██▎      ▐│
 │ metrics  │ Session  y copy · w save body · e export · : commands · ? help · x clear · q quit                                  │         ▐│
-│ monitor  │ Mouse    click rows and tabs · double-click opens · wheel scrolls (zooms on the graph; Shift+wheel moves in time)  │█▉       ▐│
-│ events   │          drag the graph to select a range, the border between boxes to resize                                      │█▉       ▐│
-│ liveness-│                                                                                                                    │ ▌       ▐│
+│ monitor  │ Mouse    click rows and tabs · double-click opens · wheel scrolls (zooms on the graph; Shift+wheel moves in time)  │██       ▐│
+│ events   │          drag the graph to select a range, the border between boxes to resize                                      │▐█       ▐│
+│ liveness-│                                                                                                                    │ ▏       ▐│
 │ enroll   │ any key closes                                                                                                     │  ▐██▍   ▐│
-│ documents╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯  █▎     ▐│
-│ monitor                                                   302 B json      200          1.50 s                                    ▕█▊    ▐│
-│ report                                                    305 B html      500          219 ms                                      ▏    ▐│
-│ lookup?fields=country,region,carrier                      101 B json      200          507 ms                                       █   ▐│
-│ monitor                                                   302 B json      200          1.49 s                                       ▐█▋ ▐│
-│ status?sessionId=session_15bce3a5a963c9fde0ebe700e9d…     263 B json      200          326 ms                                       ▐▏  ▐│
-│ threshold                                                                 ···          1.90 s                                        ▐██▐│
-│ events                                                     17 B json      200          970 ms                                        ▐▉ ▐│
-│ status?sessionId=session_15bce3a5a963c9fde0ebe700e9d…     263 B json      200          174 ms                                         ▕ ▐│
-│ fonts.json                                                                canceled     380 ms                                         ▕▍▐│
-│ monitor                                                                   ···          500 ms                                          █ │
+│ documents╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯  ▕▍     ▐│
+│ monitor                                                 302 B  json      200          1.50 s                                     ▕█▉    ▐│
+│ report                                                  305 B  html      500          219 ms                                       ▏    ▐│
+│ lookup?fields=country,region,carrier                    101 B  json      200          507 ms                                        █   ▐│
+│ monitor                                                 302 B  json      200          1.49 s                                        ▐█▋ ▐│
+│ status?sessionId=session_15bce3a5a963c9fde0ebe700e…     263 B  json      200          326 ms                                        ▕▎  ▐│
+│ threshold                                                                ···          1.90 s                                         ▐██▐│
+│ events                                                   17 B  json      200          970 ms                                         ▐▉ ▐│
+│ status?sessionId=session_15bce3a5a963c9fde0ebe700e…     263 B  json      200          174 ms                                          ▕ ▐│
+│ fonts.json                                                               canceled     380 ms                                          ▕▍▐│
+│ monitor                                                                  ···          500 ms                                           ▐ │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
  Enter open   / filter   Space pause   m pin   y copy   e export   c collapse   s sort   ? help                  ⚠ studio inspector present

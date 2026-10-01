@@ -374,7 +374,7 @@ The colors `[colors]` can set, by name:
 | `text` `dim` `faint` | text; labels and secondary text; hints and the least important text |
 | `accent` | the focused box, links, highlights |
 | `selection` | the selected row's background |
-| `border` | box borders |
+| `border` | the borders of boxes without focus (the focused one takes `accent`) |
 | `receiving` `sending` `waiting` | received and sent bytes (the graph, timing bars); waiting for the server |
 | `ok` `redirect` `client-error` `server-error` | 2xx; 1xx and 3xx; 4xx and warnings; 5xx, failures and errors |
 | `marker` | timeline markers |

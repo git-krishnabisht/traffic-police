@@ -685,7 +685,8 @@ fn list_layout(columns: &[Column], r: Rect) -> Vec<(Column, u16, u16)> {
     const MIN_NAME: u16 = 12;
     const MIN_TIMELINE: u16 = 10;
     let avail = r.width.saturating_sub(1);
-    let fixed = |cs: &[Column]| cs.iter().map(|&c| col_width(c)).sum::<u16>() + cs.len().saturating_sub(1) as u16;
+    let gaps = |cs: &[Column]| cs.windows(2).map(|w| gap_between(w[0], w[1])).sum::<u16>();
+    let fixed = |cs: &[Column]| cs.iter().map(|&c| col_width(c)).sum::<u16>() + gaps(cs);
     let mut cols = columns.to_vec();
     let mut flexible = avail.saturating_sub(fixed(&cols));
     let mut timeline_w = if cols.contains(&Column::Timeline) { flexible * 45 / 100 } else { 0 };
@@ -696,9 +697,12 @@ fn list_layout(columns: &[Column], r: Rect) -> Vec<(Column, u16, u16)> {
     }
     let name_w = (flexible - timeline_w).max(MIN_NAME);
     let end = r.x + avail;
-    let mut out = Vec::with_capacity(cols.len());
+    let mut out: Vec<(Column, u16, u16)> = Vec::with_capacity(cols.len());
     let mut x = r.x;
     for c in cols {
+        if let Some(&(prev, _, _)) = out.last() {
+            x += gap_between(prev, c);
+        }
         if x >= end {
             break;
         }
@@ -709,9 +713,22 @@ fn list_layout(columns: &[Column], r: Rect) -> Vec<(Column, u16, u16)> {
         }
         .min(end - x);
         out.push((c, x, w));
-        x += w + 1;
+        x += w;
     }
     out
+}
+
+/// Space between two list columns: more before the timeline's bars and after a right-aligned
+/// column, so a column's end does not run into the next one's start (`1.61 s   ▐█`, not
+/// `Time Timeline`; `302 B  json`).
+fn gap_between(prev: Column, next: Column) -> u16 {
+    if next == Column::Timeline {
+        3
+    } else if right_aligned(prev) {
+        2
+    } else {
+        1
+    }
 }
 
 fn draw_connections(app: &mut App, r: Rect, buf: &mut Buffer) {

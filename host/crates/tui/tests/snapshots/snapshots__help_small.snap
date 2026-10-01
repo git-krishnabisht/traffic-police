@@ -22,13 +22,13 @@ expression: "frame(12.0, SMALL, \"?\")"
 │ do│ Graph    T source · t clock                                                              │   │
 │ mo│ Session  y copy · w save body · e export · : commands · ? help · x clear · q quit        │   │
 │ re│ Mouse    click rows and tabs · double-click opens                                        │  ▐│
-│ lo│          wheel scrolls (zooms on the graph; Shift+wheel moves in time)                   │▎ ▐│
-│ mo│          drag the graph to select a range, the border between boxes to resize            │██▐│
+│ lo│          wheel scrolls (zooms on the graph; Shift+wheel moves in time)                   │█ ▐│
+│ mo│          drag the graph to select a range, the border between boxes to resize            │█▎▐│
 │ st│                                                                                          │▏ ▐│
 │ th│ any key closes                                                                           │▐█▐│
 │ ev╰──────────────────────────────────────────────────────────────────────────────────────────╯▐▍▐│
-│ status?sessionId=session_15bce…     263 B json      200          174 ms                        ▏▐│
-│ fonts.json                                          canceled     380 ms                        ▏▐│
-│ monitor                                             ···          500 ms                        ▐ │
+│ status?sessionId=session_15b…     263 B  json      200          174 ms                         ▏▐│
+│ fonts.json                                         canceled     380 ms                         ▏▐│
+│ monitor                                            ···          500 ms                         ▐ │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
  Enter open   / filter   Space pause   m pin   y copy   ? help           ⚠ studio inspector present

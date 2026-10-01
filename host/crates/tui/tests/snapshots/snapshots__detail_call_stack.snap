@@ -16,29 +16,29 @@ expression: "detail(12.0, MEDIUM, init(), \"lll\")"
 │                                                                                      00:00.000            00:05.000            00:10.000 │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ Requests 26 ─ Connection ─ Thread ─ Rules ───────────────────────────────╮╭─ init ─ Response body ─ Request body ───────────────────────╮
-│ Name                    Size Type      Status         Time Timeline       ││ {                                                           │
-│ token                  391 B json      200          513 ms         █     ▐││   "ok": true,                                               │
-│ init                   316 B json      200          2.01 s          ▏    ▐││   "sessionId": "session_15bce3a5a963c9fde0ebe700e9d76981",  │
-│ monitor                302 B json      200          1.58 s          █    ▐││   "deepid": "-a02mRsDvpclHF1i8eoravsWmApTcmegxpqeKsY",      │
-│ events                  17 B json      200          1.45 s          █▏   ▐││   "config": {                                               │
-│ u_4821.png            4.5 KB png       200          476 ms          █    ▐││     "pollIntervalMs": 1500,                                 │
-│ monitor                302 B json      200          1.53 s           ▊   ▐││     "maxPolls": 20,                                         │
-│ challenge              144 B json      200          386 ms           ▏   ▐││     "features": {                                           │
-│ config                   0 B           302           61 ms           ▏   ▐│╰─────────────────────────────────────────────────────────────╯
-│ ↪ config.json          106 B json      200          195 ms           ▏   ▐│╭─ Overview ─ Response ─ Request ─ Call Stack ────────────────╮
-│ attest                 180 B json      200          2.75 s           ▐█  ▐││ Thread  DefaultDispatcher-worker-2  (id 59)                 │
-│ metrics                  6 B protobuf  200          224 ms           ▕   ▐││ captured when the app called execute() or enqueue(): the    │
-│ monitor                302 B json      200          1.41 s            ▋  ▐││   real call site                                            │
-│ events                  17 B json      200          1.14 s            ▌  ▐││                                                             │
-│ liveness-model-v3…     150 B json      404          346 ms            ▏  ▐││   ▸ 9 framework frames (okhttp3, retrofit2, java, $Proxy)   │
-│ enroll                  72 B json      200          2.08 s            ▕▊ ▐││     Enter expands                                           │
-│ documents               93 B json      200          515 ms            ▕▏ ▐││   at com.example.deepid.sdk.session.SessionManager.start    │
-│ monitor                302 B json      200          1.50 s            ▕▋ ▐││     (SessionManager.kt:62)                                  │
-│ report                 305 B html      500          219 ms             ▏ ▐││   at com.example.deepid.sdk.session.SessionManager$start$1. │
-│ lookup?fields=cou…     101 B json      200          507 ms             ▕ ▐││     invokeSuspend(SessionManager.kt:59)                     │
-│ monitor                302 B json      200          1.49 s             ▕▌▐││   ▸ 8 framework frames (kotlin, kotlinx.coroutines)  Enter  │
-│ status?sessionId=…     263 B json      200          326 ms             ▕  ││     expands                                                 │
-│ threshold                              ···          1.90 s              █ ││                                                             │
-│ events                  17 B json      200          970 ms              ▌ ││                                                             │
+│ Name                  Size  Type      Status         Time   Timeline      ││ {                                                           │
+│ token                391 B  json      200          513 ms           █    ▐││   "ok": true,                                               │
+│ init                 316 B  json      200          2.01 s           █▎   ▐││   "sessionId": "session_15bce3a5a963c9fde0ebe700e9d76981",  │
+│ monitor              302 B  json      200          1.58 s           ▐▏   ▐││   "deepid": "-a02mRsDvpclHF1i8eoravsWmApTcmegxpqeKsY",      │
+│ events                17 B  json      200          1.45 s           █▍   ▐││   "config": {                                               │
+│ u_4821.png          4.5 KB  png       200          476 ms            ▏   ▐││     "pollIntervalMs": 1500,                                 │
+│ monitor              302 B  json      200          1.53 s            ▐   ▐││     "maxPolls": 20,                                         │
+│ challenge            144 B  json      200          386 ms            ▏   ▐││     "features": {                                           │
+│ config                 0 B            302           61 ms            ▏   ▐│╰─────────────────────────────────────────────────────────────╯
+│ ↪ config.json        106 B  json      200          195 ms            ▏   ▐│╭─ Overview ─ Response ─ Request ─ Call Stack ────────────────╮
+│ attest               180 B  json      200          2.75 s            ▐▉  ▐││ Thread  DefaultDispatcher-worker-2  (id 59)                 │
+│ metrics                6 B  protobuf  200          224 ms             ▏  ▐││ captured when the app called execute() or enqueue(): the    │
+│ monitor              302 B  json      200          1.41 s             ▌  ▐││   real call site                                            │
+│ events                17 B  json      200          1.14 s             ▌  ▐││                                                             │
+│ liveness-model-…     150 B  json      404          346 ms             ▏  ▐││   ▸ 9 framework frames (okhttp3, retrofit2, java, $Proxy)   │
+│ enroll                72 B  json      200          2.08 s              ▉ ▐││     Enter expands                                           │
+│ documents             93 B  json      200          515 ms              █ ▐││   at com.example.deepid.sdk.session.SessionManager.start    │
+│ monitor              302 B  json      200          1.50 s              ▊ ▐││     (SessionManager.kt:62)                                  │
+│ report               305 B  html      500          219 ms              ▏ ▐││   at com.example.deepid.sdk.session.SessionManager$start$1. │
+│ lookup?fields=c…     101 B  json      200          507 ms              ▕ ▐││     invokeSuspend(SessionManager.kt:59)                     │
+│ monitor              302 B  json      200          1.49 s              ▕▌▐││   ▸ 8 framework frames (kotlin, kotlinx.coroutines)  Enter  │
+│ status?sessionI…     263 B  json      200          326 ms               ▏ ││     expands                                                 │
+│ threshold                             ···          1.90 s               █ ││                                                             │
+│ events                17 B  json      200          970 ms               ▏ ││                                                             │
 ╰───────────────────────────────────────────────────────────────────────────╯╰─────────────────────────────────────────────────────────────╯
  ←→ tabs   ↑↓ move   / search   nN next/previous   y copy   w save   Enter fold   p parsed/source   ? help       ⚠ studio inspector present

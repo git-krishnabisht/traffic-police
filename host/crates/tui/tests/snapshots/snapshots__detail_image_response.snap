@@ -16,29 +16,29 @@ expression: "detail(12.0, MEDIUM, path_ends(\".png\"), \"l\")"
 │                                                                                      00:00.000            00:05.000            00:10.000 │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ Requests 26 ─ Connection ─ Thread ─ Rules ───────────────────────────────╮╭─ u_4821.png ─ Response body ─ Request body ─────────────────╮
-│ Name                    Size Type      Status         Time Timeline       ││ ▄▄▄▄▄▄▄▄▄▄                                                  │
-│ token                  391 B json      200          513 ms         █     ▐││ ▄▄▄▄▄▄▄▄▄▄                                                  │
-│ init                   316 B json      200          2.01 s          ▏    ▐││ ▄▄▀▀▀ ▀▀▄▄                                                  │
-│ monitor                302 B json      200          1.58 s          █    ▐││ ▄▄▄▄▄▄▄▄▄▄                                                  │
-│ events                  17 B json      200          1.45 s          █▏   ▐││ ▄        ▄                                                  │
-│ u_4821.png            4.5 KB png       200          476 ms          █    ▐││                                                             │
-│ monitor                302 B json      200          1.53 s           ▊   ▐││                                                             │
-│ challenge              144 B json      200          386 ms           ▏   ▐││                                                             │
-│ config                   0 B           302           61 ms           ▏   ▐│╰─────────────────────────────────────────────────────────────╯
-│ ↪ config.json          106 B json      200          195 ms           ▏   ▐│╭─ Overview ─ Response ─ Request ─ Call Stack ────────────────╮
-│ attest                 180 B json      200          2.75 s           ▐█  ▐││ HTTP/2 200 OK                                               │
-│ metrics                  6 B protobuf  200          224 ms           ▕   ▐││                                                             │
-│ monitor                302 B json      200          1.41 s            ▋  ▐││ Headers (6)                                                 │
-│ events                  17 B json      200          1.14 s            ▌  ▐││ date: Tue, 29 Sep 2026 05:10:03 GMT                         │
-│ liveness-model-v3…     150 B json      404          346 ms            ▏  ▐││ content-type: image/png                                     │
-│ enroll                  72 B json      200          2.08 s            ▕▊ ▐││ content-length: 4559                                        │
-│ documents               93 B json      200          515 ms            ▕▏ ▐││ cache-control: public, max-age=86400                        │
-│ monitor                302 B json      200          1.50 s            ▕▋ ▐││ etag: "a1f9c3"                                              │
-│ report                 305 B html      500          219 ms             ▏ ▐││ age: 312                                                    │
-│ lookup?fields=cou…     101 B json      200          507 ms             ▕ ▐││                                                             │
-│ monitor                302 B json      200          1.49 s             ▕▌▐││ Body  PNG image 96×96, 4.5 KB  [parsed · p: source]         │
-│ status?sessionId=…     263 B json      200          326 ms             ▕  ││  ▄▄▄▄▄▄                                                     │
-│ threshold                              ···          1.90 s              █ ││  ▄▀▀▀▀▄                                                     │
-│ events                  17 B json      200          970 ms              ▌ ││  ▄▄▄▄▄▄                                                     │
+│ Name                  Size  Type      Status         Time   Timeline      ││ ▄▄▄▄▄▄▄▄▄▄                                                  │
+│ token                391 B  json      200          513 ms           █    ▐││ ▄▄▄▄▄▄▄▄▄▄                                                  │
+│ init                 316 B  json      200          2.01 s           █▎   ▐││ ▄▄▀▀▀ ▀▀▄▄                                                  │
+│ monitor              302 B  json      200          1.58 s           ▐▏   ▐││ ▄▄▄▄▄▄▄▄▄▄                                                  │
+│ events                17 B  json      200          1.45 s           █▍   ▐││ ▄        ▄                                                  │
+│ u_4821.png          4.5 KB  png       200          476 ms            ▏   ▐││                                                             │
+│ monitor              302 B  json      200          1.53 s            ▐   ▐││                                                             │
+│ challenge            144 B  json      200          386 ms            ▏   ▐││                                                             │
+│ config                 0 B            302           61 ms            ▏   ▐│╰─────────────────────────────────────────────────────────────╯
+│ ↪ config.json        106 B  json      200          195 ms            ▏   ▐│╭─ Overview ─ Response ─ Request ─ Call Stack ────────────────╮
+│ attest               180 B  json      200          2.75 s            ▐▉  ▐││ HTTP/2 200 OK                                               │
+│ metrics                6 B  protobuf  200          224 ms             ▏  ▐││                                                             │
+│ monitor              302 B  json      200          1.41 s             ▌  ▐││ Headers (6)                                                 │
+│ events                17 B  json      200          1.14 s             ▌  ▐││ date: Tue, 29 Sep 2026 05:10:03 GMT                         │
+│ liveness-model-…     150 B  json      404          346 ms             ▏  ▐││ content-type: image/png                                     │
+│ enroll                72 B  json      200          2.08 s              ▉ ▐││ content-length: 4559                                        │
+│ documents             93 B  json      200          515 ms              █ ▐││ cache-control: public, max-age=86400                        │
+│ monitor              302 B  json      200          1.50 s              ▊ ▐││ etag: "a1f9c3"                                              │
+│ report               305 B  html      500          219 ms              ▏ ▐││ age: 312                                                    │
+│ lookup?fields=c…     101 B  json      200          507 ms              ▕ ▐││                                                             │
+│ monitor              302 B  json      200          1.49 s              ▕▌▐││ Body  PNG image 96×96, 4.5 KB  [parsed · p: source]         │
+│ status?sessionI…     263 B  json      200          326 ms               ▏ ││  ▄▄▄▄▄▄                                                     │
+│ threshold                             ···          1.90 s               █ ││  ▄▀▀▀▀▄                                                     │
+│ events                17 B  json      200          970 ms               ▏ ││  ▄▄▄▄▄▄                                                     │
 ╰───────────────────────────────────────────────────────────────────────────╯╰─────────────────────────────────────────────────────────────╯
  ←→ tabs   ↑↓ move   / search   nN next/previous   y copy   w save   Enter fold   p parsed/source   ? help       ⚠ studio inspector present

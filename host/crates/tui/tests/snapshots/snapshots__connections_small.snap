@@ -14,21 +14,21 @@ expression: "frame(12.0, SMALL, \"\")"
 │                                                               00:00.000                          │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ Requests 26 ─ Connection ─ Thread ─ Rules ──────────────────────────────────────────────────────╮
-│ Name                                 Size Type      Status         Time Timeline                 │
-│ monitor                             302 B json      200          1.41 s                   ▕▉     │
-│ events                               17 B json      200          1.14 s                    ▉     │
-│ liveness-model-v3.json              150 B json      404          346 ms                    ▏     │
-│ enroll                               72 B json      200          2.08 s                     █▉   │
-│ documents                            93 B json      200          515 ms                     █    │
-│ monitor                             302 B json      200          1.50 s                     ▐▋   │
-│ report                              305 B html      500          219 ms                      ▏  ▐│
-│ lookup?fields=country,region,c…     101 B json      200          507 ms                      ▕▎ ▐│
-│ monitor                             302 B json      200          1.49 s                       ██▐│
-│ status?sessionId=session_15bce…     263 B json      200          326 ms                       ▏ ▐│
-│ threshold                                           ···          1.90 s                       ▐█▐│
-│ events                               17 B json      200          970 ms                       ▐▍▐│
-│ status?sessionId=session_15bce…     263 B json      200          174 ms                        ▏▐│
-│ fonts.json                                          canceled     380 ms                        ▏▐│
-│ monitor                                             ···          500 ms                        ▐ │
+│ Name                               Size  Type      Status         Time   Timeline                │
+│ monitor                           302 B  json      200          1.41 s                     █▏    │
+│ events                             17 B  json      200          1.14 s                     █▏    │
+│ liveness-model-v3.json            150 B  json      404          346 ms                     ▏     │
+│ enroll                             72 B  json      200          2.08 s                      ▐█   │
+│ documents                          93 B  json      200          515 ms                      █    │
+│ monitor                           302 B  json      200          1.50 s                      ▐█   │
+│ report                            305 B  html      500          219 ms                       ▏  ▐│
+│ lookup?fields=country,region…     101 B  json      200          507 ms                       ▕█ ▐│
+│ monitor                           302 B  json      200          1.49 s                        █▎▐│
+│ status?sessionId=session_15b…     263 B  json      200          326 ms                        ▏ ▐│
+│ threshold                                          ···          1.90 s                        ▐█▐│
+│ events                             17 B  json      200          970 ms                        ▐▍▐│
+│ status?sessionId=session_15b…     263 B  json      200          174 ms                         ▏▐│
+│ fonts.json                                         canceled     380 ms                         ▏▐│
+│ monitor                                            ···          500 ms                         ▐ │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
  Enter open   / filter   Space pause   m pin   y copy   ? help           ⚠ studio inspector present

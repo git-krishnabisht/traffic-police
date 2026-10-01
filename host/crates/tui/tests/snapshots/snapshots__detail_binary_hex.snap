@@ -16,29 +16,29 @@ expression: "detail(40.0, MEDIUM, path_ends(\".tflite\"), \"l\")"
 │          00:10.000            00:15.000             00:20.000            00:25.000            00:30.000            00:35.000             │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ Requests 60 ─ Connection ─ Thread ─ Rules ───────────────────────────────╮╭─ face-liveness-v3.tflite ─ Response body ─ Request body ────╮
-│ Name                    Size Type      Status         Time Timeline       ││ 00000000  60 5e e6 a7 7f d9 3d ab  d3 30 99 18 bf 5a 54 6b  │
-│ u_4821.png            4.5 KB png       200          476 ms                ││   |`^....=..0...ZTk|                                        │
-│ monitor                302 B json      200          1.53 s               ▐││ 00000010  87 d4 7e f1 b8 16 bb ae  b4 70 7f 50 21 b8 7e f6  │
-│ challenge              144 B json      200          386 ms               ▐││   |..~......p.P!.~.|                                        │
-│ config                   0 B           302           61 ms               ▐││ 00000020  a7 1b 6e 07 2a 58 a5 e0  8a c9 68 4f 9a 8d 23 1f  │
-│ ↪ config.json          106 B json      200          195 ms               ▐││   |..n.*X....hO..#.|                                        │
-│ attest                 180 B json      200          2.75 s               ▐││ 00000030  d6 27 f6 31 51 97 8a 3e  30 d0 29 e5 72 4f 28 3b  │
-│ metrics                  6 B protobuf  200          224 ms               ▐││   |.'.1Q..>0.).rO(;|                                        │
-│ monitor                302 B json      200          1.41 s               ▐│╰─────────────────────────────────────────────────────────────╯
-│ events                  17 B json      200          1.14 s               ▐│╭─ Overview ─ Response ─ Request ─ Call Stack ────────────────╮
-│ liveness-model-v3…     150 B json      404          346 ms                ││ HTTP/2 200 OK                                               │
-│ enroll                  72 B json      200          2.08 s                ││                                                             │
-│ documents               93 B json      200          515 ms                ││ Headers (6)                                                 │
-│ monitor                302 B json      200          1.50 s                ││ date: Tue, 29 Sep 2026 05:10:12 GMT                         │
-│ report                 305 B html      500          219 ms                ││ content-type: application/octet-stream                      │
-│ lookup?fields=cou…     101 B json      200          507 ms                ││ content-length: 5242880                                     │
-│ monitor                302 B json      200          1.49 s ▌              ││ accept-ranges: bytes                                        │
-│ status?sessionId=…     263 B json      200          326 ms                ││ etag: "f3v3-5242880"                                        │
-│ threshold                              failed       10.0 s ████▊          ││ cache-control: public, max-age=604800                       │
-│ events                  17 B json      200          970 ms ▏              ││                                                             │
-│ status?sessionId=…     263 B json      200          174 ms ▏              ││ Body  binary, 5.0 MB  [parsed · p: source]                  │
-│ fonts.json                             canceled     380 ms ▏              ││ 00000000  60 5e e6 a7 7f d9 3d ab  d3 30 99 18 bf 5a 54 6b  │
-│ monitor                302 B json      200          1.44 s ▕▍             ││   |`^....=..0...ZTk|                                        │
-│ face-liveness-v3.…    5.0 MB binary    200          6.38 s  ███           ││ 00000010  87 d4 7e f1 b8 16 bb ae  b4 70 7f 50 21 b8 7e f6  │
+│ Name                  Size  Type      Status         Time   Timeline      ││ 00000000  60 5e e6 a7 7f d9 3d ab  d3 30 99 18 bf 5a 54 6b  │
+│ u_4821.png          4.5 KB  png       200          476 ms                 ││   |`^....=..0...ZTk|                                        │
+│ monitor              302 B  json      200          1.53 s                ▐││ 00000010  87 d4 7e f1 b8 16 bb ae  b4 70 7f 50 21 b8 7e f6  │
+│ challenge            144 B  json      200          386 ms                ▐││   |..~......p.P!.~.|                                        │
+│ config                 0 B            302           61 ms                ▐││ 00000020  a7 1b 6e 07 2a 58 a5 e0  8a c9 68 4f 9a 8d 23 1f  │
+│ ↪ config.json        106 B  json      200          195 ms                ▐││   |..n.*X....hO..#.|                                        │
+│ attest               180 B  json      200          2.75 s                ▐││ 00000030  d6 27 f6 31 51 97 8a 3e  30 d0 29 e5 72 4f 28 3b  │
+│ metrics                6 B  protobuf  200          224 ms                ▐││   |.'.1Q..>0.).rO(;|                                        │
+│ monitor              302 B  json      200          1.41 s                ▐│╰─────────────────────────────────────────────────────────────╯
+│ events                17 B  json      200          1.14 s                ▐│╭─ Overview ─ Response ─ Request ─ Call Stack ────────────────╮
+│ liveness-model-…     150 B  json      404          346 ms                 ││ HTTP/2 200 OK                                               │
+│ enroll                72 B  json      200          2.08 s                 ││                                                             │
+│ documents             93 B  json      200          515 ms                 ││ Headers (6)                                                 │
+│ monitor              302 B  json      200          1.50 s                 ││ date: Tue, 29 Sep 2026 05:10:12 GMT                         │
+│ report               305 B  html      500          219 ms                 ││ content-type: application/octet-stream                      │
+│ lookup?fields=c…     101 B  json      200          507 ms                 ││ content-length: 5242880                                     │
+│ monitor              302 B  json      200          1.49 s   ▍             ││ accept-ranges: bytes                                        │
+│ status?sessionI…     263 B  json      200          326 ms                 ││ etag: "f3v3-5242880"                                        │
+│ threshold                             failed       10.0 s   ████▍         ││ cache-control: public, max-age=604800                       │
+│ events                17 B  json      200          970 ms   ▏             ││                                                             │
+│ status?sessionI…     263 B  json      200          174 ms   ▏             ││ Body  binary, 5.0 MB  [parsed · p: source]                  │
+│ fonts.json                            canceled     380 ms   ▏             ││ 00000000  60 5e e6 a7 7f d9 3d ab  d3 30 99 18 bf 5a 54 6b  │
+│ monitor              302 B  json      200          1.44 s   ▐▎            ││   |`^....=..0...ZTk|                                        │
+│ face-liveness-v…    5.0 MB  binary    200          6.38 s    ▏█▊          ││ 00000010  87 d4 7e f1 b8 16 bb ae  b4 70 7f 50 21 b8 7e f6  │
 ╰───────────────────────────────────────────────────────────────────────────╯╰─────────────────────────────────────────────────────────────╯
  ←→ tabs   ↑↓ move   / search   nN next/previous   y copy   w save   Enter fold   p parsed/source   ? help       ⚠ studio inspector present

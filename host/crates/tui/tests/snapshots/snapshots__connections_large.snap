@@ -18,37 +18,37 @@ expression: "frame(40.0, LARGE, \"\")"
 │          00:10.000                      00:15.000                       00:20.000                      00:25.000                      00:30.000                      00:35.000                       │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ Requests 60 ─ Connection ─ Thread ─ Rules ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│ Name                                                                                        Size Type      Status         Time Timeline                                                              │
-│ ! events                                                                                    17 B json      200          971 ms          ▐█▋                                                          │
-│ status?sessionId=session_15bce3a5a963c9fde0ebe700e9d76981                                  263 B json      200          358 ms          ▐█                                                           │
-│ monitor                                                                                    302 B json      200          1.72 s             ▐████                                                     │
-│ status?sessionId=session_15bce3a5a963c9fde0ebe700e9d76981                                  263 B json      200          381 ms              █                                                        │
-│ status?sessionId=session_15bce3a5a963c9fde0ebe700e9d76981                                  263 B json      200          225 ms                 ▌                                                     │
-│ events                                                                                      17 B json      200          1.13 s                 ▐██▎                                                  │
-│ monitor                                                                                    302 B json      200          1.38 s                  ███▍                                                 │
-│ status?sessionId=session_15bce3a5a963c9fde0ebe700e9d76981                                  263 B json      200          259 ms                    ▕█                                                 │
-│ monitor                                                                                    302 B json      200          1.67 s                      ▕███▋                                            │
-│ status?sessionId=session_15bce3a5a963c9fde0ebe700e9d76981                                  263 B json      200          158 ms                        ▏                                              │
-│ events                                                                                      17 B json      200          995 ms                           ███                                         │
-│ monitor                                                                                    302 B json      200          1.65 s                           ▐████                                       │
-│ ✎ status?sessionId=session_15bce3a5a963c9fde0ebe700e9d76981                                264 B json      200          327 ms                           ▕▌                                          │
-│ monitor                                                                                    302 B json      200          1.60 s                                ███▊                                   │
-│ events                                                                                      17 B json      200          1.49 s                                   ███▋                               ▐│
-│ monitor                                                                                    302 B json      200          1.44 s                                    ▐███                              ▐│
-│ monitor                                                                                    302 B json      200          1.71 s                                         ████▏                        ▐│
-│ events                                                                                      17 B json      200          1.19 s                                           ▐███                       ▐│
-│ monitor                                                                                    302 B json      200          1.71 s                                             ▕███▊                    ▐│
-│ monitor                                                                                    302 B json      200          1.42 s                                                  ▐██▊                ▐│
-│ events                                                                                      17 B json      200          1.42 s                                                   ███▌               ▐│
-│ monitor                                                                                    302 B json      200          1.57 s                                                       ███▋           ▐│
-│ init                                                                                       316 B json      200          1.80 s                                                        ████▎         ▐│
-│ events                                                                                      17 B json      200          1.46 s                                                          ▐██▊        ▐│
-│ monitor                                                                                    302 B json      200          1.41 s                                                           ▐██▉       ▐│
-│ challenge                                                                                  144 B json      200          247 ms                                                            ▕▍        ▐│
-│ attest                                                                                     180 B json      200          3.01 s                                                              ██████▉ ▐│
-│ monitor                                                                                    302 B json      200          1.56 s                                                                ███▉  ▐│
-│ events                                                                                      17 B json      200          1.22 s                                                                  ███ ▐│
-│ monitor                                                                                                    ···          500 ms                                                                    ▕█▐│
-│ enroll                                                                                                     ···          228 ms                                                                     ▐ │
+│ Name                                                                                      Size  Type      Status         Time   Timeline                                                             │
+│ ! events                                                                                  17 B  json      200          971 ms            ███                                                         │
+│ status?sessionId=session_15bce3a5a963c9fde0ebe700e9d76981                                263 B  json      200          358 ms            ▐▏                                                          │
+│ monitor                                                                                  302 B  json      200          1.72 s               ▐███▍                                                    │
+│ status?sessionId=session_15bce3a5a963c9fde0ebe700e9d76981                                263 B  json      200          381 ms               ▕▋                                                       │
+│ status?sessionId=session_15bce3a5a963c9fde0ebe700e9d76981                                263 B  json      200          225 ms                   ▌                                                    │
+│ events                                                                                    17 B  json      200          1.13 s                   ▐██                                                  │
+│ monitor                                                                                  302 B  json      200          1.38 s                    ███▏                                                │
+│ status?sessionId=session_15bce3a5a963c9fde0ebe700e9d76981                                263 B  json      200          259 ms                      ▐▏                                                │
+│ monitor                                                                                  302 B  json      200          1.67 s                        ▐████                                           │
+│ status?sessionId=session_15bce3a5a963c9fde0ebe700e9d76981                                263 B  json      200          158 ms                          █                                             │
+│ events                                                                                    17 B  json      200          995 ms                            ▕██                                         │
+│ monitor                                                                                  302 B  json      200          1.65 s                             ███▊                                       │
+│ ✎ status?sessionId=session_15bce3a5a963c9fde0ebe700e9d76981                              264 B  json      200          327 ms                             ▐▏                                         │
+│ monitor                                                                                  302 B  json      200          1.60 s                                 ▐███▎                                  │
+│ events                                                                                    17 B  json      200          1.49 s                                    ▕███▏                              ▐│
+│ monitor                                                                                  302 B  json      200          1.44 s                                      ███▍                             ▐│
+│ monitor                                                                                  302 B  json      200          1.71 s                                          ▐███▌                        ▐│
+│ events                                                                                    17 B  json      200          1.19 s                                             ██▋                       ▐│
+│ monitor                                                                                  302 B  json      200          1.71 s                                               ████▏                   ▐│
+│ monitor                                                                                  302 B  json      200          1.42 s                                                   ▕███                ▐│
+│ events                                                                                    17 B  json      200          1.42 s                                                    ▐██▊               ▐│
+│ monitor                                                                                  302 B  json      200          1.57 s                                                        ████           ▐│
+│ init                                                                                     316 B  json      200          1.80 s                                                         ████▍         ▐│
+│ events                                                                                    17 B  json      200          1.46 s                                                           ▐██▉        ▐│
+│ monitor                                                                                  302 B  json      200          1.41 s                                                            ▕███       ▐│
+│ challenge                                                                                144 B  json      200          247 ms                                                              ▌        ▐│
+│ attest                                                                                   180 B  json      200          3.01 s                                                               ██████▉ ▐│
+│ monitor                                                                                  302 B  json      200          1.56 s                                                                 ▐██▉  ▐│
+│ events                                                                                    17 B  json      200          1.22 s                                                                   ███ ▐│
+│ monitor                                                                                                   ···          500 ms                                                                     ▕█▐│
+│ enroll                                                                                                    ···          228 ms                                                                      ▐ │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
  Enter open   / filter   Space pause   m pin   y copy   e export   c collapse   s sort   Tab next panel   q quit   ? help                                                    ⚠ studio inspector present
