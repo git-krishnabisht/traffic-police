@@ -329,14 +329,34 @@ struct View<'a> {
     attach: bool,
 }
 
+/// The picker's box: its title on the border, the list inside with a margin, the columns spread
+/// over the whole width, and the keys at the bottom.
 fn draw(buf: &mut ratatui::buffer::Buffer, area: Rect, t: &Theme, v: &View) {
     let View { loaded, devices, abouts, chosen, processes, cursor, message, attach } = *v;
-    let mut lines: Vec<Line> = Vec::new();
+    Block::bordered().border_type(t.borders).border_style(t.accent()).render(area, buf);
+    // the title after the corner, as on the main screen's boxes (`╭─ Choose … ─`)
+    let bold = t.accent().add_modifier(Modifier::BOLD);
     let title = match chosen {
-        None => " Choose a device ".to_string(),
-        Some(d) => format!(" Choose an app process on {} ", d.label()),
+        None => vec![Span::styled("Choose a device", bold)],
+        Some(d) => vec![Span::styled("Choose an app process on ", bold), Span::styled(d.label(), t.text())],
     };
+    if crate::ui::border_labels(buf, area, area.y, false, vec![title]).is_empty() {
+        crate::ui::border_labels(buf, area, area.y, false, vec![vec![Span::styled("Choose", bold)]]);
+    }
+    // a margin of one row and two columns inside the border
+    let inner = Rect {
+        x: area.x + 3,
+        y: area.y + 2,
+        width: area.width.saturating_sub(6),
+        height: area.height.saturating_sub(4),
+    };
+    if inner.width < 10 || inner.height < 3 {
+        return;
+    }
+    let w = usize::from(inner.width);
     let selected = t.selected();
+    // rows from the top; the message and the keys from the bottom
+    let mut lines: Vec<Line> = Vec::new();
     match (chosen, processes) {
         (None, _) => match devices {
             _ if !loaded => lines.push(Line::styled("Asking adb for devices…", t.dim())),
@@ -346,17 +366,24 @@ fn draw(buf: &mut ratatui::buffer::Buffer, area: Rect, t: &Theme, v: &View) {
                 t.dim(),
             )),
             Ok(list) => {
-                let width = list.iter().map(|d| d.label().width()).max().unwrap_or(0) + 3;
+                // device · state · Android version, spread over the width
+                let state_w = 16;
+                let device_w = (w.saturating_sub(state_w + 6) * 2 / 5).max(20);
+                let about_w = w.saturating_sub(device_w + state_w + 6);
+                let header = format!("{:<device_w$}   {:<state_w$}   {}", "device", "state", "Android");
+                lines.push(Line::styled(header, t.dim().add_modifier(Modifier::BOLD)));
                 for (i, d) in list.iter().enumerate() {
                     let style = if i == cursor { selected } else { Style::default() };
                     let state = if d.is_online() { t.ok() } else { t.warn() };
-                    let label = d.label();
-                    let pad = " ".repeat(width.saturating_sub(label.width()));
-                    lines.push(Line::from(vec![
-                        Span::styled(format!(" {label}{pad}"), t.text().patch(style)),
-                        Span::styled(format!("{:<16}", d.state), state.patch(style)),
-                        Span::styled(abouts.get(&d.transport_id).cloned().unwrap_or_default(), t.dim().patch(style)),
-                    ]));
+                    let about = abouts.get(&d.transport_id).cloned().unwrap_or_default();
+                    lines.push(
+                        Line::from(vec![
+                            Span::styled(format!("{:<device_w$}   ", truncate(&d.label(), device_w)), t.text()),
+                            Span::styled(format!("{:<state_w$}   ", truncate(&d.state, state_w)), state),
+                            Span::styled(format!("{:<about_w$}", truncate(&about, about_w)), t.dim()),
+                        ])
+                        .style(style),
+                    );
                 }
             }
         },
@@ -371,10 +398,15 @@ fn draw(buf: &mut ratatui::buffer::Buffer, area: Rect, t: &Theme, v: &View) {
             t.dim(),
         )),
         (Some(_), Some(Ok(rows))) => {
-            lines.push(Line::styled(
-                format!("   {:<46}{:>8}  {:<8}{}", "process", "pid", "arch", "capture"),
-                t.dim().add_modifier(Modifier::BOLD),
-            ));
+            // mark · process · pid · arch · capture: the process and capture columns share the
+            // width left over, so the table spans the box
+            let (pid_w, arch_w, gaps) = (8, 8, 9);
+            let flex = w.saturating_sub(2 + pid_w + arch_w + gaps);
+            let process_w = (flex * 2 / 5).max(16);
+            let note_w = flex.saturating_sub(process_w);
+            let header =
+                format!("  {:<process_w$}   {:>pid_w$}   {:<arch_w$}   {}", "process", "pid", "arch", "capture");
+            lines.push(Line::styled(header, t.dim().add_modifier(Modifier::BOLD)));
             for (i, r) in rows.iter().enumerate() {
                 let style = if i == cursor { selected } else { Style::default() };
                 let (mark, note, st) = match (r.capturing, r.frozen, attach) {
@@ -385,29 +417,59 @@ fn draw(buf: &mut ratatui::buffer::Buffer, area: Rect, t: &Theme, v: &View) {
                     (false, _, true) => ("○", "no library: Enter attaches the agent", t.dim()),
                     (false, _, false) => ("○", "debuggable, no library", t.dim()),
                 };
-                lines.push(Line::from(vec![
-                    Span::styled(format!(" {mark} "), st.patch(style)),
-                    Span::styled(format!("{:<46}", r.name), t.text().patch(style)),
-                    Span::styled(format!("{:>8}  ", r.pid), t.dim().patch(style)),
-                    Span::styled(format!("{:<8}", r.arch.as_deref().unwrap_or("")), t.dim().patch(style)),
-                    Span::styled(note, st.patch(style)),
-                ]));
+                lines.push(
+                    Line::from(vec![
+                        Span::styled(format!("{mark} "), st),
+                        Span::styled(format!("{:<process_w$}   ", truncate(&r.name, process_w)), t.text()),
+                        Span::styled(format!("{:>pid_w$}   ", r.pid), t.dim()),
+                        Span::styled(format!("{:<arch_w$}   ", r.arch.as_deref().unwrap_or("")), t.dim()),
+                        Span::styled(format!("{:<note_w$}", truncate(note, note_w)), st),
+                    ])
+                    .style(style),
+                );
             }
         }
-    }
-    lines.push(Line::default());
-    if let Some(m) = message {
-        lines.push(Line::styled(m.to_string(), t.warn()));
-        lines.push(Line::default());
     }
     let help = if chosen.is_some() {
         "↑↓ choose · Enter open · Esc back to devices · q quit"
     } else {
         "↑↓ choose · Enter open · q quit"
     };
-    lines.push(Line::styled(help, t.faint()));
-    let block = Block::bordered().title(title).border_style(t.accent());
-    Paragraph::new(lines).wrap(ratatui::widgets::Wrap { trim: false }).block(block).render(area, buf);
+    let mut bottom: Vec<Line> = Vec::new();
+    if let Some(m) = message {
+        bottom.extend(crate::wrap::wrap_line(&Line::styled(m.to_string(), t.warn()), w, 0));
+        bottom.push(Line::default());
+    }
+    bottom.push(Line::styled(help, t.faint()));
+    let bottom_h = (bottom.len() as u16).min(inner.height.saturating_sub(1));
+    let list_h = inner.height.saturating_sub(bottom_h + 1);
+    // keep the cursor's row in view
+    let skip = (cursor + 2).saturating_sub(usize::from(list_h));
+    let header = lines.first().cloned();
+    let body: Vec<Line> = lines.into_iter().skip(1).skip(skip).collect();
+    let mut list = Vec::with_capacity(body.len() + 1);
+    list.extend(header);
+    list.extend(body);
+    Paragraph::new(list).render(Rect { height: list_h, ..inner }, buf);
+    Paragraph::new(bottom).render(Rect { y: inner.y + inner.height - bottom_h, height: bottom_h, ..inner }, buf);
+}
+
+fn truncate(s: &str, w: usize) -> String {
+    if s.width() <= w {
+        return s.to_string();
+    }
+    let mut out = String::new();
+    let mut used = 0;
+    for ch in s.chars() {
+        let cw = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
+        if used + cw + 1 > w {
+            break;
+        }
+        out.push(ch);
+        used += cw;
+    }
+    out.push('…');
+    out
 }
 
 #[cfg(test)]
@@ -415,14 +477,77 @@ mod tests {
     use super::*;
     use crate::theme::{Depth, Palette};
 
-    fn text(v: &View) -> String {
-        let area = Rect::new(0, 0, 110, 12);
+    fn render(v: &View, area: Rect) -> ratatui::buffer::Buffer {
         let mut buf = ratatui::buffer::Buffer::empty(area);
         draw(&mut buf, area, &Theme::new(Palette::Dark, Depth::TrueColor), v);
+        buf
+    }
+
+    fn text(v: &View) -> String {
+        let area = Rect::new(0, 0, 110, 12);
+        let buf = render(v, area);
         (0..area.height)
             .map(|y| (0..area.width).map(|x| buf[(x, y)].symbol()).collect::<String>().trim_end().to_string())
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    fn phone() -> Device {
+        Device {
+            serial: "0123456789ABCDEF".into(),
+            state: "device".into(),
+            product: None,
+            model: Some("A015".into()),
+            device: None,
+            transport_id: 1,
+        }
+    }
+
+    #[test]
+    fn the_process_list_spans_the_width_inside_a_margin() {
+        let device = phone();
+        let row = |pid, name: &str| ProcessRow {
+            pid,
+            name: name.into(),
+            package: name.into(),
+            capturing: false,
+            frozen: false,
+            arch: Some("arm64".into()),
+        };
+        let rows = Ok(vec![row(10771, "io.surepass.suresignsample"), row(20, "com.example.other")]);
+        let devices = Ok(vec![device.clone()]);
+        let abouts = HashMap::from([(1, "Android 14 (API 34)".to_string())]);
+        let mut view = View {
+            loaded: true,
+            devices: &devices,
+            abouts: &abouts,
+            chosen: Some(&device),
+            processes: Some(&rows),
+            cursor: 0,
+            message: None,
+            attach: true,
+        };
+        let area = Rect::new(0, 0, 160, 14);
+        let selected = Theme::new(Palette::Dark, Depth::TrueColor).selected().bg.unwrap();
+        for (title, last_column) in
+            [("╭─ Choose an app process on A015", "capture"), ("╭─ Choose a device ─", "Android")]
+        {
+            let buf = render(&view, area);
+            let row_text = |y: u16| (0..area.width).map(|x| buf[(x, y)].symbol()).collect::<String>();
+            assert!(row_text(0).starts_with(title), "{}", row_text(0));
+            // the header sits one row and two columns inside the border (the process list's after
+            // the column of marks)
+            let first = row_text(2).chars().skip(1).position(|c| c != ' ').unwrap() + 1;
+            assert!((3..=5).contains(&first), "{:?}", row_text(2));
+            // the chosen row is highlighted across the width, up to the margin on the right
+            assert_eq!(buf[(3, 3)].bg, selected);
+            assert_eq!(buf[(area.width - 4, 3)].bg, selected);
+            assert_ne!(buf[(area.width - 3, 3)].bg, selected, "the margin stays clear");
+            // the columns are spread over the width, not packed on the left
+            let at = row_text(2).find(last_column).unwrap();
+            assert!(at > 70, "{last_column} at {at}: {:?}", row_text(2));
+            view.chosen = None;
+        }
     }
 
     #[test]
