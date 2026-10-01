@@ -1,8 +1,7 @@
-//! The body explorer: the top of the detail pane shows the response body or, on its second tab
-//! (`b`, or a click on the tab), the request body. With focus `j`/`k` move through it, Ctrl+D and
-//! Ctrl+U by half the box, `h` folds (or goes to the enclosing object or array), `l` unfolds (or
-//! steps into it), Enter folds or opens the value menu on a single value. Long lines wrap
-//! (`[ui] wrap`).
+//! The body explorer: the top of the detail pane shows the response body or, on its second tab,
+//! the request body (`h` and `l` switch, as the tabs below; also `b` or a click on the tab).
+//! With focus `j`/`k` move through it, Ctrl+D and Ctrl+U by half the box, Enter folds or opens
+//! the value menu on a single value, `[` `]` fold and unfold all. Long lines wrap (`[ui] wrap`).
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -101,6 +100,9 @@ impl App {
         let Some((txn, dir)) = self.explorer_sync() else { return };
         match a {
             Action::Back => return self.close_detail(),
+            // the two bodies, as the tabs below are switched
+            Action::Left => return self.set_body_tab(BodyTab::Response),
+            Action::Right => return self.set_body_tab(BodyTab::Request),
             Action::PageUp | Action::PageDown | Action::HalfPageUp | Action::HalfPageDown => {
                 // the view moves by rows (a page, or half the box), and the cursor with it
                 let n = if matches!(a, Action::PageUp | Action::PageDown) {
@@ -128,23 +130,6 @@ impl App {
                 Action::Down => (cur + 1).min(len.saturating_sub(1)),
                 Action::Top => 0,
                 Action::Bottom => len.saturating_sub(1),
-                // fold, or go up to the enclosing object or array
-                Action::Left => {
-                    if v.set_fold(cur, true) {
-                        cur
-                    } else {
-                        v.parent_line(cur).unwrap_or(cur)
-                    }
-                }
-                // unfold, or step into it
-                Action::Right => match v.container_at(cur) {
-                    Some((_, true)) => {
-                        v.set_fold(cur, false);
-                        cur
-                    }
-                    Some((_, false)) if cur + 1 < len => cur + 1,
-                    _ => cur,
-                },
                 Action::Activate => {
                     if !v.toggle_fold(cur) {
                         value_menu = true;
@@ -218,18 +203,14 @@ impl App {
     }
 }
 
-/// The explorer's box: the request's name, what it shows, and (top right) the close button on
-/// its border.
+/// The explorer's box: the request's name, its two bodies as tabs, and what the body is on its
+/// border.
 pub fn draw(app: &mut App, r: Rect, buf: &mut Buffer) {
     let Some((txn, dir)) = app.explorer_sync() else { return };
     let t = app.theme.clone();
     let focused = app.focus == Focus::Preview;
     let inner = crate::ui::panel(buf, r, focused, &t);
-    let close = crate::ui::border_labels(buf, r, r.y, true, vec![vec![Span::styled("✕", t.dim())]]);
-    if let Some(c) = close.first() {
-        app.hits.add(*c, Target::DetailClose);
-    }
-    let room = close.first().map_or(r, |c| Rect { width: c.x.saturating_sub(r.x), ..r });
+    let room = r;
     let (name, qualifier) = {
         let tx = app.view_store().txn(txn);
         let qualifier = match dir {
@@ -249,9 +230,9 @@ pub fn draw(app: &mut App, r: Rect, buf: &mut Buffer) {
             .map(|tab| {
                 let style = if app.explorer.tab == tab {
                     if focused {
-                        t.accent().add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
+                        t.accent().add_modifier(Modifier::BOLD)
                     } else {
-                        t.text().add_modifier(Modifier::UNDERLINED)
+                        t.text().add_modifier(Modifier::BOLD)
                     }
                 } else {
                     t.dim()
@@ -370,8 +351,8 @@ pub fn draw(app: &mut App, r: Rect, buf: &mut Buffer) {
     }
     title(app, buf, labels, Some(info));
     if focused {
-        let other = app.keymap.key_label(Action::BodyTab);
-        let hint = vec![Span::styled(format!("{other} other body · h fold · l unfold · Enter value"), t.faint())];
+        let (left, right) = (app.keymap.key_label(Action::Left), app.keymap.key_label(Action::Right));
+        let hint = vec![Span::styled(format!("{left} {right} the bodies · Enter fold or value"), t.faint())];
         crate::ui::border_labels(buf, r, r.y + r.height.saturating_sub(1), true, vec![hint]);
     }
 }

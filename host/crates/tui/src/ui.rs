@@ -555,11 +555,7 @@ fn draw_views(app: &mut App, r: Rect, buf: &mut Buffer) {
     let views = [(View::Connections, "Connection"), (View::Threads, "Thread"), (View::Rules, "Rules")];
     for (v, name) in views {
         let style = if app.view == v {
-            if focused {
-                t.accent().add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
-            } else {
-                t.text().add_modifier(Modifier::UNDERLINED)
-            }
+            if focused { t.accent().add_modifier(Modifier::BOLD) } else { t.text().add_modifier(Modifier::BOLD) }
         } else {
             t.dim()
         };
@@ -1279,11 +1275,7 @@ fn draw_tabs_box(app: &mut App, r: Rect, buf: &mut Buffer) {
     let mut labels = Vec::new();
     for tab in Tab::ALL {
         let style = if app.detail.tab == tab {
-            if focused {
-                t.accent().add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
-            } else {
-                t.text().add_modifier(Modifier::UNDERLINED)
-            }
+            if focused { t.accent().add_modifier(Modifier::BOLD) } else { t.text().add_modifier(Modifier::BOLD) }
         } else {
             t.dim()
         };
@@ -1451,10 +1443,8 @@ fn hints(app: &App) -> Vec<(&'static [Action], &'static str)> {
         ],
         (_, Focus::Preview, _) => vec![
             (&[A::Up, A::Down], "move"),
-            (&[A::BodyTab], "other body"),
+            (&[A::Left, A::Right], "the bodies"),
             (&[A::HalfPageDown], "half page"),
-            (&[A::Left], "fold/up"),
-            (&[A::Right], "unfold/in"),
             (&[A::Activate], "fold/decode"),
             (&[A::FoldAll, A::UnfoldAll], "fold/unfold all"),
             (&[A::Copy], "copy"),

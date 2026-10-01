@@ -236,7 +236,6 @@ pub enum Target {
     ViewTab(View),
     DetailTab(Tab),
     DetailLine(usize),
-    DetailClose,
     ExplorerTab(crate::explorer::BodyTab),
     ExplorerLine(usize),
     Divider,
@@ -1912,7 +1911,6 @@ impl App {
                         self.focus = Focus::Detail;
                         self.set_tab(t);
                     }
-                    Some(Target::DetailClose) => self.close_detail(),
                     Some(Target::ExplorerTab(tab)) => {
                         self.focus = Focus::Preview;
                         self.set_body_tab(tab);

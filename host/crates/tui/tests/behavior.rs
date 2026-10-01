@@ -527,30 +527,32 @@ fn the_palette_finds_and_runs_commands() {
 }
 
 #[test]
-fn the_body_explorer_moves_and_folds_with_h_j_k_l() {
+fn the_body_explorer_moves_folds_and_switches_bodies() {
+    use traffic_police_tui::explorer::BodyTab;
     let mut app = app_at(40.0);
     let to = goto(&mut app, MEDIUM, path_is("/api/sdk/init"));
     press(&mut app, MEDIUM, &format!("{to}<Enter>"));
     // the explorer sits above the tabs: Shift+Tab reaches it
     press(&mut app, MEDIUM, "<S-Tab>");
     assert_eq!(app.focus, Focus::Preview);
-    // down to "config": { and fold it with h
-    let text = press(&mut app, MEDIUM, "jjjjh");
+    // down to "config": { and fold it with Enter, then unfold it
+    let text = press(&mut app, MEDIUM, "jjjj<Enter>");
     assert_eq!(app.explorer.cursor, 4);
     assert!(text.contains("\"config\": {…},  4 keys"), "{text}");
-    // l unfolds, l again steps inside, h from a value goes up to its object
-    press(&mut app, MEDIUM, "l");
-    assert_eq!(app.explorer.cursor, 4);
-    press(&mut app, MEDIUM, "l");
-    assert_eq!(app.explorer.cursor, 5);
-    press(&mut app, MEDIUM, "h");
-    assert_eq!(app.explorer.cursor, 4);
+    let text = press(&mut app, MEDIUM, "<Enter>");
+    assert!(!text.contains("4 keys"), "{text}");
     // Enter on a single value opens its value menu
     let text = press(&mut app, MEDIUM, "k<Enter>");
     assert_eq!(app.overlay, Overlay::Menu);
     assert!(text.contains("value at $.deepid"), "{text}");
     press(&mut app, MEDIUM, "<Esc>");
-    // Tab goes on to the tabs below, where h and l switch tabs again
+    // l goes to the request body and h back, as the tabs below are switched
+    let text = press(&mut app, MEDIUM, "l");
+    assert_eq!((app.explorer.tab, app.focus), (BodyTab::Request, Focus::Preview));
+    assert!(text.contains("\"sdkVersion\": \"2.4.1\""), "the request's JSON: {text}");
+    press(&mut app, MEDIUM, "h");
+    assert_eq!(app.explorer.tab, BodyTab::Response);
+    // Tab goes on to the tabs below, where h and l switch tabs too
     press(&mut app, MEDIUM, "<Tab>l");
     assert_eq!(app.focus, Focus::Detail);
     assert_eq!(app.detail.tab, traffic_police_tui::app::Tab::Response);

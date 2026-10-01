@@ -13,7 +13,7 @@ expression: "detail(12.0, SMALL, path_is(\"/api/sdk/init\"), \"l\")"
 │        0                                                      ━━┗┛   ┗━━┛  ┗┛    ┗┛ ┗┛┗┛┗┛   ┗┛  │
 │                                                               00:00.000                          │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
-╭─ init ─ Response body ─ Request body ───────────────────────────────── JSON · 316 B · 1/18 ── ✕ ─╮
+╭─ init ─ Response body ─ Request body ────────────────────────────────────── JSON · 316 B · 1/18 ─╮
 │ {                                                                                                │
 │   "ok": true,                                                                                    │
 │   "sessionId": "session_15bce3a5a963c9fde0ebe700e9d76981",                                       │

@@ -238,7 +238,7 @@ traffic-police tail --mode attach -p com.example.app       # the commands withou
 | Views | `1` Connection View · `2` Thread View · `3` Rules |
 | Rules | `r` on a request: a new rule that matches it · in the Rules view: `Space` on or off · `Enter` edit in `$EDITOR` |
 | Detail pane | `Enter` open · `Esc` close · `h` `l` or `←` `→` switch tabs · `p` parsed or source · `o` original or rule-modified response |
-| Body explorer | The box above the tabs shows the response body, and `b` (or a click on its tab) the request body; `Shift+Tab` from the tabs (or `Tab` from the list, or a click) goes there: `j` `k` move · `Ctrl+D` `Ctrl+U` half a page · `h` fold, or go up to the enclosing object · `l` unfold, or step in · `Enter` fold, or the value menu on a single value · `[` `]` fold or unfold all |
+| Body explorer | The box above the tabs shows the response body and, on its second tab, the request body; `Shift+Tab` from the tabs (or `Tab` from the list, or a click) goes there: `h` `l` (or `←` `→`, `b`, a click on a tab) switch between the two bodies, as in the tabs below · `j` `k` move · `Ctrl+D` `Ctrl+U` half a page · `Enter` fold or unfold, or the value menu on a single value · `[` `]` fold or unfold all |
 | Bodies | `Enter` fold or unfold JSON · `[` fold all · `]` unfold all · <code>&#124;</code> jq filter (empty filter clears) · long lines wrap in every box; with `[ui] wrap = false` they are cut and `<` `>` scroll sideways |
 | Call Stack | `Enter` on a framework group expands it · `Enter` on an app frame opens `$EDITOR` there (needs source roots, below) |
 | Live | `Space` pause or resume recording · `F` freeze the view (capture continues) · `L` back to live · `+` `-` zoom · `0` reset zoom · `v` select a time range (`v` or `Enter` again to apply) |
