@@ -46,6 +46,74 @@ fn first_frame_before_the_app_sends_anything() {
     assert!(app.graph.span - right < NS_PER_MS, "{right}");
 }
 
+/// An app that trickles data in while pouring it out, as a polling SDK does: 3 KB/s received
+/// against 300 KB/s sent. On one shared scale the receiving line is flattened against the
+/// baseline (the bottom row); in the mirror layout it climbs its own half.
+#[test]
+fn the_mirror_layout_keeps_a_trickle_readable_next_to_a_flood() {
+    use traffic_police_core::SessionEvent;
+    use traffic_police_core::model::SourceInfo;
+    let tick = NS_PER_SEC / 2;
+    let mut events = vec![SessionEvent::SourceUp(Box::new(SourceInfo {
+        id: 1,
+        device_label: "Pixel 8 [test]".into(),
+        serial: None,
+        package: "com.example.poller".into(),
+        process: "com.example.poller".into(),
+        pid: 4242,
+        instance: "test".into(),
+        mode: "library".into(),
+        api: Some(35),
+        runtime_version: None,
+        capabilities: vec!["traffic".into()],
+        hooks: vec![],
+        okhttp_version: None,
+        clock: Some((tick, 1_700_000_000_000)),
+        started: tick,
+        ended: None,
+    }))];
+    // the counters every half second for 20 s: 1.5 KB in and 150 KB out per tick
+    for i in 1..=40u64 {
+        events.push(SessionEvent::Traffic {
+            source: 1,
+            at: i * tick,
+            since: (i > 1).then_some((i - 1) * tick),
+            rx: i * 1536,
+            tx: i * 153_600,
+        });
+    }
+    let draw = |layout: traffic_police_tui::graph::GraphLayout| {
+        let mut app = App::new(SessionStore::new(), Theme::default());
+        app.caps = Capabilities { pause: true, rules: true, live: true };
+        app.graph_layout = layout;
+        app.ingest(events.clone());
+        app.now_override = Some(40 * tick);
+        let mut term = Terminal::new(TestBackend::new(MEDIUM.0, MEDIUM.1)).unwrap();
+        term.draw(|f| ui::draw(f, &mut app)).unwrap();
+        let theme = app.theme.clone();
+        let buf = term.backend().buffer().clone();
+        // the rows (relative to the plot's top) each series reaches, from the colors of its dots
+        let plot_top = 2u16; // header, then the panel's border
+        let rows_of = |color: Color| -> Vec<u16> {
+            let mut rows: Vec<u16> = (plot_top..plot_top + 20)
+                .filter(|&y| (0..MEDIUM.0).any(|x| buf[(x, y)].fg == color && buf[(x, y)].symbol() != " "))
+                .map(|y| y - plot_top)
+                .collect();
+            rows.dedup();
+            rows
+        };
+        (rows_of(theme.recv()), rows_of(theme.send()))
+    };
+    use traffic_police_tui::graph::GraphLayout;
+    let (recv, send) = draw(GraphLayout::Overlay);
+    assert_eq!(recv.len(), 1, "on one scale the trickle is one flat row: {recv:?}");
+    assert!(send.len() >= 2 && send[0] < recv[0], "the flood rises above it: {send:?} vs {recv:?}");
+    let (recv, send) = draw(GraphLayout::Mirror);
+    assert!(recv.len() >= 2, "in the mirror the trickle has a shape of its own: {recv:?}");
+    assert!(send.len() >= 2, "{send:?}");
+    assert!(recv.iter().all(|r| send.iter().all(|s| r < s)), "receiving above, sending below: {recv:?} {send:?}");
+}
+
 #[test]
 fn quit_keys_work_everywhere() {
     let mut app = app_at(5.0);

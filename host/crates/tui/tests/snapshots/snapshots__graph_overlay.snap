@@ -1,20 +1,20 @@
 ---
 source: crates/tui/tests/snapshots.rs
-expression: "frame(12.0, MEDIUM, \"F\")"
+expression: "press(&mut app, MEDIUM, \"\")"
 ---
- traffic-police  Pixel 8 [demo]  com.example.shop  pid 4312  ● FROZEN  ✎ 1 rule active        26 requests · 14 KB in · 18 KB out · 1 failed
-╭─ Network · all app traffic ──────────────────────────────────────────────────────────────────────────────── ━ Receiving —   ━ Sending — ─╮
-│  16 KB/s                                                                                 ┊             ⢀                                 │
-│                                                                                          ┊            ⣰⠉⢧                                │
-│ 8.0 KB/s                                                                                 ┊           ⡰⠃ ⠈⢧⣀⠤⠤⠤⠤⣀          ⣀   ⣀⠤⠤⣀  ⣀⠤⣀  │
-│                                                                                          ┊⠔⠒⠤⠒⠉⠉⠉⠉⠒⠒⠉           ⠉⠒⠤⠔⠒⠒⠒⠒⠉⠉ ⠉⠉⠉    ⠑⠊   ⠉ │
-│        0 ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┊┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄ │
-│                                                                                          ┊⠒⠒⠒⠤⠤⠤⠤⠤⠤⠤⠔⠒⠒⠢⠤⢄⣀⣀⠤⠒⠒⠢⠤⢄⣀⠤⠔⠒⠒⠢⢄   ⣠⠤⠤⠤⠔⠤⡀ ⣀⠤⠒⠒ │
-│ 8.0 KB/s                                                                                 ┊                              ⠈⢧ ⣰⠃     ⠈⠉     │
-│                                                                                          ┊                               ⠈⠓⠁             │
+ traffic-police  Pixel 8 [demo]  com.example.shop  pid 4312  ● LIVE  ✎ 1 rule active          26 requests · 14 KB in · 18 KB out · 1 failed
+╭─ Network · all app traffic ────────────────────────────────────────────────────────────────── ━ Receiving 3.9 KB/s   ━ Sending 2.4 KB/s ─╮
 │  16 KB/s                                                                                 ┊                                               │
+│                                                                                          ┊                                               │
+│                                                                                          ┊            ⢀⡿⡄                                │
+│                                                                                          ┊            ⢸ ⢧                 ⣠              │
+│ 8.0 KB/s                                                                                 ┊            ⡏ ⢸⡀               ⢰⠋⡇             │
+│                                                                                          ┊           ⢰⠃  ⡇ ⢀⠤⢄⡀          ⡞ ⢹             │
+│                                                                                          ┊     ⣀    ⢀⡞   ⠙⠔⠁  ⠈⢦        ⢰⢃⣀⡘⡆⢀⠔⠉⠉⢦⢀⢄⡔⠉⠢⡀ │
+│                                                                                          ┊⢀⣀ ⣠⠮⠢⠭⠶⠦⠴⡊  ⢀⡠⠒⠊⠉⢦  ⢀⠵⢖⠒⢄⣀⣀⣀⢤⠞⠁ ⠈⠳⣁⠤⢄⡀⡰⠓⠊⠑⢄ ⠈ │
+│        0                                                                                 ┊⠕⠊⠉       ⠈⠒⠊⠁     ⠑⠔⠁  ⠉⠁⠈⠒⠒⠁        ⠈     ⠑⠒ │
 │                                                                                          00:00.000             00:05.000                 │
-╰─ ⏸ not following live · L ───────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ Requests 26 ─ Connection ─ Thread ─ Rules ──────────────────────────────────────────────────────────────────────────────────────────────╮
 │ Name                                                     Size  Type      Status         Time   Timeline                                  │
 │ events                                                   17 B  json      200          1.38 s                              ██▌            │
@@ -41,4 +41,4 @@ expression: "frame(12.0, MEDIUM, \"F\")"
 │ notifications                                                            ···          500 ms                                           ▐▐│
 │ status?orderId=ord_15bce3a5a963c9fd                       0 B  json      200          413 ms                                           ▐ │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
- Enter open   / filter   Space pause   m pin   y copy   e export   ? help       frozen: capture continues in the background · F to unfreeze
+ Enter open   / filter   Space pause   m pin   y copy   e export   c collapse   s sort   ? help                  ⚠ studio inspector present

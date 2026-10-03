@@ -38,6 +38,7 @@ pub enum Action {
     GraphSource,
     TimeLabels,
     GraphStyle,
+    GraphLayout,
     Collapse,
     Sort,
     SortReverse,
@@ -170,6 +171,14 @@ pub const ACTIONS: &[Info] = &[
     info!(GraphSource, "graph-source", Graph, "source", "Graph: whole-app traffic or captured requests", ["T"]),
     info!(TimeLabels, "time-labels", Graph, "clock", "Time axis: since start or wall clock", ["t"]),
     info!(GraphStyle, "graph-style", Graph, "style", "Graph style: smooth, heavy, lines, area, braille", []),
+    info!(
+        GraphLayout,
+        "graph-layout",
+        Graph,
+        "layout",
+        "Graph layout: mirror (sending below the zero line) or overlay",
+        []
+    ),
     info!(Collapse, "collapse", List, "collapse", "Collapse repeated calls", ["c"]),
     info!(Sort, "sort", List, "sort", "Sort by the next column", ["s"]),
     info!(SortReverse, "sort-reverse", List, "reverse", "Reverse the sort", ["S"]),

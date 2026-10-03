@@ -21,7 +21,7 @@ use unicode_width::UnicodeWidthStr;
 use crate::actions::Action;
 use crate::app::{App, Bar, Focus, Overlay, Tab, Target, View};
 use crate::detail::{self, draw_line};
-use crate::graph::{self, GraphStyle};
+use crate::graph::{self, GraphLayout, GraphStyle, Grow};
 use crate::theme::Theme;
 
 pub const MIN_WIDTH: u16 = 100;
@@ -230,6 +230,8 @@ fn draw_header(app: &App, r: Rect, buf: &mut Buffer) {
 // --- graph -------------------------------------------------------------------------------------
 
 const GUTTER: u16 = 10;
+/// The zero line between the halves of the mirror layout (the markers' `┊`, lying down).
+const ZERO_LINE: &str = "┄";
 
 fn tick_step(span: u64, width: u16) -> u64 {
     const STEPS: [u64; 17] = [
@@ -334,14 +336,35 @@ fn draw_graph(app: &mut App, panel_r: Rect, buf: &mut Buffer) {
         let b = traffic.buckets(app.graph_source, left, right, n);
         (b.source, b.rx, b.tx, None)
     };
-    let max = (0..n).filter(|&i| shown(i)).map(|i| rx[i].max(tx[i])).fold(0.0, f64::max);
-    let scale = match app.graph.scale {
-        // tests draw at a fixed time: no easing
-        Some(s) if app.now_override.is_none() => s.next(max, Instant::now()),
+    // The layout: receiving above a zero line and sending below it, each half on its own scale
+    // (mirror), or both above one baseline on one scale (overlay). The mirror needs a row for
+    // the zero line and one for each half.
+    let mirror = app.graph_layout == GraphLayout::Mirror && plot.height >= 3;
+    let peak = |v: &[f64]| (0..n).filter(|&i| shown(i)).map(|i| v[i]).fold(0.0, f64::max);
+    let (rx_peak, tx_peak) = (peak(&rx), peak(&tx));
+    // tests draw at a fixed time: no easing
+    let fixed_time = app.now_override.is_some();
+    let next = |scale: Option<graph::Scale>, max: f64| match scale {
+        Some(s) if !fixed_time => s.next(max, Instant::now()),
         _ => graph::Scale::new(max, Instant::now()),
     };
+    let scale = next(app.graph.scale, if mirror { rx_peak } else { rx_peak.max(tx_peak) });
     app.graph.scale = Some(scale);
+    app.graph.send_scale = mirror.then(|| next(app.graph.send_scale, tx_peak));
     let ymax = scale.shown;
+    let tx_ymax = app.graph.send_scale.map_or(ymax, |s| s.shown);
+    // the halves of the mirror layout, either side of the zero line's row (the same whole plot
+    // for both series in the overlay)
+    let zero_row = plot.y + plot.height / 2;
+    let (upper, lower) = if mirror {
+        (
+            Rect { height: zero_row - plot.y, ..plot },
+            Rect { y: zero_row + 1, height: plot.y + plot.height - zero_row - 1, ..plot },
+        )
+    } else {
+        (plot, plot)
+    };
+    let tx_grow = if mirror { Grow::Down } else { Grow::Up };
     // border: title and source on the left, the legend on the right, notes at the bottom
     let title_style =
         if focused { t.accent().add_modifier(Modifier::BOLD) } else { t.title().add_modifier(Modifier::BOLD) };
@@ -402,6 +425,14 @@ fn draw_graph(app: &mut App, panel_r: Rect, buf: &mut Buffer) {
             }
         }
     }
+    // the zero line between the halves
+    if mirror {
+        for x in plot.x..plot.x + plot.width {
+            if let Some(c) = buf.cell_mut((x, zero_row)) {
+                c.set_symbol(ZERO_LINE).set_style(t.faint());
+            }
+        }
+    }
     // chart
     let points = |v: &[f64]| -> Vec<(f64, f64)> {
         v.iter().enumerate().filter(|&(i, _)| shown(i)).map(|(i, v)| (i as f64 + 0.5, *v)).collect()
@@ -417,37 +448,52 @@ fn draw_graph(app: &mut App, panel_r: Rect, buf: &mut Buffer) {
                 lead_in.map(Some).into_iter().chain(columns(v)).collect()
             };
             let (rx, tx) = (lines(rx_in, &rx), lines(tx_in, &tx));
-            graph::draw_curves(buf, plot, &[(&tx, send_style), (&rx, recv_style)], ymax);
+            if mirror {
+                graph::draw_curves(buf, upper, &[(&rx, recv_style)], ymax, Grow::Up);
+                graph::draw_curves(buf, lower, &[(&tx, send_style)], tx_ymax, Grow::Down);
+            } else {
+                graph::draw_curves(buf, plot, &[(&tx, send_style), (&rx, recv_style)], ymax, Grow::Up);
+            }
         }
         GraphStyle::Braille => {
+            fn dataset(color: Color, data: &[(f64, f64)]) -> Dataset<'_> {
+                Dataset::default()
+                    .marker(Marker::Braille)
+                    .graph_type(GraphType::Line)
+                    .style(Style::default().fg(color))
+                    .data(data)
+            }
+            let x_axis = || Axis::default().bounds([0.0, n as f64]);
             let (rx, tx) = (points(&rx), points(&tx));
-            let chart = Chart::new(vec![
-                Dataset::default()
-                    .marker(Marker::Braille)
-                    .graph_type(GraphType::Line)
-                    .style(Style::default().fg(t.send()))
-                    .data(&tx),
-                Dataset::default()
-                    .marker(Marker::Braille)
-                    .graph_type(GraphType::Line)
-                    .style(Style::default().fg(t.recv()))
-                    .data(&rx),
-            ])
-            .x_axis(Axis::default().bounds([0.0, n as f64]))
-            .y_axis(Axis::default().bounds([0.0, ymax]));
-            chart.render(plot, buf);
+            if mirror {
+                Chart::new(vec![dataset(t.recv(), &rx)])
+                    .x_axis(x_axis())
+                    .y_axis(Axis::default().bounds([0.0, ymax]))
+                    .render(upper, buf);
+                // hanging from the zero line: the values negated, on an axis that ends at 0
+                let tx: Vec<(f64, f64)> = tx.iter().map(|&(x, v)| (x, -v)).collect();
+                Chart::new(vec![dataset(t.send(), &tx)])
+                    .x_axis(x_axis())
+                    .y_axis(Axis::default().bounds([-tx_ymax, 0.0]))
+                    .render(lower, buf);
+            } else {
+                Chart::new(vec![dataset(t.send(), &tx), dataset(t.recv(), &rx)])
+                    .x_axis(x_axis())
+                    .y_axis(Axis::default().bounds([0.0, ymax]))
+                    .render(plot, buf);
+            }
         }
         GraphStyle::Heavy | GraphStyle::Lines => {
             let heavy = app.graph_style == GraphStyle::Heavy;
-            graph::draw_steps(buf, plot, &columns(&tx), ymax, send_style, heavy);
-            graph::draw_steps(buf, plot, &columns(&rx), ymax, recv_style, heavy);
+            graph::draw_steps(buf, lower, &columns(&tx), tx_ymax, send_style, heavy, tx_grow);
+            graph::draw_steps(buf, upper, &columns(&rx), ymax, recv_style, heavy, Grow::Up);
         }
         GraphStyle::Area => {
-            graph::draw_area(buf, plot, &columns(&rx), ymax, Style::default().fg(t.recv()));
-            graph::draw_steps(buf, plot, &columns(&tx), ymax, send_style, false);
+            graph::draw_area(buf, upper, &columns(&rx), ymax, Style::default().fg(t.recv()));
+            graph::draw_steps(buf, lower, &columns(&tx), tx_ymax, send_style, false, tx_grow);
         }
     }
-    // markers (attach, detach, pause, ...)
+    // markers (attach, detach, pause, ...): through the empty cells and across the zero line
     for m in app.view_store().markers().iter().filter(|m| m.at >= left && m.at < right) {
         let x = x_of(m.at);
         let color = match m.kind {
@@ -458,7 +504,7 @@ fn draw_graph(app: &mut App, panel_r: Rect, buf: &mut Buffer) {
         };
         for y in plot.y..plot.y + plot.height {
             if let Some(c) = buf.cell_mut((x, y))
-                && c.symbol() == " "
+                && (c.symbol() == " " || c.symbol() == ZERO_LINE)
             {
                 c.set_symbol("┊").set_style(color.unwrap_or_default());
             }
@@ -472,18 +518,33 @@ fn draw_graph(app: &mut App, panel_r: Rect, buf: &mut Buffer) {
             }
         }
     }
-    // y labels
-    let gutter = |y: u16, s: String| {
+    // y labels: the top of a scale, halfway up it, and zero. In the mirror each half's top wears
+    // its series' color, and the halfway mark needs a free row on each side of it.
+    let gutter = |y: u16, s: String, style: Style| {
         let w = s.width() as u16;
         let x = r.x + GUTTER.saturating_sub(w + 1);
-        (x, y, w, s)
+        (x, y, w, s, style)
     };
-    for (x, y, w, s) in [
-        gutter(plot.y, fmt::rate(ymax)),
-        gutter(plot.y + plot.height / 2, fmt::rate(ymax / 2.0)),
-        gutter(plot.y + plot.height.saturating_sub(1), "0".into()),
-    ] {
-        text(buf, x, y, w, vec![Span::styled(s, t.faint())]);
+    let labels = if mirror {
+        let mut labels = vec![gutter(upper.y, fmt::rate(ymax), Style::default().fg(t.recv()))];
+        if upper.height >= 4 {
+            labels.push(gutter(upper.y + upper.height / 2, fmt::rate(ymax / 2.0), t.faint()));
+        }
+        labels.push(gutter(zero_row, "0".into(), t.faint()));
+        if lower.height >= 4 {
+            labels.push(gutter(lower.y + lower.height - 1 - lower.height / 2, fmt::rate(tx_ymax / 2.0), t.faint()));
+        }
+        labels.push(gutter(lower.y + lower.height - 1, fmt::rate(tx_ymax), Style::default().fg(t.send())));
+        labels
+    } else {
+        vec![
+            gutter(plot.y, fmt::rate(ymax), t.faint()),
+            gutter(plot.y + plot.height / 2, fmt::rate(ymax / 2.0), t.faint()),
+            gutter(plot.y + plot.height.saturating_sub(1), "0".into(), t.faint()),
+        ]
+    };
+    for (x, y, w, s, style) in labels {
+        text(buf, x, y, w, vec![Span::styled(s, style)]);
     }
     draw_axis(
         app,

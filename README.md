@@ -245,13 +245,13 @@ traffic-police tail --mode attach -p com.example.app       # the commands withou
 | Bodies | `Enter` fold or unfold JSON · `[` fold all · `]` unfold all · <code>&#124;</code> jq filter (empty filter clears) · long lines wrap in every box; with `[ui] wrap = false` they are cut and `<` `>` scroll sideways |
 | Call Stack | `Enter` on a framework group expands it · `Enter` on an app frame opens `$EDITOR` there (needs source roots, below) |
 | Live | `Space` pause or resume recording · `F` freeze the view (capture continues) · `L` back to live · `+` `-` zoom · `0` reset zoom · `v` select a time range (`v` or `Enter` again to apply) |
-| Graph | `T` whole-app traffic or captured requests · `t` time since start or wall clock · `←` `→` move when the graph has focus |
+| Graph | Receiving above the zero line, sending below, each half scaled to its own peak (`:` layout switches to one shared scale) · `T` whole-app traffic or captured requests · `t` time since start or wall clock · `←` `→` move when the graph has focus |
 | List | New requests are followed while the cursor is on the newest; `G` (or `End`, `Ctrl+G`) goes back to it and follows again, also with a request open · `c` collapse repeated calls · `s` sort by the next column · `S` reverse the sort · `C` choose columns |
 | Find | `/` in the list: the filter bar ([language below](#filters)) · `/` in the detail pane: search the tab (`n` `N` next and previous match) · `m` pin a request (`is:pinned` lists pins) |
 | Copy and save | `y` copy: as cURL, the URL, headers, one header, a body, the JSON value at the cursor · `w` save a body to a file · `e` export: HAR (all, listed or selected requests) or a session file |
 | Compare | `d` marks a request (◆), `d` on another compares them: request and status lines, headers (`s` in order or as sets), bodies (JSON with keys sorted); `n` `N` step through changes, `y` copies the diff |
 | Decode | `Enter` on a header or a JSON value: copy it, decode a JWT, base64 or URL encoding, or filter by it · the Overview lists JWTs with their expiry (`Enter` decodes) |
-| Session | `:` command palette (every command by name, and the graph styles) · `x` clear (asks first) · `?` help · `q` quit |
+| Session | `:` command palette (every command by name, and the graph styles and layouts) · `x` clear (asks first) · `?` help · `q` quit |
 
 Mouse: click rows and tabs, double-click a row to open it, wheel to scroll (on the graph the
 wheel zooms and Shift+wheel moves in time), drag on the graph to select a range, drag the divider
@@ -322,6 +322,7 @@ optional; `traffic-police doctor` reports mistakes with their line.
 theme = "dark"                # auto, dark, light (--theme wins)
 borders = "rounded"           # rounded, plain, double, thick
 graph_style = "smooth"        # smooth, heavy, lines, area, braille
+graph_layout = "mirror"       # mirror: receiving above the zero line, sending below, each at its own scale; overlay: both above, one scale
 graph = "app"                 # the graph at start: app (all app traffic) or requests (T switches)
 graph_height = 12            # rows of the graph, 0 hides it (by default a quarter of the screen, 8-14)
 time = "wall"                 # relative (since the session started) or wall (clock time)

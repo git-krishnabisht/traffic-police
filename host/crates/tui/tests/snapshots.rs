@@ -111,6 +111,10 @@ fn graph_states() {
     snap!("graph_zoomed_out", frame(40.0, MEDIUM, "--"));
     snap!("graph_range_selected", frame(40.0, MEDIUM, "vhhhhhhhhhhv"));
     snap!("graph_range_in_progress", frame(40.0, MEDIUM, "vhhhhh"));
+    // both series above one baseline, on one scale: the look before the mirror layout
+    let mut app = app_at(12.0);
+    app.graph_layout = traffic_police_tui::graph::GraphLayout::Overlay;
+    snap!("graph_overlay", press(&mut app, MEDIUM, ""));
 }
 
 // --- Thread View and Rules -------------------------------------------------------------------

@@ -49,6 +49,49 @@ impl GraphStyle {
     }
 }
 
+/// Where the two series go.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum GraphLayout {
+    /// Receiving above a zero line, sending below it, each half scaled to its own peak: a
+    /// trickle one way stays readable next to a flood the other way.
+    #[default]
+    Mirror,
+    /// Both above one baseline, on one scale (as Android Studio draws it): the smaller series
+    /// flattens against the baseline when the other one dwarfs it.
+    Overlay,
+}
+
+impl GraphLayout {
+    pub const ALL: [GraphLayout; 2] = [GraphLayout::Mirror, GraphLayout::Overlay];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            GraphLayout::Mirror => "mirror",
+            GraphLayout::Overlay => "overlay",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<GraphLayout> {
+        GraphLayout::ALL.into_iter().find(|l| l.name() == s)
+    }
+
+    pub fn next(self) -> GraphLayout {
+        match self {
+            GraphLayout::Mirror => GraphLayout::Overlay,
+            GraphLayout::Overlay => GraphLayout::Mirror,
+        }
+    }
+}
+
+/// Which way a series grows from its baseline.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Grow {
+    /// From the bottom row of the area upward.
+    Up,
+    /// From the top row of the area downward (the sending half of the mirror layout).
+    Down,
+}
+
 /// The app's counters arrive a tick at a time: every 500 ms, the runtime's default
 /// (PROTOCOL.md §7.1). The smooth style spreads each value over a tick.
 pub const TICK_NS: u64 = 500 * NS_PER_MS;
@@ -147,8 +190,8 @@ pub fn smooth_reach(tick: f64, spiky: bool) -> usize {
 /// where there is no line. Values beyond the `2 × area.width` columns are for columns just left
 /// of the area: the line comes in from them as it scrolls. A steep stretch climbs half in the
 /// column before and half in its own, so the line stays joined. Where series meet, the cell
-/// takes the color of the later one.
-pub fn draw_curves(buf: &mut Buffer, area: Rect, series: &[(&[Option<f64>], Style)], ymax: f64) {
+/// takes the color of the later one. `grow` is the side the baseline is on.
+pub fn draw_curves(buf: &mut Buffer, area: Rect, series: &[(&[Option<f64>], Style)], ymax: f64, grow: Grow) {
     const BIT: [[u8; 4]; 2] = [[0x01, 0x02, 0x04, 0x40], [0x08, 0x10, 0x20, 0x80]];
     let (cols, rows) = (usize::from(area.width), usize::from(area.height));
     let (w, h) = (cols * 2, rows * 4);
@@ -166,7 +209,11 @@ pub fn draw_curves(buf: &mut Buffer, area: Rect, series: &[(&[Option<f64>], Styl
         let mut dot = |x: usize, y: usize| {
             // x counts from the first value
             if let Some(x) = x.checked_sub(lead).filter(|&x| x < w) {
-                let from_top = h - 1 - y;
+                // y counts dot rows from the baseline
+                let from_top = match grow {
+                    Grow::Up => h - 1 - y,
+                    Grow::Down => y,
+                };
                 let i = (from_top / 4) * cols + x / 2;
                 bits[i] |= BIT[x % 2][from_top % 4];
                 owner[i] = s;
@@ -219,6 +266,20 @@ struct Glyphs {
     up_right: &'static str,
 }
 
+impl Glyphs {
+    /// The same line drawn upside down: each turn becomes its vertical mirror.
+    const fn flipped(&self) -> Glyphs {
+        Glyphs {
+            flat: self.flat,
+            upright: self.upright,
+            left_up: self.left_down,
+            down_right: self.up_right,
+            left_down: self.left_up,
+            up_right: self.down_right,
+        }
+    }
+}
+
 const ROUNDED: Glyphs =
     Glyphs { flat: "─", upright: "│", left_up: "╯", down_right: "╭", left_down: "╮", up_right: "╰" };
 const HEAVY: Glyphs =
@@ -234,10 +295,27 @@ fn level(v: f64, ymax: f64, rows: u16) -> u16 {
 }
 
 /// Draws one series as a step line, one value per column of `area`; `None` values (before the
-/// session started, after now) leave their column empty.
-pub fn draw_steps(buf: &mut Buffer, area: Rect, values: &[Option<f64>], ymax: f64, style: Style, heavy: bool) {
-    let g = if heavy { &HEAVY } else { &ROUNDED };
-    let row = |level: u16| area.y + area.height - 1 - level;
+/// session started, after now) leave their column empty. `grow` is the side the baseline is on.
+pub fn draw_steps(
+    buf: &mut Buffer,
+    area: Rect,
+    values: &[Option<f64>],
+    ymax: f64,
+    style: Style,
+    heavy: bool,
+    grow: Grow,
+) {
+    let g = match (heavy, grow) {
+        (true, Grow::Up) => HEAVY,
+        (true, Grow::Down) => HEAVY.flipped(),
+        (false, Grow::Up) => ROUNDED,
+        (false, Grow::Down) => ROUNDED.flipped(),
+    };
+    let g = &g;
+    let row = |level: u16| match grow {
+        Grow::Up => area.y + area.height - 1 - level,
+        Grow::Down => area.y + level,
+    };
     let mut put = |x: u16, y: u16, s: &str| {
         if let Some(c) = buf.cell_mut((x, y)) {
             // where the lines cross, a flat stretch gives way to the other line's turns
@@ -305,11 +383,11 @@ mod tests {
 
     use super::*;
 
-    fn render(values: &[f64], height: u16, heavy: bool) -> String {
+    fn render(values: &[f64], height: u16, heavy: bool, grow: Grow) -> String {
         let area = Rect::new(0, 0, values.len() as u16, height);
         let mut buf = Buffer::empty(area);
         let v: Vec<Option<f64>> = values.iter().map(|&x| Some(x)).collect();
-        draw_steps(&mut buf, area, &v, 4.0, Style::default(), heavy);
+        draw_steps(&mut buf, area, &v, 4.0, Style::default(), heavy, grow);
         (0..height)
             .map(|y| (0..area.width).map(|x| buf[(x, y)].symbol().to_string()).collect::<String>())
             .collect::<Vec<_>>()
@@ -318,8 +396,17 @@ mod tests {
 
     #[test]
     fn steps_rise_and_fall_with_rounded_corners() {
-        let out = render(&[0.0, 0.0, 4.0, 4.0, 2.0, 0.0, 0.0], 5, false);
+        let out = render(&[0.0, 0.0, 4.0, 4.0, 2.0, 0.0, 0.0], 5, false, Grow::Up);
         assert_eq!(out, "  ╭─╮  \n  │ │  \n  │ ╰╮ \n  │  │ \n──╯  ╰─");
+    }
+
+    #[test]
+    fn steps_hang_from_the_top_as_a_mirror_image() {
+        // the same values growing down: the picture upside down, every turn mirrored
+        let out = render(&[0.0, 0.0, 4.0, 4.0, 2.0, 0.0, 0.0], 5, false, Grow::Down);
+        assert_eq!(out, "──╮  ╭─\n  │  │ \n  │ ╭╯ \n  │ │  \n  ╰─╯  ");
+        let out = render(&[0.0, 4.0, 0.0], 3, true, Grow::Down);
+        assert_eq!(out, "━┓┏\n ┃┃\n ┗┛");
     }
 
     #[test]
@@ -350,10 +437,23 @@ mod tests {
     }
 
     fn curves(series: &[(&[Option<f64>], Style)], width: u16) -> (String, Buffer) {
+        curves_growing(series, width, Grow::Up)
+    }
+
+    fn curves_growing(series: &[(&[Option<f64>], Style)], width: u16, grow: Grow) -> (String, Buffer) {
         let area = Rect::new(0, 0, width, 1);
         let mut buf = Buffer::empty(area);
-        draw_curves(&mut buf, area, series, 3.0);
+        draw_curves(&mut buf, area, series, 3.0, grow);
         ((0..width).map(|x| buf[(x, 0)].symbol().to_string()).collect(), buf)
+    }
+
+    #[test]
+    fn curves_hang_from_the_top_as_a_mirror_image() {
+        let some = |v: &[f64]| v.iter().copied().map(Some).collect::<Vec<_>>();
+        // the climb of `curves_are_braille_lines_that_stay_joined` (⣠⠿⣄) with its dot rows
+        // upside down: the baseline along the top, the bump hanging from it
+        let (text, _) = curves_growing(&[(&some(&[0.0, 0.0, 3.0, 3.0, 0.0, 0.0]), Style::default())], 3, Grow::Down);
+        assert_eq!(text, "⠙⣶⠋");
     }
 
     #[test]
@@ -406,7 +506,7 @@ mod tests {
     #[test]
     fn heavy_steps_round_to_the_nearest_row() {
         // on 3 rows with a maximum of 4: 1.2 is nearest row 1 (value 2), 0.9 nearest row 0
-        let out = render(&[0.0, 1.2, 0.9], 3, true);
+        let out = render(&[0.0, 1.2, 0.9], 3, true, Grow::Up);
         assert_eq!(out, "   \n ┏┓\n━┛┗");
     }
 }

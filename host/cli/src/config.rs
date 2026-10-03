@@ -8,6 +8,7 @@
 //! theme = "dark"              # auto, dark, light (--theme wins)
 //! borders = "rounded"         # rounded, plain, double, thick
 //! graph_style = "smooth"      # smooth, heavy, lines, area, braille
+//! graph_layout = "mirror"     # mirror (receiving above the zero line, sending below, each at its own scale) or overlay (both above, one scale)
 //! graph = "app"               # what the graph starts with: app (all app traffic) or requests (T switches)
 //! graph_height = 12           # rows of the graph (0 hides it); by default a quarter of the screen
 //! time = "wall"               # relative (since the session started) or wall (clock time)
@@ -65,7 +66,7 @@ use traffic_police_proto::msg::CaptureConfig;
 use traffic_police_tui::App;
 use traffic_police_tui::app::{FPS_RANGE, Tab, View};
 use traffic_police_tui::explorer::BodyTab;
-use traffic_police_tui::graph::GraphStyle;
+use traffic_police_tui::graph::{GraphLayout, GraphStyle};
 use traffic_police_tui::share::ClipboardMode;
 use traffic_police_tui::theme::{COLOR_SLOTS, Palette, Theme, parse_borders, parse_hex};
 
@@ -108,6 +109,7 @@ pub struct Config {
 pub struct Ui {
     pub theme: Option<Spanned<String>>,
     pub graph_style: Option<Spanned<String>>,
+    pub graph_layout: Option<Spanned<String>>,
     pub time: Option<Spanned<String>>,
     pub columns: Option<Spanned<Vec<String>>>,
     pub divider: Option<Spanned<u16>>,
@@ -273,6 +275,11 @@ impl Loaded {
                 g.span().start,
                 format!("[ui] graph_style {:?}: use smooth, heavy, lines, area or braille", g.get_ref()),
             ));
+        }
+        if let Some(l) = &ui.graph_layout
+            && GraphLayout::parse(l.get_ref()).is_none()
+        {
+            found.push((l.span().start, format!("[ui] graph_layout {:?}: use mirror or overlay", l.get_ref())));
         }
         if let Some(t) = &ui.time
             && !matches!(t.get_ref().as_str(), "relative" | "wall")
@@ -473,6 +480,9 @@ impl Loaded {
         if let Some(g) = ui.graph_style.as_ref().and_then(|g| GraphStyle::parse(g.get_ref())) {
             app.graph_style = g;
         }
+        if let Some(l) = ui.graph_layout.as_ref().and_then(|l| GraphLayout::parse(l.get_ref())) {
+            app.graph_layout = l;
+        }
         if let Some(t) = &ui.time {
             match t.get_ref().as_str() {
                 "wall" => app.wall_labels = true,
@@ -630,6 +640,7 @@ mod tests {
 [ui]
 theme = "light"
 graph_style = "braille"
+graph_layout = "overlay"
 time = "wall"
 columns = ["method", "req-size"]
 divider = 60
@@ -662,6 +673,7 @@ memory = 1048576
         let mut app = App::new(traffic_police_core::SessionStore::new(), traffic_police_tui::Theme::default());
         l.apply_ui(&mut app);
         assert_eq!(app.graph_style, GraphStyle::Braille);
+        assert_eq!(app.graph_layout, GraphLayout::Overlay);
         assert!(app.wall_labels);
         assert!(app.columns.contains(&Column::Method) && app.columns.contains(&Column::ReqSize));
         assert_eq!(app.columns.last(), Some(&Column::Timeline), "extra columns go before the timeline");
@@ -674,24 +686,30 @@ memory = 1048576
     fn problems_name_their_line_and_the_rest_still_applies() {
         let (min, max) = (FPS_RANGE.start(), FPS_RANGE.end());
         let text = format!(
-            "[ui]\ntheme = \"blue\"\ngraph_style = \"heavy\"\nfps = {}\n[keymap]\npuase = \"p\"\ncopy = \"ctrl+\"\n\n[capture]\nbody_cap = \"lots\"\n",
+            "[ui]\ntheme = \"blue\"\ngraph_style = \"heavy\"\nfps = {}\ngraph_layout = \"stacked\"\n[keymap]\npuase = \"p\"\ncopy = \"ctrl+\"\n\n[capture]\nbody_cap = \"lots\"\n",
             max + 1
         );
         let l = parse(&text);
-        assert_eq!(l.problems.len(), 5, "{:?}", l.problems);
+        assert_eq!(l.problems.len(), 6, "{:?}", l.problems);
         assert!(l.problems[0].starts_with("line 2: [ui] theme \"blue\""), "{:?}", l.problems);
-        assert_eq!(l.problems[1], format!("line 4: [ui] fps {}: use {min} to {max} (frames a second)", max + 1));
+        assert!(
+            l.problems.contains(&"line 5: [ui] graph_layout \"stacked\": use mirror or overlay".to_string()),
+            "{:?}",
+            l.problems
+        );
+        assert!(l.problems.contains(&format!("line 4: [ui] fps {}: use {min} to {max} (frames a second)", max + 1)));
         assert!(
             l.problems
                 .iter()
-                .any(|p| p.starts_with("line 6: [keymap] unknown action \"puase\"; valid names: up, down"))
+                .any(|p| p.starts_with("line 7: [keymap] unknown action \"puase\"; valid names: up, down"))
         );
-        assert!(l.problems.iter().any(|p| p.starts_with("line 7: [keymap] copy:")), "{:?}", l.problems);
-        assert!(l.problems.iter().any(|p| p.starts_with("line 10: [capture] body_cap")), "{:?}", l.problems);
+        assert!(l.problems.iter().any(|p| p.starts_with("line 8: [keymap] copy:")), "{:?}", l.problems);
+        assert!(l.problems.iter().any(|p| p.starts_with("line 11: [capture] body_cap")), "{:?}", l.problems);
         assert_eq!(l.theme(), None);
         let mut app = App::new(traffic_police_core::SessionStore::new(), traffic_police_tui::Theme::default());
         l.apply_ui(&mut app);
         assert_eq!((app.graph_style, app.fps), (GraphStyle::Heavy, traffic_police_tui::app::DEFAULT_FPS));
+        assert_eq!(app.graph_layout, GraphLayout::Mirror, "the default stays when the value is bad");
     }
 
     #[test]

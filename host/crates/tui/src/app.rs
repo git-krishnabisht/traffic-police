@@ -167,8 +167,11 @@ pub struct GraphState {
     /// The window the graph was last drawn with: ends on a column, and while following live
     /// a little before "now" ([`App::graph_window`]). The mouse picks times from it.
     pub drawn: Option<(Ts, Ts)>,
-    /// The top of the graph's y axis.
+    /// The top of the graph's y axis: the one scale of the overlay layout, or the receiving
+    /// half's in the mirror layout.
     pub scale: Option<crate::graph::Scale>,
+    /// The sending half's scale in the mirror layout (its own peak, read downward).
+    pub send_scale: Option<crate::graph::Scale>,
 }
 
 #[derive(Debug, Clone)]
@@ -376,6 +379,7 @@ pub struct App {
     pub graph: GraphState,
     pub graph_source: GraphSource,
     pub graph_style: crate::graph::GraphStyle,
+    pub graph_layout: crate::graph::GraphLayout,
     pub frames: FrameStats,
     /// The most frames drawn a second (`[ui] fps`).
     pub fps: u16,
@@ -467,6 +471,7 @@ impl App {
             graph: GraphState { span: DEFAULT_SPAN, ..Default::default() },
             graph_source: GraphSource::AppTotal,
             graph_style: crate::graph::GraphStyle::default(),
+            graph_layout: crate::graph::GraphLayout::default(),
             keymap: Keymap::default(),
             frames: FrameStats { visible: std::env::var_os("TRAFFIC_POLICE_FPS").is_some(), ..Default::default() },
             fps: DEFAULT_FPS,
@@ -1173,6 +1178,10 @@ impl App {
                 self.graph_style = self.graph_style.next();
                 self.flash(format!("graph style: {}", self.graph_style.name()));
             }
+            Action::GraphLayout => {
+                self.graph_layout = self.graph_layout.next();
+                self.flash(format!("graph layout: {}", self.graph_layout.name()));
+            }
             Action::FrameRate => {
                 self.frames.visible = !self.frames.visible;
                 self.flash(if self.frames.visible { "showing the frame rate" } else { "frame rate hidden" });
@@ -1835,6 +1844,7 @@ impl App {
             || self.jq_running > 0
             || self.bodies.building()
             || self.graph.scale.is_some_and(|s| s.easing())
+            || self.graph.send_scale.is_some_and(|s| s.easing())
         {
             return true;
         }
