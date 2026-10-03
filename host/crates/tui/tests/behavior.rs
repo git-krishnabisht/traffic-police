@@ -86,6 +86,8 @@ fn the_mirror_layout_keeps_a_trickle_readable_next_to_a_flood() {
         let mut app = App::new(SessionStore::new(), Theme::default());
         app.caps = Capabilities { pause: true, rules: true, live: true };
         app.graph_layout = layout;
+        // the curves carry their series' exact color; the solid areas shade their rows
+        app.graph_style = traffic_police_tui::graph::GraphStyle::Curves;
         app.ingest(events.clone());
         app.now_override = Some(40 * tick);
         let mut term = Terminal::new(TestBackend::new(MEDIUM.0, MEDIUM.1)).unwrap();

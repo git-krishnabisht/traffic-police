@@ -299,8 +299,12 @@ fn draw_graph(app: &mut App, panel_r: Rect, buf: &mut Buffer) {
     let (_, right) = app.graph_window();
     let plot =
         Rect { x: r.x + GUTTER, y: r.y, width: r.width.saturating_sub(GUTTER + 1), height: r.height.saturating_sub(1) };
+    // without colors the solid areas would be one white mass: curves instead
+    let style = if t.mono() && app.graph_style == GraphStyle::Smooth { GraphStyle::Curves } else { app.graph_style };
     // the braille styles resolve two values per cell; the others one per column
-    let per_cell = if matches!(app.graph_style, GraphStyle::Smooth | GraphStyle::Braille) { 2 } else { 1 };
+    let per_cell = if matches!(style, GraphStyle::Curves | GraphStyle::Braille) { 2 } else { 1 };
+    // the solid areas' edges and the curves are smoothed over the window
+    let smoothed = matches!(style, GraphStyle::Smooth | GraphStyle::Curves);
     let n = (plot.width as usize * per_cell).max(2);
     // Columns are fixed slices of time and the window ends on one: a window ending anywhere
     // would re-slice the traffic every frame, and the shapes would wobble as they scroll. The
@@ -319,7 +323,7 @@ fn draw_graph(app: &mut App, panel_r: Rect, buf: &mut Buffer) {
         t >= origin && t <= now
     };
     let traffic = app.view_store().traffic();
-    let (source, rx, tx, lead_in) = if app.graph_style == GraphStyle::Smooth {
+    let (source, rx, tx, lead_in) = if smoothed {
         // smoothing reaches past the window's ends: take the traffic there too, so a shape
         // stays the same while it scrolls through
         let tick = graph::TICK_NS as f64 / bucket_ns as f64;
@@ -442,8 +446,8 @@ fn draw_graph(app: &mut App, panel_r: Rect, buf: &mut Buffer) {
         |v: &[f64]| -> Vec<Option<f64>> { v.iter().enumerate().map(|(i, v)| shown(i).then_some(*v)).collect() };
     let send_style = Style::default().fg(t.send()).add_modifier(Modifier::BOLD);
     let recv_style = Style::default().fg(t.recv()).add_modifier(Modifier::BOLD);
-    match app.graph_style {
-        GraphStyle::Smooth => {
+    match style {
+        GraphStyle::Curves => {
             let (rx_in, tx_in) = lead_in.unzip();
             let lines = |lead_in: Option<f64>, v: &[f64]| -> Vec<Option<f64>> {
                 lead_in.map(Some).into_iter().chain(columns(v)).collect()
@@ -485,13 +489,26 @@ fn draw_graph(app: &mut App, panel_r: Rect, buf: &mut Buffer) {
             }
         }
         GraphStyle::Heavy | GraphStyle::Lines => {
-            let heavy = app.graph_style == GraphStyle::Heavy;
+            let heavy = style == GraphStyle::Heavy;
             graph::draw_steps(buf, lower, &columns(&tx), tx_ymax, send_style, heavy, tx_grow);
             graph::draw_steps(buf, upper, &columns(&rx), ymax, recv_style, heavy, Grow::Up);
         }
-        GraphStyle::Area => {
-            graph::draw_area(buf, upper, &columns(&rx), ymax, Style::default().fg(t.recv()));
-            graph::draw_steps(buf, lower, &columns(&tx), tx_ymax, send_style, false, tx_grow);
+        GraphStyle::Smooth => {
+            // dim at the baseline, the series' own color at the far rows
+            let shade = |rgb: (u8, u8, u8), rows: u16| {
+                let t = &t;
+                move |row: u16| {
+                    let far = if rows <= 1 { 1.0 } else { f64::from(row) / f64::from(rows - 1) };
+                    t.faded(rgb, 0.55 * (1.0 - far))
+                }
+            };
+            let (recv_fill, send_fill) = (shade(t.recv_rgb(), upper.height), shade(t.send_rgb(), lower.height));
+            graph::draw_fill(buf, upper, &columns(&rx), ymax, recv_fill, Grow::Up, t.background());
+            if mirror {
+                graph::draw_fill(buf, lower, &columns(&tx), tx_ymax, send_fill, Grow::Down, t.background());
+            } else {
+                graph::draw_steps(buf, lower, &columns(&tx), tx_ymax, send_style, false, tx_grow);
+            }
         }
     }
     // markers (attach, detach, pause, ...): through the empty cells and across the zero line

@@ -170,7 +170,7 @@ pub const ACTIONS: &[Info] = &[
     info!(SelectRange, "select-range", Live, "range", "Select a time range (again to apply)", ["v"]),
     info!(GraphSource, "graph-source", Graph, "source", "Graph: whole-app traffic or captured requests", ["T"]),
     info!(TimeLabels, "time-labels", Graph, "clock", "Time axis: since start or wall clock", ["t"]),
-    info!(GraphStyle, "graph-style", Graph, "style", "Graph style: smooth, heavy, lines, area, braille", []),
+    info!(GraphStyle, "graph-style", Graph, "style", "Graph style: smooth, curves, heavy, lines, braille", []),
     info!(
         GraphLayout,
         "graph-layout",

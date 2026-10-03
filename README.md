@@ -245,7 +245,7 @@ traffic-police tail --mode attach -p com.example.app       # the commands withou
 | Bodies | `Enter` fold or unfold JSON · `[` fold all · `]` unfold all · <code>&#124;</code> jq filter (empty filter clears) · long lines wrap in every box; with `[ui] wrap = false` they are cut and `<` `>` scroll sideways |
 | Call Stack | `Enter` on a framework group expands it · `Enter` on an app frame opens `$EDITOR` there (needs source roots, below) |
 | Live | `Space` pause or resume recording · `F` freeze the view (capture continues) · `L` back to live · `+` `-` zoom · `0` reset zoom · `v` select a time range (`v` or `Enter` again to apply) |
-| Graph | Receiving above the zero line, sending below, each half scaled to its own peak (`:` layout switches to one shared scale) · `T` whole-app traffic or captured requests · `t` time since start or wall clock · `←` `→` move when the graph has focus |
+| Graph | Receiving above the zero line, sending below, each half scaled to its own peak (`:` layout switches to one shared scale; `:` style switches between solid areas, braille curves and step lines) · `T` whole-app traffic or captured requests · `t` time since start or wall clock · `←` `→` move when the graph has focus |
 | List | New requests are followed while the cursor is on the newest; `G` (or `End`, `Ctrl+G`) goes back to it and follows again, also with a request open · `c` collapse repeated calls · `s` sort by the next column · `S` reverse the sort · `C` choose columns |
 | Find | `/` in the list: the filter bar ([language below](#filters)) · `/` in the detail pane: search the tab (`n` `N` next and previous match) · `m` pin a request (`is:pinned` lists pins) |
 | Copy and save | `y` copy: as cURL, the URL, headers, one header, a body, the JSON value at the cursor · `w` save a body to a file · `e` export: HAR (all, listed or selected requests) or a session file |
@@ -321,7 +321,7 @@ optional; `traffic-police doctor` reports mistakes with their line.
 [ui]
 theme = "dark"                # auto, dark, light (--theme wins)
 borders = "rounded"           # rounded, plain, double, thick
-graph_style = "smooth"        # smooth, heavy, lines, area, braille
+graph_style = "smooth"        # smooth, curves, heavy, lines, braille
 graph_layout = "mirror"       # mirror: receiving above the zero line, sending below, each at its own scale; overlay: both above, one scale
 graph_smoothing = 1.0         # seconds the curves are averaged over (0.5 to 5); longer is calmer, and the live edge trails a little more
 graph = "app"                 # the graph at start: app (all app traffic) or requests (T switches)
@@ -392,6 +392,7 @@ The colors `[colors]` can set, by name:
 | `key` `string` `number` `keyword` | JSON keys, form fields and header names; strings; numbers; `true` `false` `null` |
 | `tag` `attribute` | XML and HTML tags and attributes |
 | `graph-selection` | the selected range on the graph |
+| `background` | your terminal's background. Not a color traffic-police paints: set it only if the graph's sending half shows boxes, which means your font lacks the upper-eighth blocks (Menlo and SF Mono do; Cascadia Code, the Nerd Fonts and Iosevka have them). With it, that half is drawn with the blocks every font has |
 | `search-match` `search-current` `search-current-text` | search matches, the current one, and its text |
 
 On a terminal with 256 or 16 colors each color is drawn as the nearest one it has.

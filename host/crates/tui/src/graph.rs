@@ -5,41 +5,46 @@ use std::time::{Duration, Instant};
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::Style;
+use ratatui::style::{Color, Style};
 use traffic_police_core::fmt::{self, NS_PER_MS, NS_PER_SEC};
 
 /// How the traffic graph draws its two series.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum GraphStyle {
-    /// Smooth curves in braille dots (2 × 4 per cell): the traffic smoothed over the half-second
-    /// ticks of the app's counters, so steps become slopes.
-    #[default]
-    Smooth,
+    /// Curves in braille dots (2 × 4 per cell), smoothed the same way as the areas.
+    Curves,
     /// Step lines in heavy box characters (`┏━┓ ┃ ┗━┛`), one value per column.
     Heavy,
     /// Step lines with rounded corners (`╭─╮ │ ╰─╯`).
     Lines,
-    /// Receiving as a filled area (eighth blocks), sending as a line on top.
-    Area,
+    /// Solid areas with edges in eighths of a row, shaded from the baseline out: mirrored, the
+    /// two series face each other across the zero line; overlaid, sending is a line over the
+    /// receiving area.
+    #[default]
+    Smooth,
     /// Thin braille dots: the finest resolution (2 × 4 dots per cell).
     Braille,
 }
 
 impl GraphStyle {
     pub const ALL: [GraphStyle; 5] =
-        [GraphStyle::Smooth, GraphStyle::Heavy, GraphStyle::Lines, GraphStyle::Area, GraphStyle::Braille];
+        [GraphStyle::Smooth, GraphStyle::Curves, GraphStyle::Heavy, GraphStyle::Lines, GraphStyle::Braille];
 
     pub fn name(self) -> &'static str {
         match self {
             GraphStyle::Smooth => "smooth",
+            GraphStyle::Curves => "curves",
             GraphStyle::Heavy => "heavy",
             GraphStyle::Lines => "lines",
-            GraphStyle::Area => "area",
             GraphStyle::Braille => "braille",
         }
     }
 
     pub fn parse(s: &str) -> Option<GraphStyle> {
+        // `area` (0.2.0's receiving area under a sending line) grew into the solid areas
+        if matches!(s, "area" | "solid") {
+            return Some(GraphStyle::Smooth);
+        }
         GraphStyle::ALL.into_iter().find(|g| g.name() == s)
     }
 
@@ -379,24 +384,65 @@ pub fn draw_steps(
     }
 }
 
-/// Draws one series as a filled area with eighth-block tops (8 steps per row).
-pub fn draw_area(buf: &mut Buffer, area: Rect, values: &[Option<f64>], ymax: f64, style: Style) {
-    const EIGHTHS: [&str; 8] = [" ", "▁", "▂", "▃", "▄", "▅", "▆", "▇"];
+/// The eighths of a cell a solid column fills, from its baseline: `v / ymax` of the area's
+/// height in eighths of a row, at least one for any traffic at all.
+fn eighths(v: f64, ymax: f64, rows: u16) -> u32 {
+    if v <= 0.0 || ymax <= 0.0 {
+        return 0;
+    }
+    ((v / ymax).min(1.0) * f64::from(rows) * 8.0).round().max(1.0) as u32
+}
+
+/// Lower blocks, `k` eighths from the bottom of the cell (every font has them).
+const LOWER: [&str; 9] = [" ", "▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"];
+/// Upper blocks, `k` eighths from the top: 1, 4 and 8 are old Block Elements, the rest come
+/// from Symbols for Legacy Computing (Unicode 13), which Cascadia Code, Iosevka, the Nerd Fonts
+/// and other recent fonts have.
+const UPPER: [&str; 9] = [" ", "▔", "🮂", "🮃", "▀", "🮄", "🮅", "🮆", "█"];
+
+/// Draws one series as a solid area from its baseline, the edge in eighths of a row. Each row's
+/// color comes from `shade(row)`, `row` counting from the baseline (a gradient). Growing down,
+/// a partial cell is an upper block; given `background` (the terminal's), it is drawn instead as
+/// a lower block in that color on a cell filled with the series' color, which needs no font
+/// support at all. `None` values leave their column empty.
+pub fn draw_fill(
+    buf: &mut Buffer,
+    area: Rect,
+    values: &[Option<f64>],
+    ymax: f64,
+    shade: impl Fn(u16) -> Color,
+    grow: Grow,
+    background: Option<Color>,
+) {
     for (i, v) in values.iter().enumerate().take(area.width as usize) {
         let Some(v) = v else { continue };
-        if *v <= 0.0 || ymax <= 0.0 {
+        let total = eighths(*v, ymax, area.height);
+        if total == 0 {
             continue;
         }
-        let eighths = ((v / ymax) * f64::from(area.height) * 8.0).round().max(1.0) as u32;
         let x = area.x + i as u16;
         for r in 0..area.height {
-            let filled = eighths.saturating_sub(u32::from(r) * 8).min(8);
+            let filled = total.saturating_sub(u32::from(r) * 8).min(8) as usize;
             if filled == 0 {
                 break;
             }
-            let s = if filled == 8 { "█" } else { EIGHTHS[filled as usize] };
-            if let Some(c) = buf.cell_mut((x, area.y + area.height - 1 - r)) {
-                c.set_symbol(s).set_style(style);
+            let y = match grow {
+                Grow::Up => area.y + area.height - 1 - r,
+                Grow::Down => area.y + r,
+            };
+            let Some(c) = buf.cell_mut((x, y)) else { continue };
+            let color = shade(r);
+            match (grow, background) {
+                (Grow::Up, _) => {
+                    c.set_symbol(LOWER[filled]).set_fg(color);
+                }
+                (Grow::Down, Some(bg)) if filled < 8 => {
+                    // the empty part of the cell painted over the full one
+                    c.set_symbol(LOWER[8 - filled]).set_fg(bg).set_bg(color);
+                }
+                (Grow::Down, _) => {
+                    c.set_symbol(UPPER[filled]).set_fg(color);
+                }
             }
         }
     }
@@ -550,6 +596,38 @@ mod tests {
         // down a step only with room to spare under it
         assert_eq!(Scale::new(4000.0, t0).next(2700.0, at(500)).target, 4096.0);
         assert_eq!(Scale::new(4000.0, t0).next(2600.0, at(500)).target, 3072.0);
+    }
+
+    #[test]
+    fn solid_columns_fill_in_eighths_from_either_baseline() {
+        let area = Rect::new(0, 0, 3, 2);
+        let v = [Some(0.0), Some(3.0), Some(11.0)];
+        let rows = |buf: &Buffer| {
+            (0..2).map(|y| (0..3).map(|x| buf[(x, y)].symbol().to_string()).collect::<String>()).collect::<Vec<_>>()
+        };
+        // 16 eighths of height: 3 is three eighths of the bottom row, 11 fills it and three more
+        let mut buf = Buffer::empty(area);
+        draw_fill(&mut buf, area, &v, 16.0, |_| Color::Blue, Grow::Up, None);
+        assert_eq!(rows(&buf), ["  ▃", " ▃█"]);
+        // hanging: the same from the top, in upper blocks
+        let mut buf = Buffer::empty(area);
+        draw_fill(&mut buf, area, &v, 16.0, |_| Color::Blue, Grow::Down, None);
+        assert_eq!(rows(&buf), [" 🮃█", "  🮃"]);
+        // with the terminal's background known: the empty five eighths of a partial cell are a
+        // lower block in that color over a cell in the series' color
+        let mut buf = Buffer::empty(area);
+        draw_fill(&mut buf, area, &v, 16.0, |_| Color::Blue, Grow::Down, Some(Color::Black));
+        assert_eq!(rows(&buf), [" ▅█", "  ▅"]);
+        assert_eq!((buf[(1, 0)].fg, buf[(1, 0)].bg), (Color::Black, Color::Blue));
+        assert_eq!((buf[(2, 0)].fg, buf[(2, 0)].bg), (Color::Blue, Color::Reset));
+        // the shade is by row from the baseline
+        let mut buf = Buffer::empty(area);
+        draw_fill(&mut buf, area, &v, 16.0, |r| if r == 0 { Color::Red } else { Color::Green }, Grow::Up, None);
+        assert_eq!((buf[(2, 1)].fg, buf[(2, 0)].fg), (Color::Red, Color::Green));
+        // any traffic at all shows as at least one eighth
+        let mut buf = Buffer::empty(area);
+        draw_fill(&mut buf, area, &[Some(0.01)], 16.0, |_| Color::Blue, Grow::Up, None);
+        assert_eq!(buf[(0, 1)].symbol(), "▁");
     }
 
     #[test]

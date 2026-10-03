@@ -7,7 +7,7 @@
 //! [ui]
 //! theme = "dark"              # auto, dark, light (--theme wins)
 //! borders = "rounded"         # rounded, plain, double, thick
-//! graph_style = "smooth"      # smooth, heavy, lines, area, braille
+//! graph_style = "smooth"      # smooth, curves, heavy, lines, braille
 //! graph_layout = "mirror"     # mirror (receiving above the zero line, sending below, each at its own scale) or overlay (both above, one scale)
 //! graph_smoothing = 1.0       # seconds the curves are averaged over (0.5 to 5); longer is calmer, and the live edge trails a little more
 //! graph = "app"               # what the graph starts with: app (all app traffic) or requests (T switches)
@@ -275,7 +275,7 @@ impl Loaded {
         {
             found.push((
                 g.span().start,
-                format!("[ui] graph_style {:?}: use smooth, heavy, lines, area or braille", g.get_ref()),
+                format!("[ui] graph_style {:?}: use smooth, curves, heavy, lines or braille", g.get_ref()),
             ));
         }
         if let Some(l) = &ui.graph_layout

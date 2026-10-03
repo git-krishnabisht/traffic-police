@@ -64,6 +64,9 @@ pub struct Theme {
     /// How boxes are drawn (`[ui] borders`).
     pub borders: BorderType,
     rgb: RgbSet,
+    /// The terminal's background (`[colors] background`), when the user said: the graph's
+    /// hanging half can then be drawn with the block glyphs every font has.
+    background: Option<(u8, u8, u8)>,
 }
 
 /// `[ui] borders`: rounded (the default), plain, double or thick.
@@ -139,6 +142,10 @@ pub const COLOR_SLOTS: &[(&str, &str)] = &[
     ("tag", "XML and HTML tags"),
     ("attribute", "XML and HTML attributes"),
     ("graph-selection", "the selected range on the graph"),
+    (
+        "background",
+        "your terminal's background; set it if the graph's sending half shows boxes (a font without the upper-eighth blocks)",
+    ),
     ("search-match", "search matches"),
     ("search-current", "the current search match"),
     ("search-current-text", "the current search match's text"),
@@ -299,6 +306,7 @@ impl Theme {
         Theme {
             depth,
             palette,
+            background: None,
             borders: BorderType::Rounded,
             rgb: if palette == Palette::Light { LIGHT } else { DARK },
         }
@@ -306,6 +314,10 @@ impl Theme {
 
     /// Sets one color by its `[colors]` name (see [`COLOR_SLOTS`]); false for an unknown name.
     pub fn set_color(&mut self, name: &str, rgb: (u8, u8, u8)) -> bool {
+        if name == "background" {
+            self.background = Some(rgb);
+            return true;
+        }
         match self.rgb.slot(name) {
             Some(slot) => {
                 *slot = rgb;
@@ -313,6 +325,28 @@ impl Theme {
             }
             None => false,
         }
+    }
+
+    /// The terminal's background, when `[colors] background` named it.
+    pub fn background(&self) -> Option<Color> {
+        self.background.filter(|_| !self.mono()).map(|rgb| self.c(rgb))
+    }
+
+    /// A series' color faded toward the palette's ground (black for the dark palette, white for
+    /// the light one) by `fade` (0: the color itself, 1: the ground): the solid graph's gradient.
+    pub fn faded(&self, color: (u8, u8, u8), fade: f64) -> Color {
+        let ground = if self.palette == Palette::Light { 255.0 } else { 0.0 };
+        let fade = fade.clamp(0.0, 1.0);
+        let mix = |c: u8| (f64::from(c) + (ground - f64::from(c)) * fade).round() as u8;
+        self.c((mix(color.0), mix(color.1), mix(color.2)))
+    }
+
+    pub fn recv_rgb(&self) -> (u8, u8, u8) {
+        self.rgb.recv
+    }
+
+    pub fn send_rgb(&self) -> (u8, u8, u8) {
+        self.rgb.send
     }
 
     fn c(&self, rgb: (u8, u8, u8)) -> Color {
