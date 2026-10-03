@@ -294,17 +294,20 @@ fn draw_graph(app: &mut App, panel_r: Rect, buf: &mut Buffer) {
     let t = app.theme.clone();
     let focused = app.focus == Focus::Graph;
     let r = panel(buf, panel_r, focused, &t);
-    let (left, right) = app.graph_window();
+    let (_, right) = app.graph_window();
     let plot =
         Rect { x: r.x + GUTTER, y: r.y, width: r.width.saturating_sub(GUTTER + 1), height: r.height.saturating_sub(1) };
     // the braille styles resolve two values per cell; the others one per column
     let per_cell = if matches!(app.graph_style, GraphStyle::Smooth | GraphStyle::Braille) { 2 } else { 1 };
     let n = (plot.width as usize * per_cell).max(2);
     // Columns are fixed slices of time and the window ends on one: a window ending anywhere
-    // would re-slice the traffic every frame, and the shapes would wobble as they scroll.
-    let bucket_ns = (right.saturating_sub(left) / n as u64).max(1);
-    let right = right / bucket_ns * bucket_ns;
-    let left = right.saturating_sub(bucket_ns * n as u64);
+    // would re-slice the traffic every frame, and the shapes would wobble as they scroll. The
+    // slices come from the zoom, not the window: before the app's first event the window is
+    // empty (it ends at 0), its slices would be a nanosecond wide, and the smoothing would reach
+    // across hundreds of millions of them. A window cut short at 0 shows the zoom's first stretch.
+    let bucket_ns = (app.graph.span / n as u64).max(1);
+    let right = (right / bucket_ns * bucket_ns).max(bucket_ns * n as u64);
+    let left = right - bucket_ns * n as u64;
     app.graph.drawn = Some((left, right));
     // no line before the session started or after "now"
     let origin = app.view_store().origin();

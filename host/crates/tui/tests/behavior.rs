@@ -10,9 +10,10 @@ use ratatui::backend::TestBackend;
 use ratatui::style::Color;
 use tokio::sync::mpsc;
 use traffic_police_backends::demo::{DemoConfig, DemoSession};
-use traffic_police_core::backend::BackendCommand;
-use traffic_police_core::fmt::NS_PER_SEC;
+use traffic_police_core::backend::{BackendCommand, Capabilities};
+use traffic_police_core::fmt::{NS_PER_MS, NS_PER_SEC};
 use traffic_police_core::rows::Column;
+use traffic_police_core::store::SessionStore;
 use traffic_police_tui::app::{Focus, Overlay, Target};
 use traffic_police_tui::theme::{Depth, Palette};
 use traffic_police_tui::{App, Theme, render_text, ui};
@@ -28,6 +29,21 @@ fn mouse(kind: MouseEventKind, x: u16, y: u16) -> MouseEvent {
 fn click(app: &mut App, x: u16, y: u16) {
     app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), x, y));
     app.handle_mouse(mouse(MouseEventKind::Up(MouseButton::Left), x, y));
+}
+
+/// A device session draws its first frame before the app has sent anything: an empty store and
+/// no clock, so the graph's window is empty. In 0.2.0 that frame took tens of seconds and
+/// gigabytes: the smoothing ran over columns a nanosecond wide.
+#[test]
+fn first_frame_before_the_app_sends_anything() {
+    let mut app = App::new(SessionStore::new(), Theme::default());
+    app.caps = Capabilities { pause: true, rules: true, live: true };
+    let text = render_text(&mut app, MEDIUM.0, MEDIUM.1);
+    assert!(text.contains("No requests yet"), "{text}");
+    // the graph shows the zoom's first stretch, in the zoom's slices
+    let (left, right) = app.graph.drawn.expect("the graph was drawn");
+    assert_eq!(left, 0);
+    assert!(app.graph.span - right < NS_PER_MS, "{right}");
 }
 
 #[test]

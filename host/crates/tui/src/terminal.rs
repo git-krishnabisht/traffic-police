@@ -18,6 +18,7 @@ use crossterm::event::{
 use crossterm::terminal::{self, EndSynchronizedUpdate, EnterAlternateScreen, LeaveAlternateScreen};
 use crossterm::{cursor, execute};
 use ratatui::Terminal;
+use ratatui::backend::Backend;
 use tokio::sync::mpsc;
 use tokio_stream::StreamExt;
 use traffic_police_core::SessionEvent;
@@ -181,7 +182,17 @@ pub async fn run(mut app: App, mut events: mpsc::Receiver<Vec<SessionEvent>>, op
     crossterm::style::force_color_output(true);
     let mut term = setup()?;
     // The probe reads the terminal's answer from stdin, so it runs before the input stream exists.
-    app.images = if opts.detect_images { Images::detect() } else { Images::halfblocks() };
+    app.images = if opts.detect_images {
+        let images = Images::detect();
+        // a terminal without a graphics protocol may print the query as text (Terminal.app shows
+        // `Gi=31,…`), and the first frame only paints the cells it changes. Not
+        // `Terminal::clear`: it also asks where the cursor is, and after the picker crossterm's
+        // reader gives up on the answer at once.
+        term.backend_mut().clear()?;
+        images
+    } else {
+        Images::halfblocks()
+    };
     // dropping `term` puts the terminal back
     event_loop(&mut term, &mut app, &mut events, opts.status).await
 }
