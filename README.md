@@ -323,6 +323,7 @@ theme = "dark"                # auto, dark, light (--theme wins)
 borders = "rounded"           # rounded, plain, double, thick
 graph_style = "smooth"        # smooth, heavy, lines, area, braille
 graph_layout = "mirror"       # mirror: receiving above the zero line, sending below, each at its own scale; overlay: both above, one scale
+graph_smoothing = 1.0         # seconds the curves are averaged over (0.5 to 5); longer is calmer, and the live edge trails a little more
 graph = "app"                 # the graph at start: app (all app traffic) or requests (T switches)
 graph_height = 12            # rows of the graph, 0 hides it (by default a quarter of the screen, 8-14)
 time = "wall"                 # relative (since the session started) or wall (clock time)

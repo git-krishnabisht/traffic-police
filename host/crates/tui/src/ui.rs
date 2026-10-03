@@ -323,12 +323,13 @@ fn draw_graph(app: &mut App, panel_r: Rect, buf: &mut Buffer) {
         // smoothing reaches past the window's ends: take the traffic there too, so a shape
         // stays the same while it scrolls through
         let tick = graph::TICK_NS as f64 / bucket_ns as f64;
-        let reach = graph::smooth_reach(tick, true);
+        let k = graph::smoothing_ticks(app.graph_smoothing);
+        let reach = graph::smooth_reach(tick, k, true);
         let from = left.saturating_sub(reach as u64 * bucket_ns);
         let lead = ((left - from) / bucket_ns) as usize;
         let b = traffic.buckets(app.graph_source, from, right + reach as u64 * bucket_ns, lead + n + reach);
         let spiky = b.source == GraphSource::Captured;
-        let (rx, tx) = (graph::smooth(&b.rx, tick, spiky), graph::smooth(&b.tx, tick, spiky));
+        let (rx, tx) = (graph::smooth(&b.rx, tick, k, spiky), graph::smooth(&b.tx, tick, k, spiky));
         // the column before the window too: the line comes in from there as it scrolls
         let lead_in = lead.checked_sub(1).filter(|_| left - bucket_ns / 2 >= origin).map(|i| (rx[i], tx[i]));
         (b.source, rx[lead..lead + n].to_vec(), tx[lead..lead + n].to_vec(), lead_in)

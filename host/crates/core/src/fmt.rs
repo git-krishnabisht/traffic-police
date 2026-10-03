@@ -77,6 +77,8 @@ pub fn nice_ceil(v: f64) -> f64 {
 }
 
 /// A "nice" byte rate at or above `v`, on 1024-based steps so axis labels stay round (`512 KB/s`).
+/// The steps go up by 1.5 and 1.33 in turn (1, 1.5, 2, 3, 4, 6, 8, 12, …), so a curve is never
+/// drawn under half of its axis: a peak just over 4 KB/s gets a 6 KB/s axis, not 8.
 pub fn nice_rate_ceil(v: f64) -> f64 {
     if v <= 0.0 || !v.is_finite() {
         return 1024.0;
@@ -85,7 +87,10 @@ pub fn nice_rate_ceil(v: f64) -> f64 {
     while v >= unit * 1024.0 {
         unit *= 1024.0;
     }
-    for m in [1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0, 128.0, 256.0, 512.0, 1024.0] {
+    for m in [
+        1.0, 1.5, 2.0, 3.0, 4.0, 6.0, 8.0, 12.0, 16.0, 24.0, 32.0, 48.0, 64.0, 96.0, 128.0, 192.0, 256.0, 384.0, 512.0,
+        768.0, 1024.0,
+    ] {
         if unit * m >= v {
             return unit * m;
         }
@@ -270,9 +275,13 @@ mod tests {
     fn nice_numbers() {
         assert_eq!(nice_ceil(3.7), 5.0);
         assert_eq!(nice_ceil(120.0), 200.0);
-        assert_eq!(nice_rate_ceil(300.0 * 1024.0), 512.0 * 1024.0);
+        assert_eq!(nice_rate_ceil(300.0 * 1024.0), 384.0 * 1024.0);
         assert_eq!(nice_rate_ceil(900.0), 1024.0);
-        assert_eq!(nice_rate_ceil(1.5 * 1024.0 * 1024.0), 2.0 * 1024.0 * 1024.0);
+        assert_eq!(nice_rate_ceil(1.5 * 1024.0 * 1024.0), 1.5 * 1024.0 * 1024.0);
+        assert_eq!(nice_rate_ceil(4.1 * 1024.0), 6.0 * 1024.0);
+        assert_eq!(nice_rate_ceil(6.0 * 1024.0), 6.0 * 1024.0);
+        assert_eq!(rate(1.5 * 1024.0), "1.5 KB/s");
+        assert_eq!(rate(768.0), "768 B/s");
     }
 
     #[test]

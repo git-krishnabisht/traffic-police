@@ -3,14 +3,14 @@ source: crates/tui/tests/snapshots.rs
 expression: "detail(12.0, SMALL, path_is(\"/api/v1/sessions\"), \"l\")"
 ---
  traffic-police  Pixel 8 [demo]  com.example.shop  pid 4312  ● LIVE  ✎ 1 rule active    26 requests
-╭─ Network · all app traffic ────────────────────────── ━ Receiving 3.9 KB/s   ━ Sending 2.5 KB/s ─╮
-│  16 KB/s                                                        ┊        ⢀⡀                      │
-│                                                                 ┊       ⢠⠇⢹⡀⢀⣀⡀               ⡀  │
-│                                                                 ⠠⠤⠤⠒⠑⠒⠒⠒⠁  ⠉⠁ ⠈⠑⠢⠤⠤⠤⠔⠒⠊⠑⠒⠉⠉⠉⠒⠊⠈⠑ │
+╭─ Network · all app traffic ────────────────────────── ━ Receiving 3.9 KB/s   ━ Sending 2.3 KB/s ─╮
+│  12 KB/s                                                        ┊        ⣀⣀⡀                     │
+│                                                                 ┊      ⢀⡼⠁ ⠳⠤⠤⢤⣀         ⣀⣀⣀⡀⢀⣀⣀ │
+│                                                                 ⠠⠤⠖⠚⠉⠉⠉⠉       ⠈⠙⠒⠒⠒⠒⠋⠉⠉⠉⠁  ⠉⠉ ⠈ │
 │        0 ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┊┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄ │
-│                                                                 ⠈⠒⠒⠢⠤⠒⠤⠔⠒⠒⠢⠤⠤⠔⠑⠒⠤⠤⠒⠒⠒⢦ ⢀⡔⠢⠒⠢⢄⡠⠒⠒ │
-│                                                                 ┊                    ⠈⠣⠞         │
-│  16 KB/s                                                        ┊                                │
+│                                                                 ⠐⠲⠤⣄⣀⣀⣀⣠⠤⠤⣄⣀⢀⣠⠤⢤⣀⣀⣠⠤⢤⡀   ⣀⣀⣀  ⣠⠴ │
+│                                                                 ┊          ⠈⠉        ⢳⡀⢀⡼⠁ ⠈⠉⠉⠁  │
+│ 8.0 KB/s                                                        ┊                     ⠙⠚         │
 │                                                                 00:00.000                        │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ sessions ─ Response body ─ Request body ────────────────────────────────── JSON · 290 B · 1/18 ─╮

@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
-use traffic_police_core::fmt::{self, NS_PER_MS};
+use traffic_police_core::fmt::{self, NS_PER_MS, NS_PER_SEC};
 
 /// How the traffic graph draws its two series.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -96,10 +96,30 @@ pub enum Grow {
 /// (PROTOCOL.md §7.1). The smooth style spreads each value over a tick.
 pub const TICK_NS: u64 = 500 * NS_PER_MS;
 
+/// How long the curves are averaged over by default, in seconds: a second, the time base of
+/// Android Studio's rates (`[ui] graph_smoothing` changes it, from half a second up).
+pub const SMOOTHING_SECS: f64 = 1.0;
+/// The range `[ui] graph_smoothing` accepts, in seconds.
+pub const SMOOTHING_RANGE: std::ops::RangeInclusive<f64> = 0.5..=5.0;
+
+/// The smoothing window in ticks for `secs` seconds of averaging, within the range.
+pub fn smoothing_ticks(secs: f64) -> f64 {
+    secs.clamp(*SMOOTHING_RANGE.start(), *SMOOTHING_RANGE.end()) * NS_PER_SEC as f64 / TICK_NS as f64
+}
+
+/// How far the smoothing of a window of `k` ticks looks past a point, in ticks: half the window,
+/// half of the second pass (half as wide), and the tick spiky bytes are spread over first.
+fn look_ahead_ticks(k: f64, spiky: bool) -> f64 {
+    k / 2.0 + k / 4.0 + if spiky { 0.5 } else { 0.0 }
+}
+
 /// While following live, the graph ends this far before "now": the tick in progress has not
-/// arrived yet, and smoothing looks ahead by most of a tick. Drawn sooner, the newest stretch
-/// would show a drop to zero and then fill in.
-pub const LAG_NS: u64 = 2 * TICK_NS;
+/// arrived yet, and the smoothing looks ahead by most of one or more. Drawn sooner, the newest
+/// stretch would show a drop to zero and then fill in. Two ticks at the default window.
+pub fn lag_ns(secs: f64) -> u64 {
+    let ticks = look_ahead_ticks(smoothing_ticks(secs), true).ceil().max(2.0);
+    (ticks * TICK_NS as f64) as u64
+}
 
 /// How long the y scale takes to come most of the way (63 %) to a new top.
 const SCALE_EASE: Duration = Duration::from_millis(150);
@@ -171,26 +191,27 @@ fn box_filter(v: &[f64], w: f64) -> Vec<f64> {
         .collect()
 }
 
-/// Rates as smooth curves, `tick` being the length of a tick in columns. The app's counters are
-/// steps a tick wide: averaged over a tick, they become slopes between the ticks' middles, and a
-/// pass half as wide rounds the corners. Captured bytes are `spiky`, each at the moment it moved:
-/// a first pass spreads them over a tick.
-pub fn smooth(v: &[f64], tick: f64, spiky: bool) -> Vec<f64> {
+/// Rates as smooth curves, `tick` being the length of a tick in columns and `k` the window in
+/// ticks. The app's counters are steps a tick wide: averaged over the window, they become slopes,
+/// and a pass half as wide rounds the corners. Captured bytes are `spiky`, each at the moment it
+/// moved: a first pass spreads them over a tick.
+pub fn smooth(v: &[f64], tick: f64, k: f64, spiky: bool) -> Vec<f64> {
     let v = if spiky { box_filter(v, tick) } else { v.to_vec() };
-    box_filter(&box_filter(&v, tick), tick / 2.0)
+    box_filter(&box_filter(&v, tick * k), tick * k / 2.0)
 }
 
 /// How many columns [`smooth`] looks to each side.
-pub fn smooth_reach(tick: f64, spiky: bool) -> usize {
-    let half = if spiky { 1.25 } else { 0.75 } * tick;
-    half.ceil() as usize + 1
+pub fn smooth_reach(tick: f64, k: f64, spiky: bool) -> usize {
+    (look_ahead_ticks(k, spiky) * tick).ceil() as usize + 1
 }
 
 /// Draws series as lines in braille dots (2 × 4 per cell): one value per dot column, `None`
 /// where there is no line. Values beyond the `2 × area.width` columns are for columns just left
-/// of the area: the line comes in from them as it scrolls. A steep stretch climbs half in the
-/// column before and half in its own, so the line stays joined. Where series meet, the cell
-/// takes the color of the later one. `grow` is the side the baseline is on.
+/// of the area: the line comes in from them as it scrolls. The line is joined at every step: a
+/// step of one dot gets the dot it steps from as well, and a steep stretch climbs half in the
+/// column before and half in its own, so no two dots touch at corners only (a gap, in a font's
+/// braille). Where series meet, the cell takes the color of the later one. `grow` is the side
+/// the baseline is on.
 pub fn draw_curves(buf: &mut Buffer, area: Rect, series: &[(&[Option<f64>], Style)], ymax: f64, grow: Grow) {
     const BIT: [[u8; 4]; 2] = [[0x01, 0x02, 0x04, 0x40], [0x08, 0x10, 0x20, 0x80]];
     let (cols, rows) = (usize::from(area.width), usize::from(area.height));
@@ -235,6 +256,10 @@ pub fn draw_curves(buf: &mut Buffer, area: Rect, series: &[(&[Option<f64>], Styl
                     for yy in mid.min(y)..=mid.max(y) {
                         dot(x, yy);
                     }
+                }
+                Some(p) if p != y => {
+                    dot(x, p);
+                    dot(x, y);
                 }
                 _ => dot(x, y),
             }
@@ -413,14 +438,14 @@ mod tests {
     fn smoothing_turns_steps_into_slopes_and_keeps_levels() {
         // ticks of 5 columns: 0, then 10 for three ticks, then 0
         let v: Vec<f64> = [0.0; 10].into_iter().chain([10.0; 15]).chain([0.0; 10]).collect();
-        let s = smooth(&v, 5.0, false);
+        let s = smooth(&v, 5.0, 1.0, false);
         // a rise and a fall instead of two cliffs
         assert!(s[8] > 0.0 && s[8] < s[10] && s[10] < s[12], "{s:?}");
         assert!(s[27] < s[25] && s[27] > 0.0, "{s:?}");
         // a level held for a while keeps its height
         assert!((s[17] - 10.0).abs() < 1e-9, "{s:?}");
         // the ends are averaged over what there is, not pulled toward nothing
-        assert_eq!(smooth(&[4.0; 8], 5.0, false), vec![4.0; 8]);
+        assert_eq!(smooth(&[4.0; 8], 5.0, 1.0, false), vec![4.0; 8]);
         // the same bytes in the end, wherever they are spread
         let total = |v: &[f64]| v.iter().sum::<f64>();
         assert!((total(&s) - total(&v)).abs() < 1e-6);
@@ -430,10 +455,34 @@ mod tests {
     fn spiky_bytes_spread_over_a_tick_each_way() {
         let mut v = vec![0.0; 21];
         v[10] = 50.0;
-        let s = smooth(&v, 5.0, true);
+        let s = smooth(&v, 5.0, 1.0, true);
         assert!(s[10] > s[8] && s[8] > s[6] && s[6] > 0.0, "{s:?}");
         assert!((s[8] - s[12]).abs() < 1e-9, "symmetric: {s:?}");
-        assert!(s.iter().take(10 - smooth_reach(5.0, true)).all(|&x| x == 0.0), "{s:?}");
+        assert!(s.iter().take(10 - smooth_reach(5.0, 1.0, true)).all(|&x| x == 0.0), "{s:?}");
+        // a wider window spreads the same bytes further, and the reach says how far
+        let mut v = vec![0.0; 41];
+        v[20] = 50.0;
+        let (s, wide) = (smooth(&v, 5.0, 1.0, true), smooth(&v, 5.0, 2.0, true));
+        assert!(wide[20] < s[20] && wide[14] > 0.0 && s[14] == 0.0, "{wide:?}");
+        // the spread is 9 columns each way (2 ticks less the edges that round to nothing); the
+        // reach covers it with a little to spare
+        assert!(wide[11] > 0.0 && wide[10] == 0.0, "{wide:?}");
+        let reach = smooth_reach(5.0, 2.0, true);
+        assert!((9..=12).contains(&reach), "{reach}");
+        assert!((wide.iter().sum::<f64>() - 50.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn the_live_edge_lags_as_far_as_the_smoothing_looks_ahead() {
+        // the default second of smoothing looks 2 ticks past a point: the graph ends 2 ticks early
+        assert_eq!(lag_ns(SMOOTHING_SECS), 2 * TICK_NS);
+        // half a second (the narrowest) needs no more than that either
+        assert_eq!(lag_ns(0.5), 2 * TICK_NS);
+        // five seconds: 10 ticks of window look 8 ticks ahead
+        assert_eq!(lag_ns(5.0), 8 * TICK_NS);
+        // out of range values are brought in
+        assert_eq!(lag_ns(100.0), lag_ns(5.0));
+        assert_eq!(smoothing_ticks(0.0), 1.0);
     }
 
     fn curves(series: &[(&[Option<f64>], Style)], width: u16) -> (String, Buffer) {
@@ -485,22 +534,22 @@ mod tests {
         let t0 = Instant::now();
         let at = |ms| t0 + Duration::from_millis(ms);
         let s = Scale::new(3000.0, t0);
-        assert_eq!((s.target, s.shown), (4096.0, 4096.0));
+        assert_eq!((s.target, s.shown), (3072.0, 3072.0));
         // a higher peak: the scale is at least the peak at once, and goes on to a round top
         let s = s.next(10_000.0, at(10));
-        assert_eq!(s.target, 16384.0);
+        assert_eq!(s.target, 12288.0);
         assert_eq!(s.shown, 10_000.0);
         let s = s.next(10_000.0, at(1000));
-        assert_eq!(s.shown, 16384.0);
+        assert_eq!(s.shown, 12288.0);
         // the peak gone: down gently
         let s = s.next(1500.0, at(1010));
         assert_eq!(s.target, 2048.0);
-        assert!(s.shown > 15_000.0, "{s:?}");
+        assert!(s.shown > 11_000.0, "{s:?}");
         let s = s.next(1500.0, at(2000));
         assert_eq!(s.shown, 2048.0);
         // down a step only with room to spare under it
-        assert_eq!(Scale::new(4000.0, t0).next(1900.0, at(500)).target, 4096.0);
-        assert_eq!(Scale::new(4000.0, t0).next(1700.0, at(500)).target, 2048.0);
+        assert_eq!(Scale::new(4000.0, t0).next(2700.0, at(500)).target, 4096.0);
+        assert_eq!(Scale::new(4000.0, t0).next(2600.0, at(500)).target, 3072.0);
     }
 
     #[test]

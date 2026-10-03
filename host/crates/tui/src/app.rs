@@ -380,6 +380,8 @@ pub struct App {
     pub graph_source: GraphSource,
     pub graph_style: crate::graph::GraphStyle,
     pub graph_layout: crate::graph::GraphLayout,
+    /// Seconds the graph's curves are averaged over (`[ui] graph_smoothing`).
+    pub graph_smoothing: f64,
     pub frames: FrameStats,
     /// The most frames drawn a second (`[ui] fps`).
     pub fps: u16,
@@ -472,6 +474,7 @@ impl App {
             graph_source: GraphSource::AppTotal,
             graph_style: crate::graph::GraphStyle::default(),
             graph_layout: crate::graph::GraphLayout::default(),
+            graph_smoothing: crate::graph::SMOOTHING_SECS,
             keymap: Keymap::default(),
             frames: FrameStats { visible: std::env::var_os("TRAFFIC_POLICE_FPS").is_some(), ..Default::default() },
             fps: DEFAULT_FPS,
@@ -603,14 +606,14 @@ impl App {
     }
 
     /// The graph's window: [`window`](Self::window), but while it follows "now" with an app
-    /// connected, [`LAG_NS`](crate::graph::LAG_NS) before it, where the app's counters have
+    /// connected, [`lag_ns`](crate::graph::lag_ns) before it, where the app's counters have
     /// arrived.
     pub fn graph_window(&self) -> (Ts, Ts) {
         let (left, right) = self.window();
         if self.graph.pinned_right.is_some() || !self.store.sources().any(|s| s.ended.is_none()) {
             return (left, right);
         }
-        let lag = crate::graph::LAG_NS;
+        let lag = crate::graph::lag_ns(self.graph_smoothing);
         (left.saturating_sub(lag), right.saturating_sub(lag))
     }
 
