@@ -392,7 +392,7 @@ The colors `[colors]` can set, by name:
 | `key` `string` `number` `keyword` | JSON keys, form fields and header names; strings; numbers; `true` `false` `null` |
 | `tag` `attribute` | XML and HTML tags and attributes |
 | `graph-selection` | the selected range on the graph |
-| `background` | your terminal's background. Not a color traffic-police paints: set it only if the graph's sending half shows boxes, which means your font lacks the upper-eighth blocks (Menlo and SF Mono do; Cascadia Code, the Nerd Fonts and Iosevka have them). With it, that half is drawn with the blocks every font has |
+| `background` | your terminal's background. Not a color traffic-police paints: set it only if the graph's sending half or the timeline bars' left ends show boxes, which means your font lacks the upper- and right-eighth blocks (Menlo and SF Mono do; Cascadia Code, the Nerd Fonts and Iosevka have them). With it, they are drawn with the blocks every font has |
 | `search-match` `search-current` `search-current-text` | search matches, the current one, and its text |
 
 On a terminal with 256 or 16 colors each color is drawn as the nearest one it has.

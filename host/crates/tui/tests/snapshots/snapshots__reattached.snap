@@ -18,27 +18,27 @@ expression: "press(&mut reattached, MEDIUM, \"\")"
 ╭─ Requests 50 ─ Connection ─ Thread ─ Rules ──────────────────────────────────────────────────────────────────────────────────────────────╮
 │ Name                                                     Size  Type      Status         Time   Timeline                                  │
 │ status?orderId=ord_15bce3a5a963c9fd                     146 B  json      200          282 ms                    ▕▎                       │
-│ ! events                                                 17 B  json      200          1.04 s                     █▊                      │
+│ ! events                                                 17 B  json      200          1.04 s                     🮊▋                      │
 │ notifications                                           306 B  json      200          1.77 s                     ▐█▉                     │
-│ status?orderId=ord_15bce3a5a963c9fd                     146 B  json      200          134 ms                      ▕▏                     │
-│ notifications                                           306 B  json      200          1.44 s                        ██▏                  │
+│ status?orderId=ord_15bce3a5a963c9fd                     146 B  json      200          134 ms                      ▕                      │
+│ notifications                                           306 B  json      200          1.44 s                        🮋█▏                  │
 │ status?orderId=ord_15bce3a5a963c9fd                     146 B  json      200          129 ms                         ▏                   │
-│ events                                                   17 B  json      200          1.30 s                         ▐█▍                 │
+│ events                                                   17 B  json      200          1.30 s                         🮈█▍                 │
 │ notifications                                           306 B  json      200          1.45 s                          ▕█▉                │
 │ status?orderId=ord_15bce3a5a963c9fd                     146 B  json      200          162 ms                           ▎                 │
-│ status?orderId=ord_15bce3a5a963c9fd                     146 B  json      200          359 ms                             █               │
-│ notifications                                                            detached     500 ms                             ▐▍              │
-│ events                                                                   detached     164 ms                              ▏              │
-│ token                                                   364 B  json      200          370 ms                                 ▕█         ▐│
-│ sessions                                                290 B  json      200          1.78 s                                  ███▎      ▐│
-│ notifications                                           306 B  json      200          1.38 s                                   ██       ▐│
-│ events                                                   17 B  json      200          1.60 s                                    ██▎     ▐│
-│ products?category=headphones&page=1                    1.0 KB  json      200          400 ms                                     ▐▏     ▐│
+│ status?orderId=ord_15bce3a5a963c9fd                     146 B  json      200          359 ms                             ▌               │
+│ notifications                                                            detached     500 ms                             🮈▎              │
+│ events                                                                   detached     164 ms                              ▎              │
+│ token                                                   364 B  json      200          370 ms                                 ▕▍         ▐│
+│ sessions                                                290 B  json      200          1.78 s                                  🮇██▏      ▐│
+│ notifications                                           306 B  json      200          1.38 s                                   🮋█       ▐│
+│ events                                                   17 B  json      200          1.60 s                                    🮋█▍     ▐│
+│ products?category=headphones&page=1                    1.0 KB  json      200          400 ms                                     🮈▏     ▐│
 │ notifications                                           306 B  json      200          1.58 s                                     ▕██    ▐│
-│ items                                                   149 B  json      200          2.54 s                                      ▐██▉  ▐│
-│ notifications                                           306 B  json      200          1.64 s                                        ▐█▉ ▐│
+│ items                                                   149 B  json      200          2.54 s                                      ▐███  ▐│
+│ notifications                                           306 B  json      200          1.64 s                                        🮈█▉ ▐│
 │ events                                                   17 B  json      200          1.31 s                                         ▐█▎▐│
-│ checkout                                                                 ···          1.26 s                                          ██▐│
-│ notifications                                                            ···          500 ms                                           ▐ │
+│ checkout                                                                 ···          1.26 s                                          🮊█▐│
+│ notifications                                                            ···          500 ms                                           🮉 │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
  Enter open   / filter   Space pause   m pin   y copy   e export   c collapse   s sort   ? help                  ⚠ studio inspector present

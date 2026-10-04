@@ -576,9 +576,35 @@ fn draw_graph(app: &mut App, panel_r: Rect, buf: &mut Buffer) {
 
 // --- timeline bars (Connection View and Thread View) ---------------------------------------------
 
-const LEFT_BLOCKS: [&str; 8] = ["▏", "▎", "▍", "▌", "▋", "▊", "▉", "█"];
+/// Blocks `k` eighths wide from the left of the cell (Block Elements, in every font).
+const LEFT_BLOCKS: [&str; 9] = [" ", "▏", "▎", "▍", "▌", "▋", "▊", "▉", "█"];
+/// Blocks `k` eighths wide from the right: 1, 4 and 8 are Block Elements, the rest Symbols for
+/// Legacy Computing (as the graph's hanging blocks, [`graph::draw_fill`]).
+const RIGHT_BLOCKS: [&str; 9] = [" ", "▕", "🮇", "🮈", "▐", "🮉", "🮊", "🮋", "█"];
 
-/// Draw one request's bar in the one-row `area`, which shows the time window `(left, right)`.
+/// The glyph and colors for a bar covering eighths `lo..hi` of a cell in `color`: a block
+/// anchored to the edge it touches, or to the nearer edge when it touches neither, always of
+/// the right width. A right-anchored block is a legacy glyph; given the terminal's `background`
+/// it is drawn instead as a left block in that color over a cell filled with the bar's.
+fn bar_cell(lo: u64, hi: u64, color: Color, background: Option<Color>) -> (&'static str, Color, Option<Color>) {
+    let k = (hi - lo).clamp(1, 8) as usize;
+    let from_right = |k: usize| match background {
+        Some(bg) if k < 8 => (LEFT_BLOCKS[8 - k], bg, Some(color)),
+        _ => (RIGHT_BLOCKS[k], color, None),
+    };
+    if lo == 0 {
+        (LEFT_BLOCKS[k], color, None)
+    } else if hi == 8 || lo > 8 - hi {
+        from_right(k)
+    } else {
+        (LEFT_BLOCKS[k], color, None)
+    }
+}
+
+/// Draw one request's bar in the one-row `area`, which shows the time window `(left, right)`:
+/// sending, then waiting, then receiving, in their colors. Positions are eighths of a cell. The
+/// bar's width and its phases' are measured from its start, so they do not flicker by an eighth
+/// as the bar scrolls; only a bar cut by the window's left edge measures from the edge.
 pub fn draw_bar(buf: &mut Buffer, area: Rect, (left, right): (Ts, Ts), seg: Segments, theme: &Theme, highlight: bool) {
     let (x0, y, width) = (area.x, area.y, area.width);
     if width == 0 || seg.end < left || seg.start >= right {
@@ -586,14 +612,16 @@ pub fn draw_bar(buf: &mut Buffer, area: Rect, (left, right): (Ts, Ts), seg: Segm
     }
     let total = u64::from(width) * 8;
     let span = right.saturating_sub(left).max(1) as f64;
-    let pos = |ts: Ts| -> u64 { ((ts.clamp(left, right) - left) as f64 / span * total as f64).round() as u64 };
-    let s = pos(seg.start);
-    let mut e = pos(seg.end).max(s + 1).min(total);
-    if e <= s {
-        e = (s + 1).min(total);
-    }
-    let a = pos(seg.sent).clamp(s, e);
-    let b = seg.first_byte.map_or(e, pos).clamp(a, e);
+    let eighths = |ns: u64| -> u64 { (ns as f64 / span * total as f64).round() as u64 };
+    let (s, at) = if seg.start >= left {
+        let s = eighths(seg.start - left);
+        (s, Box::new(move |ts: Ts| s + eighths(ts.saturating_sub(seg.start))) as Box<dyn Fn(Ts) -> u64>)
+    } else {
+        (0, Box::new(move |ts: Ts| eighths(ts.saturating_sub(left))) as Box<dyn Fn(Ts) -> u64>)
+    };
+    let e = at(seg.end.min(right)).clamp(s + 1, total.max(s + 1));
+    let a = at(seg.sent).clamp(s, e);
+    let b = seg.first_byte.map_or(e, &at).clamp(a, e);
     let colors = [(s, a, theme.send()), (a, b, theme.wait()), (b, e, theme.recv())];
     let first_cell = (s / 8) as u16;
     let last_cell = (e.saturating_sub(1) / 8) as u16;
@@ -611,28 +639,14 @@ pub fn draw_bar(buf: &mut Buffer, area: Rect, (left, right): (Ts, Ts), seg: Segm
         }
         let (sym, fg, bg) = match parts.as_slice() {
             [] => continue,
-            [(f, t, col)] => {
-                let covered = t - f;
-                if *f == 0 && *t == 8 {
-                    ("█", *col, None)
-                } else if *f == 0 {
-                    (LEFT_BLOCKS[(*t as usize).clamp(1, 8) - 1], *col, None)
-                } else if covered >= 6 {
-                    ("█", *col, None)
-                } else if *t == 8 && covered >= 3 {
-                    ("▐", *col, None)
-                } else if *t == 8 {
-                    ("▕", *col, None)
-                } else if covered >= 4 {
-                    ("▌", *col, None)
-                } else {
-                    ("▏", *col, None)
-                }
-            }
-            [(0, t1, c1), (_, 8, c2)] => (LEFT_BLOCKS[(*t1 as usize).clamp(1, 8) - 1], *c1, Some(*c2)),
-            many => {
-                let dominant = many.iter().max_by_key(|(f, t, _)| t - f).map(|&(_, _, c)| c).unwrap_or(theme.recv());
-                ("█", dominant, None)
+            // two phases meeting inside a cell the bar fills: both colors, the boundary exact
+            [(0, t1, c1), (_, 8, c2)] => (LEFT_BLOCKS[(*t1 as usize).clamp(1, 8)], *c1, Some(*c2)),
+            parts => {
+                let (lo, hi) = (parts[0].0, parts[parts.len() - 1].1);
+                // the widest phase's color; the earlier one when they tie
+                let dominant =
+                    parts.iter().rev().max_by_key(|(f, t, _)| t - f).map(|&(_, _, c)| c).unwrap_or(theme.recv());
+                bar_cell(lo, hi, dominant, theme.background())
             }
         };
         cell.set_symbol(sym).set_fg(fg);

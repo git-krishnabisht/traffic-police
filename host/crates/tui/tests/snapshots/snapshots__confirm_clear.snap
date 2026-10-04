@@ -17,28 +17,28 @@ expression: "frame(12.0, MEDIUM, \"x\")"
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ Requests 26 ─ Connection ─ Thread ─ Rules ──────────────────────────────────────────────────────────────────────────────────────────────╮
 │ Name                                                     Size  Type      Status         Time   Timeline                                  │
-│ events                                                   17 B  json      200          1.38 s                              ██▌            │
-│ user_1024.png                                          4.9 KB  png       200          494 ms                               █▍            │
-│ notifications                           ╭ clear session ───────────────────────────────────────╮                            ▐█▎         ▐│
-│ products?category=headphones&page=1     │                                                      │                            ▕▍          ▐│
+│ events                                                   17 B  json      200          1.38 s                              🮈█▌            │
+│ user_1024.png                                          4.9 KB  png       200          494 ms                               🮇▍            │
+│ notifications                           ╭ clear session ───────────────────────────────────────╮                            🮉█▎         ▐│
+│ products?category=headphones&page=1     │                                                      │                            🮇▍          ▐│
 │ config                                  │ Discard every captured request? y / n                │                             ▏          ▐│
-│ ↪ config.json                           │                                                      │                             ▌          ▐│
-│ items                                   ╰──────────────────────────────────────────────────────╯                             ▕███▌      ▐│
-│ metrics                                                   6 B  protobuf  200          338 ms                                  ▕▏        ▐│
-│ notifications                                           306 B  json      200          1.65 s                                   ██▍      ▐│
-│ events                                                   17 B  json      200          1.09 s                                   ▐▉       ▐│
-│ promo-banner-v3.json                                    148 B  json      404          277 ms                                    █       ▐│
-│ reviews                                                  86 B  json      200          516 ms                                     ▕▍     ▐│
-│ notifications                                           306 B  json      200          1.72 s                                     ▕███   ▐│
-│ checkout                                                 99 B  json      200          2.33 s                                     ▕███   ▐│
-│ cancel                                                  305 B  html      500          222 ms                                       ▏    ▐│
-│ lookup?fields=country,region,currency                   120 B  json      200          291 ms                                        █   ▐│
-│ notifications                                           306 B  json      200          1.42 s                                        ▐█▌ ▐│
-│ events                                                   17 B  json      200          958 ms                                        ▕█▏ ▐│
-│ status?orderId=ord_15bce3a5a963c9fd                     146 B  json      200          329 ms                                         █  ▐│
-│ recommendations?productId=p_1042                                         ···          1.90 s                                         ▐██▐│
+│ ↪ config.json                           │                                                      │                             ▍          ▐│
+│ items                                   ╰──────────────────────────────────────────────────────╯                             🮇███▋      ▐│
+│ metrics                                                   6 B  protobuf  200          338 ms                                  🮇▎        ▐│
+│ notifications                                           306 B  json      200          1.65 s                                   🮋█▍      ▐│
+│ events                                                   17 B  json      200          1.09 s                                   🮉▉       ▐│
+│ promo-banner-v3.json                                    148 B  json      404          277 ms                                    ▍       ▐│
+│ reviews                                                  86 B  json      200          516 ms                                     🮇▌     ▐│
+│ notifications                                           306 B  json      200          1.72 s                                     ▕██▎   ▐│
+│ checkout                                                 99 B  json      200          2.33 s                                     ▕███▏  ▐│
+│ cancel                                                  305 B  html      500          222 ms                                       ▎    ▐│
+│ lookup?fields=country,region,currency                   120 B  json      200          291 ms                                        ▍   ▐│
+│ notifications                                           306 B  json      200          1.42 s                                        🮈█▌ ▐│
+│ events                                                   17 B  json      200          958 ms                                        🮇█  ▐│
+│ status?orderId=ord_15bce3a5a963c9fd                     146 B  json      200          329 ms                                         ▐  ▐│
+│ recommendations?productId=p_1042                                         ···          1.90 s                                         🮉██▐│
 │ fonts.json                                                               canceled     380 ms                                          ▕▍▐│
-│ notifications                                                            ···          500 ms                                           ▐▐│
-│ status?orderId=ord_15bce3a5a963c9fd                       0 B  json      200          413 ms                                           ▐ │
+│ notifications                                                            ···          500 ms                                           🮉▐│
+│ status?orderId=ord_15bce3a5a963c9fd                       0 B  json      200          413 ms                                           🮉 │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
                                                                                                                  ⚠ studio inspector present

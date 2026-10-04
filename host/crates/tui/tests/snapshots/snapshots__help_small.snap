@@ -20,15 +20,15 @@ expression: "frame(12.0, SMALL, \"?\")"
 │ pr│ Live     Space pause · F freeze · L live · +/= zoom in · - zoom out · 0 reset zoom       │   │
 │ re│          v range                                                                         │   │
 │ no│ Graph    T source · t clock                                                              │   │
-│ ch│ Session  y copy · w save body · e export · : commands · ? help · x clear · q quit        │▍  │
+│ ch│ Session  y copy · w save body · e export · : commands · ? help · x clear · q quit        │▎  │
 │ ca│ Mouse    click rows and tabs · double-click opens                                        │  ▐│
 │ lo│          wheel scrolls (zooms on the graph; Shift+wheel moves in time)                   │▏ ▐│
-│ no│          drag the graph to select a range, the border between boxes to resize            │█▏▐│
-│ ev│                                                                                          │█ ▐│
-│ st│ any key closes                                                                           │▏ ▐│
+│ no│          drag the graph to select a range, the border between boxes to resize            │🮋▎▐│
+│ ev│                                                                                          │🮊 ▐│
+│ st│ any key closes                                                                           │🮇 ▐│
 │ re╰──────────────────────────────────────────────────────────────────────────────────────────╯▐█▐│
-│ fonts.json                                         canceled     380 ms                         ▏▐│
-│ notifications                                      ···          500 ms                         ▐▐│
-│ status?orderId=ord_15bce3a5a…       0 B  json      200          413 ms                         ▐ │
+│ fonts.json                                         canceled     380 ms                         ▎▐│
+│ notifications                                      ···          500 ms                         🮈▐│
+│ status?orderId=ord_15bce3a5a…       0 B  json      200          413 ms                         🮈 │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
  Enter open   / filter   Space pause   m pin   y copy   ? help           ⚠ studio inspector present

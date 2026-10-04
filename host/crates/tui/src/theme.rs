@@ -144,7 +144,7 @@ pub const COLOR_SLOTS: &[(&str, &str)] = &[
     ("graph-selection", "the selected range on the graph"),
     (
         "background",
-        "your terminal's background; set it if the graph's sending half shows boxes (a font without the upper-eighth blocks)",
+        "your terminal's background; set it if the graph's sending half or the timeline bars show boxes (a font without the upper- and right-eighth blocks)",
     ),
     ("search-match", "search matches"),
     ("search-current", "the current search match"),

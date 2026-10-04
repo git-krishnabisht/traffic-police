@@ -17,28 +17,28 @@ expression: "detail(12.0, MEDIUM, init(), \"lll\")"
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ Requests 26 ─ Connection ─ Thread ─ Rules ───────────────────────────────╮ ╭─ sessions ─ Response body ─ Request body ──────────────────╮
 │ Name                  Size  Type      Status         Time   Timeline      │ │ {                                                          │
-│ token                364 B  json      200          513 ms           █    ▐│ │   "ok": true,                                              │
-│ sessions             290 B  json      200          2.11 s           █▍   ▐│ │   "sessionId": "session_15bce3a5a963c9fde0ebe700e9d76981", │
+│ token                364 B  json      200          513 ms           ▎    ▐│ │   "ok": true,                                              │
+│ sessions             290 B  json      200          2.11 s           🮉▎   ▐│ │   "sessionId": "session_15bce3a5a963c9fde0ebe700e9d76981", │
 │ notifications        306 B  json      200          1.77 s           ▐▎   ▐│ │   "userId": "user_1024",                                   │
-│ events                17 B  json      200          1.38 s           █▍   ▐│ │   "config": {                                              │
-│ user_1024.png       4.9 KB  png       200          494 ms            █   ▐│ │     "pollIntervalMs": 1500,                                │
-│ notifications        306 B  json      200          1.33 s            ▌   ▐│ │     "maxPolls": 20,                                        │
+│ events                17 B  json      200          1.38 s           🮇▍   ▐│ │   "config": {                                              │
+│ user_1024.png       4.9 KB  png       200          494 ms            ▎   ▐│ │     "pollIntervalMs": 1500,                                │
+│ notifications        306 B  json      200          1.33 s            🮉   ▐│ │     "maxPolls": 20,                                        │
 │ products?catego…    1.0 KB  json      200          431 ms            ▏   ▐│ │     "features": {                                          │
-│ config                 0 B            302           61 ms            ▏   ▐│ ╰────────────────────────────────────────────────────────────╯
-│ ↪ config.json        103 B  json      200          315 ms            ▏   ▐│ ╭─ Overview ─ Response ─ Request ─ Call Stack ───────────────╮
-│ items                149 B  json      200          2.79 s            ▕█  ▐│ │ Thread  DefaultDispatcher-worker-2  (id 59)                │
-│ metrics                6 B  protobuf  200          338 ms             ▎  ▐│ │ captured when the app called execute() or enqueue(): the   │
-│ notifications        306 B  json      200          1.65 s             █  ▐│ │   real call site                                           │
+│ config                 0 B            302           61 ms            ▕   ▐│ ╰────────────────────────────────────────────────────────────╯
+│ ↪ config.json        103 B  json      200          315 ms            ▕   ▐│ ╭─ Overview ─ Response ─ Request ─ Call Stack ───────────────╮
+│ items                149 B  json      200          2.79 s            🮇█  ▐│ │ Thread  DefaultDispatcher-worker-2  (id 59)                │
+│ metrics                6 B  protobuf  200          338 ms             ▏  ▐│ │ captured when the app called execute() or enqueue(): the   │
+│ notifications        306 B  json      200          1.65 s             ▊  ▐│ │   real call site                                           │
 │ events                17 B  json      200          1.09 s             ▌  ▐│ │                                                            │
-│ promo-banner-v3…     148 B  json      404          277 ms             ▏  ▐│ │   ▸ 9 framework frames (okhttp3, retrofit2, java, $Proxy)  │
-│ reviews               86 B  json      200          516 ms              █ ▐│ │     Enter expands                                          │
+│ promo-banner-v3…     148 B  json      404          277 ms             ▕  ▐│ │   ▸ 9 framework frames (okhttp3, retrofit2, java, $Proxy)  │
+│ reviews               86 B  json      200          516 ms              ▎ ▐│ │     Enter expands                                          │
 │ notifications        306 B  json      200          1.72 s              ▊ ▐│ │   at com.example.shop.session.SessionRepository.start      │
-│ checkout              99 B  json      200          2.33 s              █▏▐│ │     (SessionRepository.kt:62)                              │
-│ cancel               305 B  html      500          222 ms              ▏ ▐│ │   at com.example.shop.session.SessionRepository$start$1.   │
+│ checkout              99 B  json      200          2.33 s              █ ▐│ │     (SessionRepository.kt:62)                              │
+│ cancel               305 B  html      500          222 ms              ▕ ▐│ │   at com.example.shop.session.SessionRepository$start$1.   │
 │ lookup?fields=c…     120 B  json      200          291 ms              ▕ ▐│ │     invokeSuspend(SessionRepository.kt:59)                 │
 │ notifications        306 B  json      200          1.42 s              ▕▌▐│ │   ▸ 8 framework frames (kotlin, kotlinx.coroutines)  Enter │
 │ events                17 B  json      200          958 ms               ▍ │ │     expands                                                │
-│ status?orderId=…     146 B  json      200          329 ms               █ │ │                                                            │
-│ recommendations…                      ···          1.90 s               █ │ │                                                            │
+│ status?orderId=…     146 B  json      200          329 ms               ▏ │ │                                                            │
+│ recommendations…                      ···          1.90 s               🮋 │ │                                                            │
 ╰───────────────────────────────────────────────────────────────────────────╯ ╰────────────────────────────────────────────────────────────╯
  ←→ tabs   ↑↓ move   / search   nN next/previous   y copy   w save   Enter fold   p parsed/source   ? help       ⚠ studio inspector present

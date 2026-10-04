@@ -17,28 +17,28 @@ expression: "frame(12.0, MEDIUM, \"ssS\")"
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ Requests 26 ─ Connection ─ Thread ─ Rules ────────────────────────────────────────────────────────────────────────────────── by size ↓ ─╮
 │ Name                                                   Size ↓  Type      Status         Time   Timeline                                  │
-│ notifications                                           306 B  json      200          1.42 s                                        ▐█▌  │
-│ notifications                                           306 B  json      200          1.72 s                                     ▕███    │
-│ notifications                                           306 B  json      200          1.65 s                                   ██▍      ▐│
-│ notifications                                           306 B  json      200          1.33 s                                ▐█▎         ▐│
-│ notifications                                           306 B  json      200          1.77 s                             ▐██▏           ▐│
-│ cancel                                                  305 B  html      500          222 ms                                       ▏    ▐│
-│ sessions                                                290 B  json      200          2.11 s                             ███▍           ▐│
-│ items                                                   149 B  json      200          2.79 s                                 ▕███▌      ▐│
-│ promo-banner-v3.json                                    148 B  json      404          277 ms                                    █       ▐│
-│ status?orderId=ord_15bce3a5a963c9fd                     146 B  json      200          329 ms                                         █  ▐│
-│ lookup?fields=country,region,currency                   120 B  json      200          291 ms                                        █   ▐│
-│ ↪ config.json                                           103 B  json      200          315 ms                                 ▌          ▐│
-│ checkout                                                 99 B  json      200          2.33 s                                     ▕███   ▐│
-│ reviews                                                  86 B  json      200          516 ms                                     ▕▍     ▐│
-│ events                                                   17 B  json      200          958 ms                                        ▕█▏ ▐│
-│ events                                                   17 B  json      200          1.09 s                                   ▐▉       ▐│
-│ events                                                   17 B  json      200          1.38 s                              ██▌           ▐│
-│ metrics                                                   6 B  protobuf  200          338 ms                                  ▕▏        ▐│
-│ status?orderId=ord_15bce3a5a963c9fd                       0 B  json      200          413 ms                                           ▐▐│
-│ notifications                                                            ···          500 ms                                           ▐▐│
+│ notifications                                           306 B  json      200          1.42 s                                        🮈█▌  │
+│ notifications                                           306 B  json      200          1.72 s                                     ▕██▎    │
+│ notifications                                           306 B  json      200          1.65 s                                   🮋█▍      ▐│
+│ notifications                                           306 B  json      200          1.33 s                                🮉█▎         ▐│
+│ notifications                                           306 B  json      200          1.77 s                             🮈██            ▐│
+│ cancel                                                  305 B  html      500          222 ms                                       ▎    ▐│
+│ sessions                                                290 B  json      200          2.11 s                             ▐██▍           ▐│
+│ items                                                   149 B  json      200          2.79 s                                 🮇███▋      ▐│
+│ promo-banner-v3.json                                    148 B  json      404          277 ms                                    ▍       ▐│
+│ status?orderId=ord_15bce3a5a963c9fd                     146 B  json      200          329 ms                                         ▐  ▐│
+│ lookup?fields=country,region,currency                   120 B  json      200          291 ms                                        ▍   ▐│
+│ ↪ config.json                                           103 B  json      200          315 ms                                 ▍          ▐│
+│ checkout                                                 99 B  json      200          2.33 s                                     ▕███▏  ▐│
+│ reviews                                                  86 B  json      200          516 ms                                     🮇▌     ▐│
+│ events                                                   17 B  json      200          958 ms                                        🮇█  ▐│
+│ events                                                   17 B  json      200          1.09 s                                   🮉▉       ▐│
+│ events                                                   17 B  json      200          1.38 s                              🮈█▌           ▐│
+│ metrics                                                   6 B  protobuf  200          338 ms                                  🮇▎        ▐│
+│ status?orderId=ord_15bce3a5a963c9fd                       0 B  json      200          413 ms                                           🮉▐│
+│ notifications                                                            ···          500 ms                                           🮉▐│
 │ fonts.json                                                               canceled     380 ms                                          ▕▍▐│
-│ recommendations?productId=p_1042                                         ···          1.90 s                                         ▐██▐│
+│ recommendations?productId=p_1042                                         ···          1.90 s                                         🮉██▐│
 │ config                                                    0 B            302           61 ms                                 ▏           │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
  Enter open   / filter   Space pause   m pin   y copy   e export   c collapse   s sort   ? help                  sorted by size, descending

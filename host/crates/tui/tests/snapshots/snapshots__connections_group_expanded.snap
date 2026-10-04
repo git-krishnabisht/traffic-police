@@ -17,28 +17,28 @@ expression: "press(&mut app, MEDIUM, &format!(\"G{}l\", \"k\".repeat(up)))"
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ Requests 58 ─ Connection ─ Thread ─ Rules ────────────────────────────────────────────────────────────────────────── repeats collapsed ─╮
 │ Name                                                     Size  Type      Status         Time   Timeline                                  │
-│ notifications                                           306 B  json      200          1.45 s             ██▎                             │
-│ ▸ status?orderId=ord_15bce3a5a963c9fd ×2                146 B  json      200          359 ms             ▏ ▌                             │
-│ notifications                                           306 B  json      200          1.70 s                ██▎                          │
+│ notifications                                           306 B  json      200          1.45 s             🮊█▎                             │
+│ ▸ status?orderId=ord_15bce3a5a963c9fd ×2                146 B  json      200          359 ms             ▎ ▐                             │
+│ notifications                                           306 B  json      200          1.70 s                ██▍                          │
 │ events                                                   17 B  json      200          1.22 s                ▐█▏                          │
-│ status?orderId=ord_15bce3a5a963c9fd                     146 B  json      200          253 ms                 █                           │
-│ notifications                                           306 B  json      200          1.32 s                  ▕█▌                        │
-│ ✎ status?orderId=ord_15bce3a5a963c9fd                   145 B  json      200          313 ms                   █                         │
-│ events                                                   17 B  json      200          954 ms                     ▐▋                      │
-│ ▸ notifications ×2                                      306 B  json      200          1.50 s                     ▐█▍██▎                  │
+│ status?orderId=ord_15bce3a5a963c9fd                     146 B  json      200          253 ms                 🮈                           │
+│ notifications                                           306 B  json      200          1.32 s                  🮇█▌                        │
+│ ✎ status?orderId=ord_15bce3a5a963c9fd                   145 B  json      200          313 ms                   🮈                         │
+│ events                                                   17 B  json      200          954 ms                     🮉▋                      │
+│ ▸ notifications ×2                                      306 B  json      200          1.50 s                     ▐█▍🮋█▏                  │
 │ events                                                   17 B  json      200          1.21 s                          █▋                 │
-│ ▸ notifications ×2                                      306 B  json      200          1.39 s                          ▕██▐█▌             │
+│ ▸ notifications ×2                                      306 B  json      200          1.39 s                          ▕██🮈█▌             │
 │ events                                                   17 B  json      200          1.39 s                              ▐█▍            │
-│ notifications                                           306 B  json      200          1.54 s                                ▐█▌          │
+│ notifications                                           306 B  json      200          1.54 s                                🮉█▌          │
 │ events                                                   17 B  json      200          1.46 s                                  ▕█▉       ▐│
-│ notifications                                           306 B  json      200          1.63 s                                   ██▍      ▐│
-│ sessions                                                290 B  json      200          1.74 s                                    ▐█▊     ▐│
-│ notifications                                           306 B  json      200          1.70 s                                     ▕██▏   ▐│
+│ notifications                                           306 B  json      200          1.63 s                                   🮋█▍      ▐│
+│ sessions                                                290 B  json      200          1.74 s                                    🮉█▊     ▐│
+│ notifications                                           306 B  json      200          1.70 s                                     ▕██▎   ▐│
 │ products?category=headphones&page=1                    1.0 KB  json      200          272 ms                                       ▍    ▐│
-│ events                                                   17 B  json      200          1.47 s                                       ██▏  ▐│
-│ items                                                                    ···          3.09 s                                       ▕████▐│
-│ ▾ notifications ×2                                                       ···          500 ms                                        ▐█▍▐▐│
-│   └ notifications                                       306 B  json      200          1.31 s                                        ▐█▍ ▐│
-│   └ notifications                                                        ···          500 ms                                           ▐ │
+│ events                                                   17 B  json      200          1.47 s                                       🮋█▏  ▐│
+│ items                                                                    ···          3.09 s                                       🮇████▐│
+│ ▾ notifications ×2                                                       ···          500 ms                                        🮈█▍🮉▐│
+│   └ notifications                                       306 B  json      200          1.31 s                                        🮈█▍ ▐│
+│   └ notifications                                                        ···          500 ms                                           🮉 │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
  Enter open   / filter   Space pause   m pin   y copy   e export   c collapse   s sort   ? help                   collapsing repeated calls

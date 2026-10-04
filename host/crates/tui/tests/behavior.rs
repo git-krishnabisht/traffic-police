@@ -116,6 +116,71 @@ fn the_mirror_layout_keeps_a_trickle_readable_next_to_a_flood() {
     assert!(recv.iter().all(|r| send.iter().all(|s| r < s)), "receiving above, sending below: {recv:?} {send:?}");
 }
 
+/// A 150 ms request on a 30 s window of 100 cells is 4 eighths wide. Scrolled across a cell an
+/// eighth at a time, the bar keeps its width and its left edge follows within an eighth or two:
+/// the old right-anchored set had only ⅛, ½ and full blocks, so the edge stood still and jumped.
+#[test]
+fn timeline_bars_keep_their_width_and_edge_while_scrolling() {
+    use ratatui::buffer::Buffer;
+    use ratatui::layout::Rect;
+    use traffic_police_core::phases::Segments;
+    let left_blocks = [" ", "▏", "▎", "▍", "▌", "▋", "▊", "▉", "█"];
+    let right_blocks = [" ", "▕", "🮇", "🮈", "▐", "🮉", "🮊", "🮋", "█"];
+    // (first eighth, last eighth) a cell's glyph covers, from the cell's left edge
+    let covered = |sym: &str| -> (u64, u64) {
+        if let Some(k) = left_blocks.iter().position(|g| *g == sym) {
+            (0, k as u64)
+        } else if let Some(k) = right_blocks.iter().position(|g| *g == sym) {
+            (8 - k as u64, 8)
+        } else {
+            panic!("not a block: {sym:?}")
+        }
+    };
+    let theme = Theme::default();
+    let cell_ns = 300 * NS_PER_MS;
+    let (left, right) = (1_000 * NS_PER_SEC, 1_030 * NS_PER_SEC);
+    let mut last_edge = 0;
+    for step in 0..24u64 {
+        let start = left + 10 * cell_ns + step * cell_ns / 8;
+        let seg = Segments {
+            start,
+            sent: start + 10 * NS_PER_MS,
+            first_byte: Some(start + 120 * NS_PER_MS),
+            end: start + 150 * NS_PER_MS,
+        };
+        let area = Rect::new(0, 0, 100, 1);
+        let mut buf = Buffer::empty(area);
+        ui::draw_bar(&mut buf, area, (left, right), seg, &theme, false);
+        let cells: Vec<(u64, (u64, u64))> = (0..100u64)
+            .filter(|&x| buf[(x as u16, 0)].symbol() != " ")
+            .map(|x| (x, covered(buf[(x as u16, 0)].symbol())))
+            .collect();
+        let width: u64 = cells.iter().map(|(_, (lo, hi))| hi - lo).sum();
+        assert_eq!(width, 4, "step {step}: {cells:?}");
+        let edge = cells[0].0 * 8 + cells[0].1.0;
+        let truth = 80 + step;
+        assert!(edge.abs_diff(truth) <= 2, "step {step}: edge {edge} for {truth}: {cells:?}");
+        assert!(edge >= last_edge, "step {step}: the edge went back from {last_edge} to {edge}");
+        last_edge = edge;
+    }
+    // a bar starting 5 eighths into a cell: a 3-eighths block from the right, then one from the left
+    let start = left + 10 * cell_ns + 5 * cell_ns / 8;
+    let seg = Segments { start, sent: start, first_byte: None, end: start + 150 * NS_PER_MS };
+    let area = Rect::new(0, 0, 100, 1);
+    let mut buf = Buffer::empty(area);
+    ui::draw_bar(&mut buf, area, (left, right), seg, &theme, false);
+    assert_eq!((buf[(10, 0)].symbol(), buf[(11, 0)].symbol()), ("🮈", "▏"));
+    // with the terminal's background known, the same edge in glyphs every font has: the empty
+    // five eighths as a left block in the background color over a cell in the bar's color
+    let mut theme = Theme::default();
+    theme.set_color("background", (1, 2, 3));
+    let mut buf = Buffer::empty(area);
+    ui::draw_bar(&mut buf, area, (left, right), seg, &theme, false);
+    let cell = &buf[(10, 0)];
+    assert_eq!((cell.symbol(), cell.fg), ("▋", Color::Rgb(1, 2, 3)));
+    assert_ne!(cell.bg, Color::Reset);
+}
+
 #[test]
 fn quit_keys_work_everywhere() {
     let mut app = app_at(5.0);

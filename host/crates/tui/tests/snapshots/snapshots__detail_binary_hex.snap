@@ -36,9 +36,9 @@ expression: "detail(40.0, MEDIUM, path_ends(\".bin\"), \"l\")"
 │ events                17 B  json      200          958 ms   ▎             │ │ etag: "c12-5242880"                                        │
 │ status?orderId=…     146 B  json      200          329 ms   ▏             │ │ cache-control: public, max-age=604800                      │
 │ recommendations…                      failed       10.0 s   ████▍         │ │                                                            │
-│ fonts.json                            canceled     380 ms   ▏             │ │ Body  binary, 5.0 MB  [parsed · p: source]                 │
-│ notifications        306 B  json      200          1.50 s   ▐▎            │ │ 00000000  7c d2 0c 6e b7 09 17 23  41 21 d7 45 0a 98 8f 75 │
-│ status?orderId=…     146 B  json      200          421 ms   ▏             │ │   ||..n...#A!.E...u|                                       │
+│ fonts.json                            canceled     380 ms   ▕             │ │ Body  binary, 5.0 MB  [parsed · p: source]                 │
+│ notifications        306 B  json      200          1.50 s   🮈▎            │ │ 00000000  7c d2 0c 6e b7 09 17 23  41 21 d7 45 0a 98 8f 75 │
+│ status?orderId=…     146 B  json      200          421 ms   ▕             │ │   ||..n...#A!.E...u|                                       │
 │ catalog-offline…    5.0 MB  binary    200          6.38 s    ▏█▊          │ │ 00000010  c1 7f 43 5d cb a1 05 14  c9 c9 42 5b c6 f5 d6 81 │
 ╰───────────────────────────────────────────────────────────────────────────╯ ╰────────────────────────────────────────────────────────────╯
  ←→ tabs   ↑↓ move   / search   nN next/previous   y copy   w save   Enter fold   p parsed/source   ? help       ⚠ studio inspector present

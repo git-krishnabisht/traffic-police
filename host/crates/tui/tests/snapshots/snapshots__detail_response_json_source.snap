@@ -17,28 +17,28 @@ expression: "detail(12.0, MEDIUM, init(), \"lp\")"
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ Requests 26 ─ Connection ─ Thread ─ Rules ───────────────────────────────╮ ╭─ sessions ─ Response body ─ Request body ──────────────────╮
 │ Name                  Size  Type      Status         Time   Timeline      │ │ {                                                          │
-│ token                364 B  json      200          513 ms           █    ▐│ │   "ok": true,                                              │
-│ sessions             290 B  json      200          2.11 s           █▍   ▐│ │   "sessionId": "session_15bce3a5a963c9fde0ebe700e9d76981", │
+│ token                364 B  json      200          513 ms           ▎    ▐│ │   "ok": true,                                              │
+│ sessions             290 B  json      200          2.11 s           🮉▎   ▐│ │   "sessionId": "session_15bce3a5a963c9fde0ebe700e9d76981", │
 │ notifications        306 B  json      200          1.77 s           ▐▎   ▐│ │   "userId": "user_1024",                                   │
-│ events                17 B  json      200          1.38 s           █▍   ▐│ │   "config": {                                              │
-│ user_1024.png       4.9 KB  png       200          494 ms            █   ▐│ │     "pollIntervalMs": 1500,                                │
-│ notifications        306 B  json      200          1.33 s            ▌   ▐│ │     "maxPolls": 20,                                        │
+│ events                17 B  json      200          1.38 s           🮇▍   ▐│ │   "config": {                                              │
+│ user_1024.png       4.9 KB  png       200          494 ms            ▎   ▐│ │     "pollIntervalMs": 1500,                                │
+│ notifications        306 B  json      200          1.33 s            🮉   ▐│ │     "maxPolls": 20,                                        │
 │ products?catego…    1.0 KB  json      200          431 ms            ▏   ▐│ │     "features": {                                          │
-│ config                 0 B            302           61 ms            ▏   ▐│ ╰────────────────────────────────────────────────────────────╯
-│ ↪ config.json        103 B  json      200          315 ms            ▏   ▐│ ╭─ Overview ─ Response ─ Request ─ Call Stack ───────────────╮
-│ items                149 B  json      200          2.79 s            ▕█  ▐│ │ HTTP/1.1 200 OK                                            │
-│ metrics                6 B  protobuf  200          338 ms             ▎  ▐│ │                                                            │
-│ notifications        306 B  json      200          1.65 s             █  ▐│ │ Headers (8)                                                │
+│ config                 0 B            302           61 ms            ▕   ▐│ ╰────────────────────────────────────────────────────────────╯
+│ ↪ config.json        103 B  json      200          315 ms            ▕   ▐│ ╭─ Overview ─ Response ─ Request ─ Call Stack ───────────────╮
+│ items                149 B  json      200          2.79 s            🮇█  ▐│ │ HTTP/1.1 200 OK                                            │
+│ metrics                6 B  protobuf  200          338 ms             ▏  ▐│ │                                                            │
+│ notifications        306 B  json      200          1.65 s             ▊  ▐│ │ Headers (8)                                                │
 │ events                17 B  json      200          1.09 s             ▌  ▐│ │ date: Tue, 29 Sep 2026 05:10:01 GMT                        │
-│ promo-banner-v3…     148 B  json      404          277 ms             ▏  ▐│ │ content-type: application/json; charset=utf-8              │
-│ reviews               86 B  json      200          516 ms              █ ▐│ │ content-length: 290                                        │
+│ promo-banner-v3…     148 B  json      404          277 ms             ▕  ▐│ │ content-type: application/json; charset=utf-8              │
+│ reviews               86 B  json      200          516 ms              ▎ ▐│ │ content-length: 290                                        │
 │ notifications        306 B  json      200          1.72 s              ▊ ▐│ │ cache-control: no-cache, no-store                          │
-│ checkout              99 B  json      200          2.33 s              █▏▐│ │ x-request-id: 803deb4e-a4a7-4649-a7cb-4bd43532b959         │
-│ cancel               305 B  html      500          222 ms              ▏ ▐│ │ server: envoy                                              │
+│ checkout              99 B  json      200          2.33 s              █ ▐│ │ x-request-id: 803deb4e-a4a7-4649-a7cb-4bd43532b959         │
+│ cancel               305 B  html      500          222 ms              ▕ ▐│ │ server: envoy                                              │
 │ lookup?fields=c…     120 B  json      200          291 ms              ▕ ▐│ │ set-cookie: sid=8c530ae919973354bdc086cf; Path=/; HttpOnly │
 │ notifications        306 B  json      200          1.42 s              ▕▌▐│ │ set-cookie: region=us-east-1; Path=/                       │
 │ events                17 B  json      200          958 ms               ▍ │ │                                                            │
-│ status?orderId=…     146 B  json      200          329 ms               █ │ │ Body  JSON, 290 B  [source · p: parsed]                    │
-│ recommendations…                      ···          1.90 s               █ │ │ {"ok":true,"sessionId":"session_                           │
+│ status?orderId=…     146 B  json      200          329 ms               ▏ │ │ Body  JSON, 290 B  [source · p: parsed]                    │
+│ recommendations…                      ···          1.90 s               🮋 │ │ {"ok":true,"sessionId":"session_                           │
 ╰───────────────────────────────────────────────────────────────────────────╯ ╰────────────────────────────────────────────────────────────╯
  ←→ tabs   ↑↓ move   / search   nN next/previous   y copy   w save   Enter fold   p parsed/source   | jq   ? help               source view

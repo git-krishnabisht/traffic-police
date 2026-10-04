@@ -21,21 +21,21 @@ expression: "frame(40.0, MEDIUM, \"vhhhhhhhhhhv\")"
 │ catalog-offline-v12.bin                                5.0 MB  binary    200          6.38 s   ███▎                                      │
 │ events                                                   17 B  json      200          1.30 s   █                                         │
 │ notifications                                           306 B  json      200          1.45 s   ███▉                                      │
-│ status?orderId=ord_15bce3a5a963c9fd                     146 B  json      200          162 ms   ▏                                         │
-│ status?orderId=ord_15bce3a5a963c9fd                     146 B  json      200          359 ms       ▐█                                    │
+│ status?orderId=ord_15bce3a5a963c9fd                     146 B  json      200          162 ms   ▌                                         │
+│ status?orderId=ord_15bce3a5a963c9fd                     146 B  json      200          359 ms       🮉▍                                    │
 │ notifications                                           306 B  json      200          1.70 s        ▐████▏                               │
-│ events                                                   17 B  json      200          1.22 s         ▐██▊                                │
-│ status?orderId=ord_15bce3a5a963c9fd                     146 B  json      200          253 ms           █▏                                │
+│ events                                                   17 B  json      200          1.22 s         🮉██▊                                │
+│ status?orderId=ord_15bce3a5a963c9fd                     146 B  json      200          253 ms           🮉▏                                │
 │ notifications                                           306 B  json      200          1.32 s             ▕███▌                           │
 │ ✎ status?orderId=ord_15bce3a5a963c9fd                   145 B  json      200          313 ms               ▐▍                            │
-│ events                                                   17 B  json      200          954 ms                   ███                       │
-│ notifications                                           306 B  json      200          1.39 s                   ▐████                     │
+│ events                                                   17 B  json      200          954 ms                   🮊█▉                       │
+│ notifications                                           306 B  json      200          1.39 s                   🮉███▏                     │
 │ notifications                                           306 B  json      200          1.50 s                        ▕███▉                │
-│ events                                                   17 B  json      200          1.21 s                            ▐███             │
-│ notifications                                           306 B  json      200          1.66 s                              ▐███▉          │
-│ notifications                                           306 B  json      200          1.39 s                                   ▕████     │
-│ events                                                   17 B  json      200          1.39 s                                     ▐███▎   │
-│ notifications                                           306 B  json      200          1.54 s                                         ███ │
+│ events                                                   17 B  json      200          1.21 s                            ▐██▊             │
+│ notifications                                           306 B  json      200          1.66 s                              🮉███▉          │
+│ notifications                                           306 B  json      200          1.39 s                                   🮇███▌     │
+│ events                                                   17 B  json      200          1.39 s                                     🮉███▏   │
+│ notifications                                           306 B  json      200          1.54 s                                         🮊██ │
 │                                                                                                                                          │
 │                                                                                                                                          │
 │                                                                                                                                          │

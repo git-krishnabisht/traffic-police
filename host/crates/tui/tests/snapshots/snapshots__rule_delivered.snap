@@ -21,24 +21,24 @@ expression: "detail(40.0, MEDIUM, modified(), \"l\")"
 │ events                17 B  json      200          958 ms   ▎             │ │   "orderId": "ord_15bce3a5a963c9fd",                       │
 │ status?orderId=…     146 B  json      200          329 ms   ▏             │ │   "status": "confirmed",                                   │
 │ recommendations…                      failed       10.0 s   ████▍         │ │   "payment": "captured",                                   │
-│ fonts.json                            canceled     380 ms   ▏             │ │   "items": 1,                                              │
-│ notifications        306 B  json      200          1.50 s   ▐▎            │ │   "eta": null,                                             │
-│ status?orderId=…     146 B  json      200          421 ms   ▏             │ │   "updatedAt": "2026-09-29T05:04:51.000Z"                  │
+│ fonts.json                            canceled     380 ms   ▕             │ │   "items": 1,                                              │
+│ notifications        306 B  json      200          1.50 s   🮈▎            │ │   "eta": null,                                             │
+│ status?orderId=…     146 B  json      200          421 ms   ▕             │ │   "updatedAt": "2026-09-29T05:04:51.000Z"                  │
 │ catalog-offline…    5.0 MB  binary    200          6.38 s    ▏█▊         ▐│ ╰────────────────────────────────────────────────────────────╯
 │ status?orderId=…     146 B  json      200          282 ms    ▏           ▐│ ╭─ Overview ─ Response ─ Request ─ Call Stack ───────────────╮
-│ ! events              17 B  json      200          1.04 s    ▏           ▐│ │ HTTP/1.1 200 OK                                            │
+│ ! events              17 B  json      200          1.04 s    ▐           ▐│ │ HTTP/1.1 200 OK                                            │
 │ notifications        306 B  json      200          1.77 s    ▐▎          ▐│ │ ✎ changed by rule "Force payment captured" · o: original   │
 │ status?orderId=…     146 B  json      200          134 ms     ▏          ▐│ │                                                            │
-│ notifications        306 B  json      200          1.44 s     ▐          ▐│ │ Headers (6)                                                │
-│ status?orderId=…     146 B  json      200          129 ms     ▏          ▐│ │ date: Tue, 29 Sep 2026 05:10:22 GMT                        │
-│ events                17 B  json      200          1.30 s     ▕▍         ▐│ │ content-type: application/json; charset=utf-8              │
-│ notifications        306 B  json      200          1.45 s      ▌          │ │ x-request-id: 50e7a16b-2b8b-43b5-affc-f78076229a65         │
+│ notifications        306 B  json      200          1.44 s     🮉          ▐│ │ Headers (6)                                                │
+│ status?orderId=…     146 B  json      200          129 ms     ▕          ▐│ │ date: Tue, 29 Sep 2026 05:10:22 GMT                        │
+│ events                17 B  json      200          1.30 s     ▕▌         ▐│ │ content-type: application/json; charset=utf-8              │
+│ notifications        306 B  json      200          1.45 s      🮉          │ │ x-request-id: 50e7a16b-2b8b-43b5-affc-f78076229a65         │
 │ status?orderId=…     146 B  json      200          162 ms      ▏          │ │ server: envoy                                              │
 │ status?orderId=…     146 B  json      200          359 ms       ▏         │ │ Content-Length: 146                                        │
-│ notifications        306 B  json      200          1.70 s       █         │ │ Cache-Control: no-store                                    │
+│ notifications        306 B  json      200          1.70 s       ▊         │ │ Cache-Control: no-store                                    │
 │ events                17 B  json      200          1.22 s       ▌         │ │                                                            │
-│ status?orderId=…     146 B  json      200          253 ms       ▏         │ │ Body  JSON, 146 B  [parsed · p: source]                    │
-│ notifications        306 B  json      200          1.32 s        ▌        │ │ {                                                          │
+│ status?orderId=…     146 B  json      200          253 ms       ▕         │ │ Body  JSON, 146 B  [parsed · p: source]                    │
+│ notifications        306 B  json      200          1.32 s        ▋        │ │ {                                                          │
 │ ✎ status?orderI…     145 B  json      200          313 ms        ▏        │ │   "ok": true,                                              │
 ╰───────────────────────────────────────────────────────────────────────────╯ ╰────────────────────────────────────────────────────────────╯
  ←→ tabs   ↑↓ move   / search   nN next/previous   y copy   w save   Enter fold   p parsed/source   ? help       ⚠ studio inspector present

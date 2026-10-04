@@ -17,28 +17,28 @@ expression: "detail(12.0, MEDIUM, path_ends(\"fonts.json\"), \"\")"
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ Requests 26 ─ Connection ─ Thread ─ Rules ───────────────────────────────╮ ╭─ fonts.json ─ Response body ─ Request body ────────────────╮
 │ Name                  Size  Type      Status         Time   Timeline      │ │ no response · IOException: Canceled                        │
-│ sessions             290 B  json      200          2.11 s           █▍   ▐│ │                                                            │
+│ sessions             290 B  json      200          2.11 s           🮉▎   ▐│ │                                                            │
 │ notifications        306 B  json      200          1.77 s           ▐▎   ▐│ │                                                            │
-│ events                17 B  json      200          1.38 s           █▍   ▐│ │                                                            │
-│ user_1024.png       4.9 KB  png       200          494 ms            █   ▐│ │                                                            │
-│ notifications        306 B  json      200          1.33 s            ▌   ▐│ │                                                            │
+│ events                17 B  json      200          1.38 s           🮇▍   ▐│ │                                                            │
+│ user_1024.png       4.9 KB  png       200          494 ms            ▎   ▐│ │                                                            │
+│ notifications        306 B  json      200          1.33 s            🮉   ▐│ │                                                            │
 │ products?catego…    1.0 KB  json      200          431 ms            ▏   ▐│ │                                                            │
-│ config                 0 B            302           61 ms            ▏   ▐│ │                                                            │
-│ ↪ config.json        103 B  json      200          315 ms            ▏   ▐│ ╰────────────────────────────────────────────────────────────╯
-│ items                149 B  json      200          2.79 s            ▕█  ▐│ ╭─ Overview ─ Response ─ Request ─ Call Stack ───────────────╮
-│ metrics                6 B  protobuf  200          338 ms             ▎  ▐│ │ Request           fonts.json                               │
-│ notifications        306 B  json      200          1.65 s             █  ▐│ │ Method            GET                                      │
+│ config                 0 B            302           61 ms            ▕   ▐│ │                                                            │
+│ ↪ config.json        103 B  json      200          315 ms            ▕   ▐│ ╰────────────────────────────────────────────────────────────╯
+│ items                149 B  json      200          2.79 s            🮇█  ▐│ ╭─ Overview ─ Response ─ Request ─ Call Stack ───────────────╮
+│ metrics                6 B  protobuf  200          338 ms             ▏  ▐│ │ Request           fonts.json                               │
+│ notifications        306 B  json      200          1.65 s             ▊  ▐│ │ Method            GET                                      │
 │ events                17 B  json      200          1.09 s             ▌  ▐│ │ Status            IOException: Canceled                    │
-│ promo-banner-v3…     148 B  json      404          277 ms             ▏  ▐│ │ URL               https://cdn.example.com/fonts/fonts.json │
-│ reviews               86 B  json      200          516 ms              █ ▐│ │ Request type      —                                        │
+│ promo-banner-v3…     148 B  json      404          277 ms             ▕  ▐│ │ URL               https://cdn.example.com/fonts/fonts.json │
+│ reviews               86 B  json      200          516 ms              ▎ ▐│ │ Request type      —                                        │
 │ notifications        306 B  json      200          1.72 s              ▊ ▐│ │ Response type     —                                        │
-│ checkout              99 B  json      200          2.33 s              █▏▐│ │ Response size     —                                        │
-│ cancel               305 B  html      500          222 ms              ▏ ▐│ │ Initiating thread DefaultDispatcher-worker-1  id 58 ·      │
+│ checkout              99 B  json      200          2.33 s              █ ▐│ │ Response size     —                                        │
+│ cancel               305 B  html      500          222 ms              ▕ ▐│ │ Initiating thread DefaultDispatcher-worker-1  id 58 ·      │
 │ lookup?fields=c…     120 B  json      200          291 ms              ▕ ▐│ │                   call site                                │
 │ notifications        306 B  json      200          1.42 s              ▕▌▐│ │ Client            OkHttp 4.12.0                            │
 │ events                17 B  json      200          958 ms               ▍▐│ │ Protocol          h2                                       │
-│ status?orderId=…     146 B  json      200          329 ms               █ │ │ Remote address    198.51.100.24:443  connection c-4        │
-│ recommendations…                      ···          1.90 s               █ │ │                   (reused)                                 │
-│ fonts.json                            canceled     380 ms               ▏ │ │ TLS               TLSv1.3 · TLS_AES_128_GCM_SHA256         │
+│ status?orderId=…     146 B  json      200          329 ms               ▏ │ │ Remote address    198.51.100.24:443  connection c-4        │
+│ recommendations…                      ···          1.90 s               🮋 │ │                   (reused)                                 │
+│ fonts.json                            canceled     380 ms               ▕ │ │ TLS               TLSv1.3 · TLS_AES_128_GCM_SHA256         │
 ╰───────────────────────────────────────────────────────────────────────────╯ ╰────────────────────────────────────────────────────────────╯
  ←→ tabs   ↑↓ move   / search   nN next/previous   y copy   w save   Enter fold   p parsed/source   ? help       ⚠ studio inspector present
