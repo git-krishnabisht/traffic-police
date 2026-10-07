@@ -120,7 +120,8 @@ pub fn remove_all() {
 }
 
 /// Removes spill directories left in the temp directory by traffic-police processes that no
-/// longer run (killed, or lost power). Unix only: elsewhere they stay until the OS cleans temp.
+/// longer run (killed, or lost power). On Unix and Windows (up to 0.3.1 Unix only: Windows kept
+/// them until the OS cleaned its temp directory).
 pub fn remove_stale() {
     remove_stale_in(&parent());
 }
@@ -153,7 +154,34 @@ fn alive(pid: u32) -> bool {
     r == 0 || io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+fn alive(pid: u32) -> bool {
+    type Handle = *mut std::ffi::c_void;
+    const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
+    const STILL_ACTIVE: u32 = 259;
+    const ERROR_ACCESS_DENIED: i32 = 5;
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn OpenProcess(access: u32, inherit: i32, pid: u32) -> Handle;
+        fn GetExitCodeProcess(process: Handle, code: *mut u32) -> i32;
+        fn CloseHandle(handle: Handle) -> i32;
+    }
+    // SAFETY: OpenProcess only asks for the right to read the process's exit code; the handle is
+    // used for that and closed.
+    unsafe {
+        let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if process.is_null() {
+            // no such process, unless it is one we may not look at
+            return io::Error::last_os_error().raw_os_error() == Some(ERROR_ACCESS_DENIED);
+        }
+        let mut code = 0u32;
+        let read = GetExitCodeProcess(process, &mut code) != 0;
+        CloseHandle(process);
+        !read || code == STILL_ACTIVE
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
 fn alive(_pid: u32) -> bool {
     true
 }
@@ -190,7 +218,7 @@ mod tests {
         let _ = fs::remove_dir_all(parent);
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     #[test]
     fn removes_directories_of_dead_processes_only() {
         let parent = scratch("stale");
