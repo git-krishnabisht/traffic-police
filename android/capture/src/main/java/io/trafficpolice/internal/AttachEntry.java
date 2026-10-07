@@ -36,12 +36,29 @@ public final class AttachEntry implements ExitHandler, AttachState {
     private volatile Method networkInterceptorsHook;
     private volatile Method eventListenerFactoryHook;
     private volatile CaptureRuntime runtime;
+    private volatile AndroidPlatform platform;
+    /** The entry {@link #start} made, for {@link #listen}. */
+    private static volatile AttachEntry started;
 
-    /** Invoked reflectively from the bootstrap class loader. */
+    /**
+     * Invoked by the agent's initialization thread: starts the runtime, without its socket yet.
+     * The agent then installs the returned handler, hooks the classes loaded so far, and calls
+     * {@link #listen}.
+     */
     public static ExitHandler start(String runtimeDir, String packageName, byte[] runtimeDex) {
         AttachEntry entry = new AttachEntry(runtimeDir, packageName, runtimeDex);
         entry.startRuntime();
+        started = entry;
         return entry;
+    }
+
+    /**
+     * Invoked by the agent once the hooks are in place: opens the capture socket, so a host that
+     * connects sees the hooks as they are and nothing the app does after that is missed.
+     */
+    public static void listen() {
+        AttachEntry entry = started;
+        if (entry != null) entry.openSocket();
     }
 
     private AttachEntry(String runtimeDir, String packageName, byte[] runtimeDex) {
@@ -70,11 +87,17 @@ public final class AttachEntry implements ExitHandler, AttachState {
         CaptureRuntime.Options options = new CaptureRuntime.Options();
         options.mode = "attach";
         options.attach = this;
-        CaptureRuntime rt = CaptureRuntime.start(platform, options);
-        this.runtime = rt;
-        String name = SocketNames.forProcess(platform.app().packageName, platform.app().pid);
+        this.runtime = CaptureRuntime.start(platform, options);
+        this.platform = platform;
+    }
+
+    private void openSocket() {
+        CaptureRuntime rt = runtime;
+        AndroidPlatform p = platform;
+        if (rt == null || p == null) return;
+        String name = SocketNames.forProcess(p.app().packageName, p.app().pid);
         LocalSocketServer.start(rt, name);
-        android.util.Log.i(AndroidRuntime.TAG, "attach capture started in " + platform.app().processName
+        android.util.Log.i(AndroidRuntime.TAG, "attach capture started in " + p.app().processName
                 + "; socket @" + name + "; runtime files " + runtimeDir);
     }
 

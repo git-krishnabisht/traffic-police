@@ -73,6 +73,12 @@ std::string g_package_name;
 bool g_startup_agent = false;
 int g_api_level = 0;
 std::atomic<bool> g_initialized{false};
+// Whether classes are instrumented: from the moment the load hook is set up, not only once the
+// runtime runs. Until 0.3.1 it waited for the runtime, and an OkHttpClient defined while the
+// runtime dex was still loading stayed unhooked until the retransform pass that follows, so a
+// slow device lost the first requests of an app that loads OkHttp just after an attach (the
+// nightly API 36 failures, 2026-10-02 to 10-06). The trampoline passes every value through
+// until the runtime installs its handler, so an early hook changes nothing.
 std::atomic<bool> g_runtime_active{false};
 std::atomic<bool> g_other_loader_reported{false};
 
@@ -611,6 +617,17 @@ void* InitializeOnAgentThread(void*) {
     RetransformLoadedClasses(env);
     ReportAll(env);
   }
+  // only now the socket: a host that connects finds every hook as it will stay (installed for
+  // the classes loaded so far, pending for the rest), and the app's requests are captured from
+  // the moment it can see them
+  jmethodID listen = env->GetStaticMethodID(entry_class, "listen", "()V");
+  if (listen == nullptr) {
+    LogJavaFailure(env, "resolving AttachEntry.listen");
+    g_vm->DetachCurrentThread();
+    return nullptr;
+  }
+  env->CallStaticVoidMethod(entry_class, listen);
+  if (env->ExceptionCheck()) LogJavaFailure(env, "opening the capture socket");
   g_vm->DetachCurrentThread();
   return nullptr;
 }
@@ -766,6 +783,7 @@ jint Attach(JavaVM* vm, char* options) {
     return JNI_OK;
   }
 
+  g_runtime_active.store(true, std::memory_order_release);
   jvmtiEventCallbacks callbacks{};
   callbacks.ClassFileLoadHook = OnClassFileLoadHook;
   callbacks.ClassPrepare = OnClassPrepare;

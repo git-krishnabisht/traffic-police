@@ -4,8 +4,8 @@
 //! timings, thread, call stack, and failures.
 //!
 //! The attach-mode test does the same with the sample's plain build, which has no
-//! traffic-police code: the agent is attached to it while it runs (its OkHttp client was built
-//! before), follows a restart, and is loaded at start with `--launch`.
+//! traffic-police code: the agent is attached to it while it starts and again while it runs (its
+//! OkHttp client was built before), follows a restart, and is loaded at start with `--launch`.
 //!
 //! Ignored by default. They force-stop and start `io.trafficpolice.sample` (and `.plain`) on the
 //! device named by `TP_E2E_SERIAL` (install the sample's debug and plain builds first; the attach
@@ -584,6 +584,27 @@ fn attach_target(
     }
 }
 
+/// Starts the plain app afresh and waits for its process, and with `ready`, until it has logged
+/// that line (`backend on`: its activity was created, and with it its OkHttp client).
+async fn start_plain(adb: &Adb, id: TransportId, ready: Option<&str>) {
+    adb.shell(id, &format!("am force-stop {PLAIN}")).await.unwrap();
+    let started = adb.shell(id, &format!("am start -n {PLAIN_ACTIVITY}")).await.unwrap();
+    assert_eq!(started.exit, 0, "am start failed: {}", started.stdout_text());
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        let pid = adb.shell(id, &format!("pidof {PLAIN}")).await.unwrap().stdout_text().trim().to_string();
+        if !pid.is_empty() {
+            let Some(ready) = ready else { return };
+            let log = adb.shell(id, &format!("logcat -d --pid={pid} -s TrafficPoliceSample:I")).await.unwrap();
+            if log.stdout_text().contains(ready) {
+                return;
+            }
+        }
+        assert!(Instant::now() < deadline, "the plain app did not start");
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+}
+
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "attaches to the sample's plain build on a device: set TP_E2E_SERIAL"]
 async fn plain_app_attach_end_to_end() {
@@ -605,19 +626,42 @@ async fn plain_app_attach_end_to_end() {
     // attach comes a moment after, and a process's first requests may be missed
     let from_start = api >= 30;
 
-    // the app runs before anything is attached, so its OkHttp client exists before the agent
-    adb.shell(id, &format!("am force-stop {PLAIN}")).await.unwrap();
-    let started = adb.shell(id, &format!("am start -n {PLAIN_ACTIVITY}")).await.unwrap();
-    assert_eq!(started.exit, 0, "am start failed: {}", started.stdout_text());
-    let deadline = Instant::now() + Duration::from_secs(20);
-    while adb.shell(id, &format!("pidof {PLAIN}")).await.unwrap().stdout_text().trim().is_empty() {
-        assert!(Instant::now() < deadline, "the plain app did not start");
-        tokio::time::sleep(Duration::from_millis(200)).await;
-    }
-    tokio::time::sleep(Duration::from_secs(2)).await;
-
     let store = SessionStore::new();
     let (event_tx, events) = mpsc::channel(1024);
+    let mut session = Session { store, events };
+    let mut report = Report::default();
+
+    // run 0: the agent arrives as soon as the app's process exists, so the app loads its OkHttp
+    // client class while the agent's runtime is still starting. Up to 0.3.1 a class defined then
+    // stayed unhooked for a moment, and a slow device lost the first requests (the nightly API 36
+    // failures of 2026-10-02 to 10-06: init, challenge, attest, enroll and a status poll).
+    start_plain(&adb, id, None).await;
+    let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
+    let (status_tx, _status_rx) = watch::channel(ConnectionStatus::Waiting(String::new()));
+    let task = tokio::spawn(run_device(
+        adb.clone(),
+        attach_target(&serial, PLAIN, &kit, false, None),
+        session.store.source_ids(),
+        event_tx.clone(),
+        cmd_rx,
+        status_tx,
+        None,
+    ));
+    session.until("the agent in the starting app", Duration::from_secs(30), |s| source_of(s, PLAIN, 0).is_some()).await;
+    let early = source_of(&session.store, PLAIN, 0).unwrap();
+    let hooks: Vec<String> =
+        session.store.source(early).unwrap().hooks.iter().map(|h| format!("{} {}", h.id, h.status)).collect();
+    println!("attach run 0: hooks at hello: {}", hooks.join(", "));
+    let run = adb.shell(id, &format!("am start -n {PLAIN_ACTIVITY} --es run all")).await.unwrap();
+    assert_eq!(run.exit, 0);
+    session.until("attach run 0 to finish", Duration::from_secs(120), |s| has_done(s, Some(early))).await;
+    check_main_run(&mut report, &session.store, early, "attach run 0 (attached while the app started)");
+    drop(cmd_tx);
+    tokio::time::timeout(Duration::from_secs(5), task).await.expect("backend did not stop").unwrap();
+
+    // run 1: the app runs before anything is attached, so its OkHttp client exists before the
+    // agent (the app logs once its activity is created, which builds the client)
+    start_plain(&adb, id, Some("backend on")).await;
     let mut quit = Vec::new();
     let mut tasks = Vec::new();
     for process in [PLAIN, PLAIN_WORKER] {
@@ -627,7 +671,7 @@ async fn plain_app_attach_end_to_end() {
         tasks.push(tokio::spawn(run_device(
             adb.clone(),
             target,
-            store.source_ids(),
+            session.store.source_ids(),
             event_tx.clone(),
             cmd_rx,
             status_tx,
@@ -635,10 +679,8 @@ async fn plain_app_attach_end_to_end() {
         )));
         quit.push(cmd_tx);
     }
-    let mut session = Session { store, events };
-    let mut report = Report::default();
-    session.until("the agent in the running app", Duration::from_secs(30), |s| source_of(s, PLAIN, 0).is_some()).await;
-    let main1 = source_of(&session.store, PLAIN, 0).unwrap();
+    session.until("the agent in the running app", Duration::from_secs(30), |s| source_of(s, PLAIN, 1).is_some()).await;
+    let main1 = source_of(&session.store, PLAIN, 1).unwrap();
     let source = session.store.source(main1).unwrap();
     report.check(source.mode == "attach", || format!("attach run 1: mode {:?}", source.mode));
     for h in &source.hooks {
@@ -649,7 +691,7 @@ async fn plain_app_attach_end_to_end() {
     // run 1: the scenarios in the attached process (the intent reaches the running activity)
     let run = adb.shell(id, &format!("am start -n {PLAIN_ACTIVITY} --es run all")).await.unwrap();
     assert_eq!(run.exit, 0);
-    session.until("attach run 1 to finish", Duration::from_secs(120), |s| has_done(s, source_of(s, PLAIN, 0))).await;
+    session.until("attach run 1 to finish", Duration::from_secs(120), |s| has_done(s, source_of(s, PLAIN, 1))).await;
     check_main_run(&mut report, &session.store, main1, "attach run 1");
     if from_start {
         // the worker process started during the run: the startup agent was in it from its start
@@ -675,8 +717,8 @@ async fn plain_app_attach_end_to_end() {
         .await;
     let run = adb.shell(id, &format!("am start -n {PLAIN_ACTIVITY} --es run all")).await.unwrap();
     assert_eq!(run.exit, 0);
-    session.until("attach run 2 to finish", Duration::from_secs(120), |s| has_done(s, source_of(s, PLAIN, 1))).await;
-    let main2 = source_of(&session.store, PLAIN, 1).unwrap();
+    session.until("attach run 2 to finish", Duration::from_secs(120), |s| has_done(s, source_of(s, PLAIN, 2))).await;
+    let main2 = source_of(&session.store, PLAIN, 2).unwrap();
     if from_start {
         check_main_run(&mut report, &session.store, main2, "attach run 2 (from its start)");
     }
@@ -706,9 +748,9 @@ async fn plain_app_attach_end_to_end() {
     ));
     drop(event_tx);
     session
-        .until("the launched run to finish", Duration::from_secs(120), |s| has_done(s, source_of(s, PLAIN, 2)))
+        .until("the launched run to finish", Duration::from_secs(120), |s| has_done(s, source_of(s, PLAIN, 3)))
         .await;
-    let main3 = source_of(&session.store, PLAIN, 2).unwrap();
+    let main3 = source_of(&session.store, PLAIN, 3).unwrap();
     if from_start {
         check_main_run(&mut report, &session.store, main3, "attach run 3 (--launch)");
     }
