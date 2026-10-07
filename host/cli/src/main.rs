@@ -295,7 +295,11 @@ fn main() -> anyhow::Result<()> {
             let t = doctor::Target {
                 project: cli.project.clone(),
                 serial: target.serial.clone().or_else(|| cli.target.serial.clone()),
-                package: target.package.clone().or_else(|| cli.target.package.clone()),
+                package: target
+                    .package
+                    .clone()
+                    .or_else(|| cli.target.package.clone())
+                    .or_else(|| project_package(cli.project.as_deref())),
                 process: target.process.clone().or_else(|| cli.target.process.clone()),
                 pid: target.pid.or(cli.target.pid),
                 attach,
@@ -368,8 +372,11 @@ async fn headless_source(
         let now_ms = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64);
         return Ok(headless::Source::Demo(DemoConfig { wall_start_ms: now_ms, ..DemoConfig::default() }, 1.0));
     }
-    let Some(package) = args.package.clone().or_else(|| outer.package.clone()) else {
-        bail!("{command} needs the app: --package com.example.app (the UI lets you pick instead)");
+    let Some(package) = args.package.clone().or_else(|| outer.package.clone()).or_else(|| project_package(project))
+    else {
+        bail!(
+            "{command} needs the app: --package com.example.app, or package in .traffic-police/project.toml (the UI lets you pick instead)"
+        );
     };
     let rules = ProjectRules::find(project);
     if let Some(s) = rules.summary() {
@@ -547,6 +554,18 @@ fn load_agent_kit(dir: Option<&Path>) -> anyhow::Result<Arc<AgentKit>> {
     )
 }
 
+/// `package` in `.traffic-police/project.toml` (the nearest at or above the working directory):
+/// the app to watch when no `--package` is given.
+fn project_package(project: Option<&Path>) -> Option<String> {
+    let start = match project {
+        Some(p) => p.to_path_buf(),
+        None => std::env::current_dir().ok()?,
+    };
+    let package = traffic_police_core::project::find(&start).ok().flatten()?.package?;
+    tracing::info!(%package, "the app from project.toml");
+    Some(package)
+}
+
 /// Apply `.traffic-police/project.toml` (nearest one at or above the working directory).
 fn load_project(app: &mut App, project: Option<&Path>) {
     let start = match project {
@@ -587,7 +606,7 @@ async fn run_device_mode(
     adb.ensure_server().await.context("traffic-police talks to devices through the adb server")?;
     let rules = ProjectRules::find(project);
     let launch = args.launch.then(Launch::default);
-    let target = match args.package.clone() {
+    let target = match args.package.clone().or_else(|| project_package(project)) {
         Some(package) => DeviceTarget {
             serial: args.serial.clone(),
             package,
@@ -874,6 +893,21 @@ mod tests {
         assert!(ui.is_err());
         // the command sender went with the UI, so the backend sees the end and says goodbye
         assert!(backend.recv().await.is_none());
+    }
+
+    #[test]
+    fn the_project_file_names_the_default_app() {
+        let dir = std::env::temp_dir().join(format!("tp-project-package-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let sub = dir.join("app/src/main");
+        std::fs::create_dir_all(&sub).unwrap();
+        assert_eq!(project_package(Some(&sub)), None);
+        std::fs::create_dir_all(dir.join(".traffic-police")).unwrap();
+        std::fs::write(dir.join(".traffic-police/project.toml"), "package = \"com.example.shop\"\n").unwrap();
+        // from the project's root and from below it
+        assert_eq!(project_package(Some(&dir)).as_deref(), Some("com.example.shop"));
+        assert_eq!(project_package(Some(&sub)).as_deref(), Some("com.example.shop"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Every example in the help parses (0.3.1's `export --help` gave a filter without

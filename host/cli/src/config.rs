@@ -48,7 +48,7 @@
 //!
 //! [adb]
 //! server = "127.0.0.1:5037"   # the adb server (ADB_SERVER_SOCKET and friends otherwise)
-//! path = "/opt/android/platform-tools/adb"  # the adb doctor compares with the server
+//! path = "/opt/android/platform-tools/adb"  # starts the server when none runs; doctor compares with it
 //!
 //! [storage]
 //! memory = "256mb"            # body bytes kept in memory before spilling to disk
@@ -604,11 +604,16 @@ impl Loaded {
         out
     }
 
-    /// The adb server: `[adb] server`, else the environment (as adb itself reads it).
+    /// The adb server (`[adb] server`, else the environment, else 127.0.0.1:5037), started with
+    /// `[adb] path` when it is not running.
     pub fn adb(&self) -> Adb {
-        match self.config.adb.server.as_ref().and_then(|s| server(s.get_ref())) {
+        let adb = match self.config.adb.server.as_ref().and_then(|s| server(s.get_ref())) {
             Some((host, port)) => Adb::at(host, port),
             None => Adb::from_env(),
+        };
+        match self.adb_path() {
+            Some(path) => adb.with_binary(path),
+            None => adb,
         }
     }
 

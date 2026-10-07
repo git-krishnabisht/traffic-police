@@ -3,7 +3,6 @@
 //! adb server is not even started).
 
 use std::fmt::Write as _;
-use std::path::Path;
 use std::sync::Arc;
 
 use traffic_police_adb::{Adb, AdbError, AppProcess, Device, RuntimeSocket, quote};
@@ -102,9 +101,13 @@ pub async fn run(t: &Target, settings: &config::Loaded, adb: &Adb) -> Report {
             format!("no adb server at {addr}"),
             Some("run `adb start-server` (traffic-police starts it when it captures), or check [adb] server and ADB_SERVER_SOCKET"),
         ),
-        Err(e) => r.check(Mark::Fail, format!("the adb server at {} does not answer: {e}", adb.address()), None),
+        Err(e) => r.check(
+            Mark::Fail,
+            format!("the adb server at {} does not answer: {e}", adb.address()),
+            Some("check [adb] server and ADB_SERVER_SOCKET; if adb itself hangs, restart it with `adb kill-server` then `adb start-server` (this also disconnects Android Studio)"),
+        ),
     }
-    let binary = settings.adb_path().map(Path::to_path_buf).or_else(traffic_police_adb::find_adb_binary);
+    let binary = adb.binary();
     match binary {
         Some(bin) => {
             let out = std::process::Command::new(&bin).arg("version").output();
@@ -160,7 +163,11 @@ pub async fn run(t: &Target, settings: &config::Loaded, adb: &Adb) -> Report {
                 r.check(Mark::Warn, format!("project config: {w}"), None);
             }
         }
-        Ok(Err(e)) => r.check(Mark::Fail, format!("project config: {e}"), None),
+        Ok(Err(e)) => r.check(
+            Mark::Fail,
+            format!("project config: {e}"),
+            Some("correct the file at the place named (README: Project config), or remove it"),
+        ),
         _ => {}
     }
     let rules_dir = match &t.project {
@@ -230,7 +237,11 @@ pub async fn run(t: &Target, settings: &config::Loaded, adb: &Adb) -> Report {
     let devices = match adb.devices().await {
         Ok(d) => d,
         Err(e) => {
-            r.check(Mark::Fail, format!("the device list failed: {e}"), None);
+            r.check(
+                Mark::Fail,
+                format!("the device list failed: {e}"),
+                Some("run `adb devices`; if it hangs too, restart adb with `adb kill-server` then `adb start-server` (this also disconnects Android Studio)"),
+            );
             r.summary();
             return r;
         }

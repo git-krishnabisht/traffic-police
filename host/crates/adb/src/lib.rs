@@ -61,12 +61,14 @@ impl ShellOutput {
     }
 }
 
-/// Where the adb server listens, and how long requests may take.
+/// Where the adb server listens, how long requests may take, and which adb binary starts a
+/// server when none runs.
 #[derive(Debug, Clone)]
 pub struct Adb {
     host: String,
     port: u16,
     timeout: Duration,
+    binary: Option<std::path::PathBuf>,
 }
 
 impl Default for Adb {
@@ -89,11 +91,23 @@ impl Adb {
             host = h.to_string();
             port = p;
         }
-        Adb { host, port, timeout: Duration::from_secs(10) }
+        Adb { host, port, timeout: Duration::from_secs(10), binary: None }
     }
 
     pub fn at(host: impl Into<String>, port: u16) -> Adb {
-        Adb { host: host.into(), port, timeout: Duration::from_secs(10) }
+        Adb { host: host.into(), port, timeout: Duration::from_secs(10), binary: None }
+    }
+
+    /// The adb binary that starts a server ([`ensure_server`](Self::ensure_server)); by default
+    /// the SDK's, then the one on `PATH` ([`find_adb_binary`]).
+    pub fn with_binary(mut self, binary: impl Into<std::path::PathBuf>) -> Adb {
+        self.binary = Some(binary.into());
+        self
+    }
+
+    /// The adb binary this client would start a server with.
+    pub fn binary(&self) -> Option<std::path::PathBuf> {
+        self.binary.clone().or_else(find_adb_binary)
     }
 
     pub fn with_timeout(mut self, timeout: Duration) -> Adb {
@@ -124,7 +138,7 @@ impl Adb {
         match self.connect().await {
             Ok(_) => Ok(()),
             Err(AdbError::NoServer(addr)) => {
-                let adb = find_adb_binary().ok_or_else(|| AdbError::NoServer(addr.clone()))?;
+                let adb = self.binary().ok_or_else(|| AdbError::NoServer(addr.clone()))?;
                 tracing::info!(adb = %adb.display(), "starting the adb server");
                 let status = tokio::process::Command::new(&adb)
                     .args(["-P", &self.port.to_string(), "start-server"])
