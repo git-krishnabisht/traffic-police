@@ -143,6 +143,8 @@ pub enum MenuAction {
     DecodeBase64(String),
     DecodeUrl(String),
     FilterBy(String),
+    /// The rule form: a new action of this type.
+    AddRuleAction(&'static str),
 }
 
 /// Which requests an export covers.
@@ -406,6 +408,9 @@ impl App {
     pub fn run_menu(&mut self, action: MenuAction) {
         self.overlay = Overlay::None;
         self.menu = None;
+        if let MenuAction::AddRuleAction(kind) = action {
+            return self.form_add_action(kind);
+        }
         if self.run_value_action(&action) {
             return;
         }
@@ -439,7 +444,8 @@ impl App {
             | MenuAction::DecodeJwt(_)
             | MenuAction::DecodeBase64(_)
             | MenuAction::DecodeUrl(_)
-            | MenuAction::FilterBy(_) => return,
+            | MenuAction::FilterBy(_)
+            | MenuAction::AddRuleAction(_) => return,
             MenuAction::CopyUrl => self.view_store().txn(txn).url.raw.clone(),
             MenuAction::CopyRequestHeaders => {
                 self.view_store().txn(txn).req_headers.iter().map(|(n, v)| format!("{n}: {v}\n")).collect()

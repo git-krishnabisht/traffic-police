@@ -64,6 +64,12 @@ pub enum Action {
     Help,
     Clear,
     FrameRate,
+    MoveUp,
+    MoveDown,
+    AddItem,
+    RemoveItem,
+    SaveRule,
+    EditFile,
     Quit,
 }
 
@@ -76,12 +82,21 @@ pub enum Group {
     Graph,
     List,
     Detail,
+    Rules,
     Session,
 }
 
 impl Group {
-    pub const ALL: [Group; 7] =
-        [Group::Move, Group::Views, Group::List, Group::Detail, Group::Live, Group::Graph, Group::Session];
+    pub const ALL: [Group; 8] = [
+        Group::Move,
+        Group::Views,
+        Group::List,
+        Group::Detail,
+        Group::Rules,
+        Group::Live,
+        Group::Graph,
+        Group::Session,
+    ];
 
     pub fn title(self) -> &'static str {
         match self {
@@ -91,6 +106,7 @@ impl Group {
             Group::Graph => "Graph",
             Group::List => "List",
             Group::Detail => "Detail",
+            Group::Rules => "Rules",
             Group::Session => "Session",
         }
     }
@@ -211,6 +227,19 @@ pub const ACTIONS: &[Info] = &[
     info!(Help, "help", Session, "help", "Help: every key", ["?"]),
     info!(Clear, "clear", Session, "clear", "Clear the session (asks first)", ["x"]),
     info!(FrameRate, "frame-rate", Session, "fps", "Show or hide the frame rate (fps)", []),
+    info!(MoveUp, "move-up", Rules, "move up", "Move the rule up (rules apply in order), or the form's action", ["K"]),
+    info!(MoveDown, "move-down", Rules, "move down", "Move the rule down, or the form's action", ["J"]),
+    info!(AddItem, "add", Rules, "add", "A new rule, or in the rule form a new action", ["a"]),
+    info!(
+        RemoveItem,
+        "remove",
+        Rules,
+        "remove",
+        "Rule form: remove the action or query parameter",
+        ["delete", "backspace"]
+    ),
+    info!(SaveRule, "save-rule", Rules, "save", "Rule form: save the rule to rules.toml", ["ctrl+s"]),
+    info!(EditFile, "edit-file", Rules, "$EDITOR", "Open rules.toml in $EDITOR at the rule", ["E"]),
     info!(Quit, "quit", Session, "quit", "Quit", ["q"]),
 ];
 

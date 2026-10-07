@@ -1,0 +1,34 @@
+---
+source: crates/tui/tests/snapshots.rs
+expression: "press(&mut app, SMALL, \"G\")"
+---
+ traffic-police  Pixel 8 [demo]  com.example.shop  pid 4312  ● LIVE  ✎ 1 rule active    26 requests
+╭─ Network · all app traffic ────────────────────────── ━ Receiving 4.0 KB/s   ━ Sending 2.5 KB/s ─╮
+│  12 KB/s                                                         ┊        ▁                      │
+│                                                                  ┊      ▁▇█▇▃▃▃▁          ▁▁   ▁ │
+│                                                                  ▃▄▅▆▆▆▆████████▆▄▃▄▄▅▆▇▇▇██▇▇██ │
+│        0 ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┊┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄ │
+│                                                                  🮂▀🮄🮅🮆🮆🮅🮄▀🮄🮆█🮆🮄▀🮅🮆🮅🮄▀█████🮅🮆███🮄 │
+│                                                                  ┊                    ██🮆▔   ▔   │
+│ 8.0 KB/s                                                         ┊                     🮃         │
+│                                                                  00:00.000                       │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Requests 26 ─ Connection ─ Thread ─ Rules ──────────────────────────────────────── rule orders ─╮
+│   4.              header  (←→ another type)                                                      │
+│     op            remove  (←→ set, add, remove)                                                  │
+│     header        ETag                                                                           │
+│   5.              body  (←→ another type)                                                        │
+│     from          file  (←→ text, a file in .traffic-police/, base64)                            │
+│     file          fixtures/order.json                                                            │
+│     content type  application/json                                                               │
+│   6.              replace  (←→ another type)                                                     │
+│     find          pending                                                                        │
+│     with          paid                                                                           │
+│     as a regex    no (literal text)                                                              │
+│   + an action (Enter, or a)                                                                      │
+│                                                                                                  │
+│   try the match: list the captured requests it selects (Enter)                                   │
+│ the match selects 0 of the 26 captured requests (Enter on the last line lists them)              │
+│ Ctrl+s save · Esc leave · a add action · Del remove · K/J move · E $EDITOR                       │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+                                                                         ⚠ studio inspector present

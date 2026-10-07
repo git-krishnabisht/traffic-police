@@ -71,6 +71,8 @@ enum Test {
     Header(String, Option<String>),
     /// Index into [`Filter::needles`].
     Body(usize),
+    /// The requests a rule's match selects, as the app matches them (the rule form's preview).
+    RuleMatch(std::sync::Arc<traffic_police_proto::msg::RuleMatch>),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -221,6 +223,16 @@ fn parse_duration(s: &str) -> Option<u64> {
 
 impl Filter {
     /// Parses a filter; `Ok(None)` for an empty one.
+    /// A filter that keeps what a rule's match selects; `label` is what the filter bar shows
+    /// (it is not filter language: typing in the bar replaces it).
+    pub fn rule_match(label: &str, m: traffic_police_proto::msg::RuleMatch) -> Filter {
+        Filter {
+            source: label.to_string(),
+            terms: vec![Term { negate: false, test: Test::RuleMatch(std::sync::Arc::new(m)) }],
+            needles: Vec::new(),
+        }
+    }
+
     pub fn parse(input: &str) -> Result<Option<Filter>, ParseError> {
         let mut terms = Vec::new();
         let mut needles = Vec::new();
@@ -368,6 +380,7 @@ impl Filter {
                     Some(hit) => hit,
                     None => return false,
                 },
+                Test::RuleMatch(m) => crate::ruleform::matches_request(m, t).unwrap_or(false),
             };
             if hit == term.negate {
                 return false;

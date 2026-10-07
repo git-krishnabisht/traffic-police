@@ -6,28 +6,28 @@ expression: "frame(12.0, SMALL, \"?\")"
 ╭─ Network · all app traffic ────────────────────────── ━ Receiving 4.0 KB/s   ━ Sending 2.5 KB/s ─╮
 │  12 KB/s                                                         ┊        ▁                      │
 │                                                                  ┊      ▁▇█▇▃▃▃▁          ▁▁   ▁ │
-│                                                                  ▃▄▅▆▆▆▆████████▆▄▃▄▄▅▆▇▇▇██▇▇██ │
-│   ╭ keys ────────────────────────────────────────────────────────────────────────────────────╮┄┄ │
-│   │ Move     ↑/k up · ↓/j down · ←/h left · →/l right · g/Home top · G/End/Ctrl+g bottom     │█🮄 │
-│   │          PgUp page up · PgDn page down · Ctrl+u/Ctrl+p ½ page up · Ctrl+d ½ page down    │   │
-│ 8.│          Enter open/decode · Esc back · Tab next panel · Shift+Tab previous panel        │   │
-│   │ Views    1 connections · 2 threads · 3 rules                                             │   │
-╰───│ List     c collapse · s sort · S reverse · C columns · / filter · m pin · r new rule     │───╯
-╭─ R│          d diff                                                                          │───╮
-│ Na│ Detail   n next match · N previous match · p parsed/source · o original                  │   │
-│ no│          b req/resp body · | jq · < scroll left · > scroll right · [ fold all            │   │
-│ ev│          ] unfold all                                                                    │   │
-│ pr│ Live     Space pause · F freeze · L live · +/= zoom in · - zoom out · 0 reset zoom       │   │
-│ re│          v range                                                                         │   │
-│ no│ Graph    T source · t clock                                                              │   │
-│ ch│ Session  y copy · w save body · e export · : commands · ? help · x clear · q quit        │▎  │
-│ ca│ Mouse    click rows and tabs · double-click opens                                        │  ▐│
-│ lo│          wheel scrolls (zooms on the graph; Shift+wheel moves in time)                   │▏ ▐│
-│ no│          drag the graph to select a range, the border between boxes to resize            │🮋▎▐│
-│ ev│                                                                                          │🮊 ▐│
-│ st│ any key closes                                                                           │🮇 ▐│
-│ re╰──────────────────────────────────────────────────────────────────────────────────────────╯▐█▐│
-│ fonts.json                                         canceled     380 ms                         ▎▐│
+│   ╭ keys ────────────────────────────────────────────────────────────────────────────────────╮██ │
+│   │ Move     ↑/k up · ↓/j down · ←/h left · →/l right · g/Home top · G/End/Ctrl+g bottom     │┄┄ │
+│   │          PgUp page up · PgDn page down · Ctrl+u/Ctrl+p ½ page up · Ctrl+d ½ page down    │█🮄 │
+│   │          Enter open/decode · Esc back · Tab next panel · Shift+Tab previous panel        │   │
+│ 8.│ Views    1 connections · 2 threads · 3 rules                                             │   │
+│   │ List     c collapse · s sort · S reverse · C columns · / filter · m pin · r new rule     │   │
+╰───│          d diff                                                                          │───╯
+╭─ R│ Detail   n next match · N previous match · p parsed/source · o original                  │───╮
+│ Na│          b req/resp body · | jq · < scroll left · > scroll right · [ fold all            │   │
+│ no│          ] unfold all                                                                    │   │
+│ ev│ Rules    K move up · J move down · a add · Del/Backspace remove · Ctrl+s save            │   │
+│ pr│          E $EDITOR                                                                       │   │
+│ re│ Live     Space pause · F freeze · L live · +/= zoom in · - zoom out · 0 reset zoom       │   │
+│ no│          v range                                                                         │   │
+│ ch│ Graph    T source · t clock                                                              │▎  │
+│ ca│ Session  y copy · w save body · e export · : commands · ? help · x clear · q quit        │  ▐│
+│ lo│ Mouse    click rows and tabs · double-click opens                                        │▏ ▐│
+│ no│          wheel scrolls (zooms on the graph; Shift+wheel moves in time)                   │🮋▎▐│
+│ ev│          drag the graph to select a range, the border between boxes to resize            │🮊 ▐│
+│ st│                                                                                          │🮇 ▐│
+│ re│ any key closes                                                                           │▐█▐│
+│ fo╰──────────────────────────────────────────────────────────────────────────────────────────╯ ▎▐│
 │ notifications                                      ···          500 ms                         🮈▐│
 │ status?orderId=ord_15bce3a5a…       0 B  json      200          413 ms                         🮈 │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯

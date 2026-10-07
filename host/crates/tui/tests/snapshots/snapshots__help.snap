@@ -13,15 +13,15 @@ expression: "frame(12.0, MEDIUM, \"?\")"
 │ 4.0 KB/s                                                                                  ┊    ▔▔▔▔      ▔🮃🮃▔    ▔🮂▔    ▀████🮆🮂  🮂🮃▀▀🮂   │
 │                                                                                           ┊                              ▀██🮄            │
 │ 8.0 KB/s                                                                                  ┊                               ▔▔             │
-│                                                                                           00:00.000            00:05.000                 │
-╰──────────╭ keys ──────────────────────────────────────────────────────────────────────────────────────────────────────────────╮──────────╯
-╭─ Requests│ Move     ↑/k up · ↓/j down · ←/h left · →/l right · g/Home top · G/End/Ctrl+g bottom · PgUp page up                │──────────╮
-│ Name     │          PgDn page down · Ctrl+u/Ctrl+p ½ page up · Ctrl+d ½ page down · Enter open/decode · Esc back              │          │
-│ events   │          Tab next panel · Shift+Tab previous panel                                                                 │          │
-│ user_1024│ Views    1 connections · 2 threads · 3 rules                                                                       │          │
-│ notificat│ List     c collapse · s sort · S reverse · C columns · / filter · m pin · r new rule · d diff                      │         ▐│
-│ products?│ Detail   n next match · N previous match · p parsed/source · o original · b req/resp body · | jq · < scroll left   │         ▐│
-│ config   │          > scroll right · [ fold all · ] unfold all                                                                │         ▐│
+│          ╭ keys ──────────────────────────────────────────────────────────────────────────────────────────────────────────────╮          │
+╰──────────│ Move     ↑/k up · ↓/j down · ←/h left · →/l right · g/Home top · G/End/Ctrl+g bottom · PgUp page up                │──────────╯
+╭─ Requests│          PgDn page down · Ctrl+u/Ctrl+p ½ page up · Ctrl+d ½ page down · Enter open/decode · Esc back              │──────────╮
+│ Name     │          Tab next panel · Shift+Tab previous panel                                                                 │          │
+│ events   │ Views    1 connections · 2 threads · 3 rules                                                                       │          │
+│ user_1024│ List     c collapse · s sort · S reverse · C columns · / filter · m pin · r new rule · d diff                      │          │
+│ notificat│ Detail   n next match · N previous match · p parsed/source · o original · b req/resp body · | jq · < scroll left   │         ▐│
+│ products?│          > scroll right · [ fold all · ] unfold all                                                                │         ▐│
+│ config   │ Rules    K move up · J move down · a add · Del/Backspace remove · Ctrl+s save · E $EDITOR                          │         ▐│
 │ ↪ config.│ Live     Space pause · F freeze · L live · +/= zoom in · - zoom out · 0 reset zoom · v range                       │         ▐│
 │ items    │ Graph    T source · t clock                                                                                        │██▋      ▐│
 │ metrics  │ Session  y copy · w save body · e export · : commands · ? help · x clear · q quit                                  │▎        ▐│

@@ -1,15 +1,15 @@
 //! Rules in the UI (ARCHITECTURE.md §5.11): `.traffic-police/rules.toml` is watched, with the
 //! files its bodies come from, and a valid change goes to the app at once; an invalid one is
-//! shown while the active rules stay. In the Rules view Space turns a rule on or off and Enter
-//! opens the file at it in `$EDITOR`; `r` on a request writes a new rule that matches it.
+//! shown while the active rules stay. In the Rules view Space turns a rule on or off, Enter opens
+//! it in the form (`ruleform.rs`), E opens the file in `$EDITOR`, and K and J move it; `r` makes a
+//! new rule in the form, matching the selected request when there is one.
 
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime};
 
 use tokio::sync::mpsc;
 use traffic_police_core::backend::BackendCommand;
-use traffic_police_core::project::DIR;
-use traffic_police_core::rules::{self, FILE, NewRule, RulesFile};
+use traffic_police_core::rules::{self, FILE, RulesFile};
 
 use crate::app::App;
 
@@ -102,7 +102,7 @@ impl App {
         }
     }
 
-    /// Enter in the Rules view: the file in `$EDITOR`, at the selected rule.
+    /// `E` in the Rules view (and in the form): the file in `$EDITOR`, at the selected rule.
     pub fn edit_rules(&mut self) {
         let Some(path) = self.rules_path() else {
             self.flash("no .traffic-police directory here; r on a request creates one with a rule");
@@ -119,49 +119,18 @@ impl App {
         self.editor_request = Some((path, line as u32));
     }
 
-    /// `r`: a rule that matches the selected request exactly, appended (off) to rules.toml and
-    /// opened in `$EDITOR`.
+    /// `r`: in the Rules view a new rule in the form; elsewhere a new rule that matches the
+    /// selected request, in the form (until 0.3.1 it was appended to rules.toml, off, and opened
+    /// in `$EDITOR`).
     pub fn new_rule_from_selected(&mut self) {
+        if self.view == crate::app::View::Rules {
+            return self.new_rule_in_form();
+        }
         let Some(txn) = self.selected else {
             self.flash("select a request to make a rule for it");
             return;
         };
-        if self.rules_dir.is_none() {
-            let dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")).join(DIR);
-            if let Err(e) = std::fs::create_dir_all(&dir) {
-                self.flash(format!("cannot create {}: {e}", dir.display()));
-                return;
-            }
-            self.rules_dir = Some(dir);
-        }
-        let path = self.rules_path().expect("set above");
-        let current = rules::load(&path);
-        let t = self.view_store().txn(txn);
-        let mut query: Vec<String> = Vec::new();
-        for (name, _) in t.url.query_pairs() {
-            if !query.contains(&name) {
-                query.push(name);
-            }
-        }
-        let new = NewRule {
-            id: rules::fresh_id(&current, &t.url.path),
-            name: format!("{} {}", t.method, t.url.path),
-            method: t.method.clone(),
-            scheme: t.url.scheme.clone(),
-            host: t.url.host.clone(),
-            port: t.url.effective_port().unwrap_or(443),
-            path: t.url.path.clone(),
-            query,
-        };
-        let (text, line) = rules::with_new_rule(&current.text, &new);
-        match std::fs::write(&path, text) {
-            Ok(()) => {
-                self.rules_reloaded(rules::load(&path));
-                self.editor_request = Some((path, line as u32));
-                self.flash(format!("rule {} added (off) to rules.toml; say what it does, then turn it on", new.id));
-            }
-            Err(e) => self.flash(format!("cannot write {}: {e}", path.display())),
-        }
+        self.new_rule_for_request(txn);
     }
 }
 

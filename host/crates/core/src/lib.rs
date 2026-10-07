@@ -18,6 +18,7 @@ pub mod normalize;
 pub mod phases;
 pub mod project;
 pub mod rows;
+pub mod ruleform;
 pub mod rules;
 pub mod session;
 pub mod store;

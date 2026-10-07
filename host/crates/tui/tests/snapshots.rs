@@ -222,3 +222,71 @@ fn terminal_too_small() {
     snap!("too_small", frame(12.0, (99, 30), ""));
     snap!("too_short", frame(12.0, (140, 29), ""));
 }
+
+// --- the rule form ---------------------------------------------------------------------------
+
+/// A rule with every action type, opened in the form (ARCHITECTURE.md §5.11.1).
+#[test]
+fn rule_form_with_every_action() {
+    let dir = std::env::temp_dir().join(format!("tp-snap-form-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join(".traffic-police/fixtures")).unwrap();
+    std::fs::write(dir.join(".traffic-police/fixtures/order.json"), "{\"paid\":true}").unwrap();
+    let path = dir.join(".traffic-police/rules.toml");
+    std::fs::write(
+        &path,
+        r#"version = 1
+
+[[rule]]
+id = "orders"
+name = "Every action"
+cache_rewrites = true
+
+  [rule.match]
+  methods = ["GET", "POST"]
+  scheme = "https"
+  host = "*.example.com"
+  path = { regex = '^/api/v1/orders/' }
+  query = { orderId = "*" }
+
+  [[rule.action]]
+  type = "delay"
+  ms = 1200
+
+  [[rule.action]]
+  type = "fail"
+  exception = "timeout"
+  message = "slow network"
+
+  [[rule.action]]
+  type = "status"
+  code = 503
+  reason = "Unavailable"
+
+  [[rule.action]]
+  type = "header"
+  op = "remove"
+  name = "ETag"
+
+  [[rule.action]]
+  type = "body"
+  file = "fixtures/order.json"
+  content_type = "application/json"
+
+  [[rule.action]]
+  type = "replace"
+  find = "pending"
+  with = "paid"
+"#,
+    )
+    .unwrap();
+    let mut app = app_at(12.0);
+    let f = traffic_police_core::rules::load(&path);
+    assert!(f.is_valid(), "{:?}", f.problems);
+    app.rules = Some(f.set.clone());
+    app.rules_file = Some(f);
+    app.rules_dir = Some(dir.join(".traffic-police"));
+    snap!("rule_form_medium", press(&mut app, MEDIUM, "3<Enter>"));
+    snap!("rule_form_small", press(&mut app, SMALL, "G"));
+    let _ = std::fs::remove_dir_all(dir);
+}

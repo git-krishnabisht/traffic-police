@@ -41,4 +41,4 @@ expression: "frame(40.0, MEDIUM, \"3\")"
 │                                                                                                                                          │
 │ The demo's built-in rules (a project's come from .traffic-police/rules.toml).                                                            │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
- ↑↓ select   Space on/off   Enter edit   Tab next panel   ? help                                                 ⚠ studio inspector present
+ ↑↓ select   Space on/off   Enter edit   a new   KJ move   E $EDITOR   Tab next panel   ? help                   ⚠ studio inspector present

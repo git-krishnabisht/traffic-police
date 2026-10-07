@@ -1,0 +1,44 @@
+---
+source: crates/tui/tests/snapshots.rs
+expression: "press(&mut app, MEDIUM, \"3<Enter>\")"
+---
+ traffic-police  Pixel 8 [demo]  com.example.shop  pid 4312  ● LIVE  ✎ 1 rule active          26 requests · 14 KB in · 18 KB out · 1 failed
+╭─ Network · all app traffic ────────────────────────────────────────────────────────────────── ━ Receiving 3.9 KB/s   ━ Sending 2.4 KB/s ─╮
+│  12 KB/s                                                                                  ┊                                              │
+│                                                                                           ┊           ▃▇▇▅▁                              │
+│ 6.0 KB/s                                                                                  ┊         ▁▅█████▆▆▆▆▄▁         ▁▁▁▂▂▄▄▃▂▂▂▃▃▂ │
+│                                                                                           ▃▄▅▆▇████▇█████████████▇▆▅▅▅▅▆▇███████████████ │
+│        0 ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┊┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄ │
+│                                                                                           🮂▀🮄🮆██████🮆🮅🮅🮅🮆████🮆🮅🮅🮆███🮆🮅🮄🮆██████████████🮆🮄 │
+│ 4.0 KB/s                                                                                  ┊    ▔▔▔▔      ▔🮃🮃▔    ▔🮂▔    ▀████🮆🮂  🮂🮃▀▀🮂   │
+│                                                                                           ┊                              ▀██🮄            │
+│ 8.0 KB/s                                                                                  ┊                               ▔▔             │
+│                                                                                           00:00.000            00:05.000                 │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Requests 26 ─ Connection ─ Thread ─ Rules ──────────────────────────────────────────────────────────────────────────────── rule orders ─╮
+│ Rule                                                                                                                                     │
+│   id              orders                                                                                                                 │
+│   name            Every action                                                                                                           │
+│   on              ● yes                                                                                                                  │
+│   cache rewrites  yes  (the app's HTTP cache may keep what a rule changed)                                                               │
+│                                                                                                                                          │
+│ Match                                                                                                                                    │
+│   methods         [x] GET  [x] POST  [ ] PUT  [ ] PATCH  [ ] DELETE  [ ] HEAD  [ ] OPTIONS                                               │
+│   scheme          https                                                                                                                  │
+│   host            glob  *.example.com                                                                                                    │
+│   path            regex ^/api/v1/orders/                                                                                                 │
+│   port            any                                                                                                                    │
+│   query parameter orderId                                                                                                                │
+│     its value     glob  *                                                                                                                │
+│   + a query parameter (Enter)                                                                                                            │
+│                                                                                                                                          │
+│ Actions, in order                                                                                                                        │
+│   1.              delay  (←→ another type)                                                                                               │
+│     ms            1200                                                                                                                   │
+│   2.              fail  (←→ another type)                                                                                                │
+│     exception     timeout  (←→)                                                                                                          │
+│     message       slow network                                                                                                           │
+│ the match selects 0 of the 26 captured requests (Enter on the last line lists them)                                                      │
+│ Ctrl+s save · Esc leave · a add action · Del remove · K/J move · E $EDITOR                                                               │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+                                                                                                                 ⚠ studio inspector present

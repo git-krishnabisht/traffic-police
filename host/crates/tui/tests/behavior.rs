@@ -740,18 +740,25 @@ fn rules_from_the_project_file_toggle_edit_and_grow() {
         Ok(BackendCommand::SetRules(r)) => assert!(!r.rules[0].enabled),
         other => panic!("expected SetRules, got {other:?}"),
     }
-    // Enter opens the file at the rule
+    // Enter opens the rule in the form (Esc leaves it), E the file at the rule
     press(&mut app, MEDIUM, "<Enter>");
+    assert_eq!(app.form.as_ref().map(|f| f.draft.id.as_str()), Some("slow"));
+    press(&mut app, MEDIUM, "<Esc>E");
+    assert!(app.form.is_none());
     assert_eq!(app.editor_request.take(), Some((path.clone(), 4)));
-    // r on a request appends a rule that matches it exactly, off, and opens it
+    // r on a request opens a rule that matches it exactly in the form; saved, it is appended
     let to = goto(&mut app, MEDIUM, path_is("/api/v1/sessions"));
     press(&mut app, MEDIUM, &format!("1{to}r"));
+    assert_eq!(app.view, traffic_police_tui::app::View::Rules);
+    press(&mut app, MEDIUM, "<C-s>");
+    assert!(app.form.is_none(), "saved");
     let f = traffic_police_core::rules::load(&path);
     assert!(f.is_valid(), "{:?}", f.problems);
     let new = f.set.rules.last().unwrap();
-    assert_eq!((new.id.as_str(), new.enabled), ("sessions", false));
+    assert_eq!((new.id.as_str(), new.enabled), ("sessions", true));
     assert_eq!(new.matcher.path, Some(traffic_police_proto::msg::Pattern::Exact("/api/v1/sessions".into())));
-    assert_eq!(app.editor_request.take().map(|(p, _)| p), Some(path.clone()));
+    assert_eq!(new.matcher.methods, ["POST"]);
+    assert!(std::fs::read_to_string(&path).unwrap().contains("# the status poll"));
     // a broken file keeps the active rules, and says where it breaks
     let active = app.rules.clone();
     std::fs::write(&path, "[[rule]]\nid = \"x\"\nbogus = true\n").unwrap();
@@ -1174,4 +1181,166 @@ fn remapped_keys_move_in_menus_and_the_palette() {
     assert_eq!((p.input.value(), p.cursor), ("graph", 1));
     press(&mut app, MEDIUM, "<C-x>");
     assert_eq!(app.overlay, Overlay::None);
+}
+
+/// A rules file in a scratch project, read into the app as the watcher would.
+fn with_rules(app: &mut App, name: &str, text: &str) -> (std::path::PathBuf, std::path::PathBuf) {
+    let dir = std::env::temp_dir().join(format!("tp-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let tp = dir.join(".traffic-police");
+    std::fs::create_dir_all(&tp).unwrap();
+    let path = tp.join("rules.toml");
+    std::fs::write(&path, text).unwrap();
+    let f = traffic_police_core::rules::load(&path);
+    app.rules = Some(f.set.clone());
+    app.rules_file = Some(f);
+    app.rules_dir = Some(tp);
+    (dir, path)
+}
+
+/// The form's cursor on a line.
+fn form_at(app: &mut App, row: traffic_police_tui::ruleform::Row) {
+    let f = app.form.as_mut().expect("the form is open");
+    f.cursor = f.rows().iter().position(|r| *r == row).unwrap_or_else(|| panic!("no line {row:?}"));
+}
+
+const ONE_RULE: &str = "version = 1\n\n# keep me\n[[rule]]\nid = \"slow\"   # the poll\n\n  [rule.match]\n  path = \"/api/v1/*/status\"\n\n  # not too slow\n  [[rule.action]]\n  type = \"delay\"\n  ms = 800\n";
+
+/// Every action type is made and set in the form; the file keeps its comments, and the saved rule
+/// reads back into the same form (ARCHITECTURE.md §5.11.1's "done when").
+#[test]
+fn the_rule_form_makes_every_action_and_keeps_the_file() {
+    use traffic_police_core::ruleform::ActionDraft;
+    use traffic_police_proto::msg::RuleAction as A;
+    use traffic_police_tui::ruleform::{Key as K, Row};
+    let mut app = app_at(40.0);
+    let (dir, path) = with_rules(&mut app, "form-actions", ONE_RULE);
+    press(&mut app, MEDIUM, "3<Enter>");
+    assert!(app.form.is_some());
+    form_at(&mut app, Row::ActionField(0, K::Ms));
+    press(&mut app, MEDIUM, "<Enter><C-u>1500<Enter>");
+    for letter in ['f', 's', 'h', 'b', 'r'] {
+        form_at(&mut app, Row::AddAction);
+        press(&mut app, MEDIUM, &format!("<Enter>{letter}"));
+    }
+    form_at(&mut app, Row::ActionField(1, K::Exception));
+    press(&mut app, MEDIUM, "l");
+    form_at(&mut app, Row::ActionField(1, K::Message));
+    press(&mut app, MEDIUM, "<Enter>gone<Enter>");
+    form_at(&mut app, Row::ActionField(2, K::Code));
+    press(&mut app, MEDIUM, "<Enter><C-u>418<Enter>");
+    form_at(&mut app, Row::ActionField(3, K::Name));
+    press(&mut app, MEDIUM, "<Enter>X-Test<Enter>");
+    form_at(&mut app, Row::ActionField(3, K::Value));
+    press(&mut app, MEDIUM, "<Enter>yes<Enter>");
+    form_at(&mut app, Row::ActionField(4, K::Body));
+    press(&mut app, MEDIUM, "<Enter>{\"ok\":true}<Enter>");
+    form_at(&mut app, Row::ActionField(5, K::Find));
+    press(&mut app, MEDIUM, "<Enter>pend(ing)?<Enter>");
+    form_at(&mut app, Row::ActionField(5, K::With));
+    press(&mut app, MEDIUM, "<Enter>done<Enter>");
+    form_at(&mut app, Row::ActionField(5, K::Regex));
+    press(&mut app, MEDIUM, "<Space>");
+    let form = app.form.clone().unwrap();
+    assert!(form.problems.is_empty(), "{:?}", form.problems);
+    let text = press(&mut app, MEDIUM, "<C-s>");
+    assert!(app.form.is_none(), "saved and closed: {text}");
+    let saved = std::fs::read_to_string(&path).unwrap();
+    assert!(saved.contains("# keep me\n[[rule]]\nid = \"slow\"   # the poll"), "{saved}");
+    assert!(saved.contains("  # not too slow\n  [[rule.action]]\n  type = \"delay\"\n  ms = 1500"), "{saved}");
+    let f = traffic_police_core::rules::load(&path);
+    assert!(f.is_valid(), "{:?}\n{saved}", f.problems);
+    assert_eq!(
+        f.set.rules[0].actions,
+        vec![
+            A::Delay { ms: 1500 },
+            A::Fail { exception: "io".into(), message: Some("gone".into()) },
+            A::Status { code: 418, reason: None },
+            A::Header { op: "set".into(), name: "X-Test".into(), value: Some("yes".into()) },
+            A::Body { text: Some("{\"ok\":true}".into()), base64: None, content_type: Some("application/json".into()) },
+            A::Replace { find: "pend(ing)?".into(), with: "done".into(), regex: true },
+        ]
+    );
+    assert_eq!(app.rules.as_ref().unwrap().rules[0].actions.len(), 6, "the saved rules are active");
+    // read back into the same form
+    press(&mut app, MEDIUM, "<Enter>");
+    let back = app.form.as_ref().unwrap();
+    let kinds = |d: &traffic_police_core::ruleform::RuleDraft| {
+        d.actions.iter().map(|a| a.action.clone()).collect::<Vec<ActionDraft>>()
+    };
+    assert_eq!(kinds(&back.draft), kinds(&form.draft));
+    assert_eq!(back.draft.path, form.draft.path);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+/// A problem shows at its field and keeps the rule from being saved; Esc with changes asks first.
+#[test]
+fn the_rule_form_checks_as_you_type_and_asks_before_leaving() {
+    use traffic_police_tui::ruleform::{Key as K, Row};
+    let mut app = app_at(40.0);
+    let (dir, path) = with_rules(&mut app, "form-checks", ONE_RULE);
+    press(&mut app, MEDIUM, "3<Enter>a");
+    // the menu's s: a status action; then a code no status has
+    press(&mut app, MEDIUM, "s");
+    form_at(&mut app, Row::ActionField(1, K::Code));
+    let text = press(&mut app, MEDIUM, "<Enter><C-u>999");
+    assert!(text.contains("✗ status code 999: use 100 to 599"), "{text}");
+    press(&mut app, MEDIUM, "<Enter><C-s>");
+    assert!(app.form.is_some(), "not saved with a problem");
+    assert!(app.current_message().unwrap_or_default().contains("problem"), "{:?}", app.current_message());
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), ONE_RULE);
+    // the port must be a port
+    form_at(&mut app, Row::Port);
+    let text = press(&mut app, MEDIUM, "<Enter>99999<Enter>");
+    assert!(text.contains("✗ port 99999: use 1 to 65535"), "{text}");
+    // Esc asks; n stays, y leaves the file as it was
+    press(&mut app, MEDIUM, "<Esc>");
+    assert_eq!(app.overlay, Overlay::ConfirmDiscard);
+    press(&mut app, MEDIUM, "n");
+    assert!(app.form.is_some());
+    press(&mut app, MEDIUM, "<Esc>y");
+    assert!(app.form.is_none());
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), ONE_RULE);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+/// K and J move a rule in the file (rules apply in file order), comments with it.
+#[test]
+fn rules_move_up_and_down_in_the_file() {
+    let mut app = app_at(40.0);
+    let two = format!(
+        "{ONE_RULE}\n# second\n[[rule]]\nid = \"stub\"\n  [[rule.action]]\n  type = \"status\"\n  code = 503\n"
+    );
+    let (dir, path) = with_rules(&mut app, "rules-move", &two);
+    press(&mut app, MEDIUM, "3jK");
+    let ids = |app: &App| app.rules_file.as_ref().unwrap().entries.iter().map(|e| e.id.clone()).collect::<Vec<_>>();
+    assert_eq!(ids(&app), ["stub", "slow"]);
+    assert_eq!(app.rules_cursor, 0, "the cursor stays on the moved rule");
+    let moved = std::fs::read_to_string(&path).unwrap();
+    assert!(moved.find("# second").unwrap() < moved.find("# keep me").unwrap(), "{moved}");
+    press(&mut app, MEDIUM, "J");
+    assert_eq!(ids(&app), ["slow", "stub"]);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+/// The form tries its match on what was captured, and lists those requests.
+#[test]
+fn the_rule_form_lists_what_its_match_selects() {
+    let mut app = app_at(40.0);
+    let (dir, _) = with_rules(&mut app, "form-matches", ONE_RULE);
+    let to = goto(&mut app, MEDIUM, path_is("/api/v1/sessions"));
+    let text = press(&mut app, MEDIUM, &format!("{to}r"));
+    let (n, of) = app.form.as_ref().unwrap().matches.clone().expect("the match runs here");
+    assert!(n >= 1 && n < of, "{n} of {of}");
+    assert!(text.contains(&format!("the match selects {n} of the {of} captured requests")), "{text}");
+    press(&mut app, MEDIUM, "G<Enter>");
+    assert_eq!(app.view, traffic_police_tui::app::View::Connections);
+    let store = app.view_store();
+    let rows = app.view_rows().rows();
+    assert_eq!(rows.len(), n);
+    assert!(rows.iter().all(|r| store.txn(r.txn()).url.path == "/api/v1/sessions"));
+    // 3 goes back to the form, as it was
+    press(&mut app, MEDIUM, "3");
+    assert!(app.form.is_some());
+    std::fs::remove_dir_all(dir).unwrap();
 }

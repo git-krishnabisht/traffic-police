@@ -62,6 +62,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         Overlay::Help => draw_help(app, area, buf),
         Overlay::Columns { cursor } => draw_columns_menu(app, area, buf, cursor),
         Overlay::ConfirmClear => draw_confirm(app, area, buf),
+        Overlay::ConfirmDiscard => draw_confirm_discard(app, area, buf),
         Overlay::Jq => draw_jq(f, app, footer),
         Overlay::Filter => draw_filter(f, app, footer),
         Overlay::Search => draw_search(f, app, footer),
@@ -71,6 +72,12 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         Overlay::Decoded => crate::values::draw(app, area, f.buffer_mut()),
         Overlay::Palette => crate::palette::draw(f, app, area),
         Overlay::None => {}
+    }
+    // a field being typed into (the rule form) shows the terminal's cursor
+    if let Some((x, y)) = app.cursor_position.take()
+        && app.overlay == Overlay::None
+    {
+        f.set_cursor_position((x, y));
     }
 }
 
@@ -134,7 +141,7 @@ pub(crate) fn fill(buf: &mut Buffer, r: Rect, style: Style) {
     }
 }
 
-fn text(buf: &mut Buffer, x: u16, y: u16, width: u16, spans: Vec<Span<'_>>) {
+pub(crate) fn text(buf: &mut Buffer, x: u16, y: u16, width: u16, spans: Vec<Span<'_>>) {
     draw_line(buf, x, y, width, &Line::from(spans), 0, Style::default());
 }
 
@@ -708,6 +715,19 @@ fn draw_views(app: &mut App, r: Rect, buf: &mut Buffer) {
     for (rect, (v, _)) in at.iter().skip(1).zip(views) {
         app.hits.add(*rect, Target::ViewTab(v));
     }
+    if app.view == View::Rules
+        && let Some(form) = &app.form
+    {
+        let what = if form.is_new() { "new rule" } else { "rule" };
+        let used = at.last().map_or(r.x, |l| l.x + l.width);
+        border_labels(
+            buf,
+            Rect { x: used, width: (r.x + r.width).saturating_sub(used), ..r },
+            r.y,
+            true,
+            vec![vec![Span::styled(format!("{what} {}", form.draft.id), t.accent())]],
+        );
+    }
     if app.view == View::Connections {
         let mut info = Vec::new();
         if sort != Default::default() {
@@ -1157,6 +1177,9 @@ fn draw_threads(app: &mut App, r: Rect, buf: &mut Buffer) {
 
 fn draw_rules(app: &mut App, r: Rect, buf: &mut Buffer) {
     use traffic_police_proto::msg::{Pattern, Rule, RuleAction as A};
+    if app.form.is_some() {
+        return crate::ruleform::draw(app, r, buf);
+    }
     let t = app.theme.clone();
     // the rows: the file's rules (valid or not), or the demo's built-in ones
     struct RowInfo {
@@ -1597,7 +1620,15 @@ fn hints(app: &App) -> Vec<(&'static [Action], &'static str)> {
         (Overlay::Columns { .. }, _, _) => {
             vec![(&[A::Up, A::Down], "move"), (&[A::Activate], "toggle"), (&[A::Back], "close")]
         }
-        (Overlay::ConfirmClear | Overlay::Filter | Overlay::Jq | Overlay::Search | Overlay::Prompt, ..) => vec![],
+        (
+            Overlay::ConfirmClear
+            | Overlay::ConfirmDiscard
+            | Overlay::Filter
+            | Overlay::Jq
+            | Overlay::Search
+            | Overlay::Prompt,
+            ..,
+        ) => vec![],
         (Overlay::Menu, ..) => vec![(&[A::Up, A::Down], "move"), (&[A::Activate], "choose"), (&[A::Back], "close")],
         (Overlay::Palette, ..) => vec![],
         (Overlay::Decoded, ..) => vec![(&[A::Up, A::Down], "scroll"), (&[A::Copy], "copy"), (&[A::Back], "close")],
@@ -1649,11 +1680,16 @@ fn hints(app: &App) -> Vec<(&'static [Action], &'static str)> {
             (&[A::FocusNext], "next panel"),
             (&[A::Help], "help"),
         ],
+        // the form says its own keys
+        (_, Focus::List, View::Rules) if app.form.is_some() => vec![],
         (_, Focus::List, View::Rules) => {
             vec![
                 (&[A::Up, A::Down], "select"),
                 (&[A::Pause], "on/off"),
                 (&[A::Activate], "edit"),
+                (&[A::AddItem], "new"),
+                (&[A::MoveUp, A::MoveDown], "move"),
+                (&[A::EditFile], "$EDITOR"),
                 (&[A::FocusNext], "next panel"),
                 (&[A::Help], "help"),
             ]
@@ -1810,6 +1846,23 @@ fn draw_columns_menu(app: &App, area: Rect, buf: &mut Buffer, cursor: usize) {
         );
     }
     text(buf, r.x + 2, r.y + r.height - 2, r.width - 4, vec![Span::styled("Enter toggles · Esc closes", t.faint())]);
+}
+
+fn draw_confirm_discard(app: &App, area: Rect, buf: &mut Buffer) {
+    let t = &app.theme;
+    let r = centered(area, 56, 5);
+    draw_box(buf, r, "rule form", t);
+    text(
+        buf,
+        r.x + 2,
+        r.y + 2,
+        r.width - 4,
+        vec![
+            Span::styled("Leave without saving the changes? ", t.text()),
+            Span::styled("y", t.accent()),
+            Span::styled(" / n", t.dim()),
+        ],
+    );
 }
 
 fn draw_confirm(app: &App, area: Rect, buf: &mut Buffer) {

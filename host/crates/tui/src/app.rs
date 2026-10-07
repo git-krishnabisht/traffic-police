@@ -100,6 +100,8 @@ pub enum Overlay {
         cursor: usize,
     },
     ConfirmClear,
+    /// Leaving the rule form with changes: discard them? (`App::form`)
+    ConfirmDiscard,
     Jq,
     /// Typing a filter in the bottom line.
     Filter,
@@ -254,6 +256,8 @@ pub enum Target {
     Graph,
     ThreadBar(usize),
     RuleRow(usize),
+    /// A line of the rule form.
+    FormRow(usize),
     List,
 }
 
@@ -424,6 +428,10 @@ pub struct App {
     pub rules_cursor: usize,
     /// rules.toml as last read (with its problems), and the `.traffic-police` directory.
     pub rules_file: Option<traffic_police_core::rules::RulesFile>,
+    /// The rule form, while it is open in the Rules view.
+    pub form: Option<crate::ruleform::RuleForm>,
+    /// Where the terminal cursor goes after this frame (a field being typed into).
+    pub cursor_position: Option<(u16, u16)>,
     pub rules_dir: Option<PathBuf>,
     pub bars: Vec<Bar>,
     pub bar_cursor: usize,
@@ -506,6 +514,8 @@ impl App {
             message: None,
             rules: None,
             rules_cursor: 0,
+            form: None,
+            cursor_position: None,
             rules_file: None,
             rules_dir: None,
             bars: Vec::new(),
@@ -1011,6 +1021,13 @@ impl App {
                 self.overlay = Overlay::None;
                 return;
             }
+            Overlay::ConfirmDiscard => {
+                self.overlay = Overlay::None;
+                if matches!(k.code, KeyCode::Char('y') | KeyCode::Char('Y')) {
+                    self.form_discard();
+                }
+                return;
+            }
             Overlay::Columns { cursor } => {
                 let n = Column::OPTIONAL.len();
                 let action = self.keymap.action(&k);
@@ -1148,9 +1165,25 @@ impl App {
             Overlay::None => {}
         }
 
+        // the rule form takes the keys of the Rules view while it is open
+        if self.form.is_some() && self.view == View::Rules && self.focus == Focus::List && self.form_key(k) {
+            return;
+        }
         if let Some(action) = self.keymap.action(&k) {
             self.run(action);
         }
+    }
+
+    /// Lists what a filter object keeps (the rule form's match), showing its label in the bar.
+    pub fn set_filter_object(&mut self, filter: Filter) {
+        self.filter_input = Input::new(filter.source.clone());
+        self.filter_error = None;
+        let f = Some(Arc::new(filter));
+        self.rows.set_filter(f.clone());
+        if let Some(fr) = &mut self.frozen {
+            fr.rows.set_filter(f);
+        }
+        self.follow_list = self.is_live() && !self.detail_open;
     }
 
     /// Runs an action, from a key or the command palette.
@@ -1447,7 +1480,7 @@ impl App {
         }
     }
 
-    fn set_view(&mut self, v: View) {
+    pub(crate) fn set_view(&mut self, v: View) {
         self.view = v;
         if self.focus == Focus::Graph {
             self.focus = Focus::List;
@@ -1580,8 +1613,13 @@ impl App {
     }
 
     fn rules_action(&mut self, a: Action) {
-        if a == Action::Activate {
-            return self.edit_rules();
+        match a {
+            Action::Activate => return self.edit_rule_in_form(),
+            Action::EditFile => return self.edit_rules(),
+            Action::NewRule | Action::AddItem => return self.new_rule_in_form(),
+            Action::MoveUp => return self.move_rule(true),
+            Action::MoveDown => return self.move_rule(false),
+            _ => {}
         }
         let n = match &self.rules_file {
             Some(f) => f.entries.len(),
@@ -1992,6 +2030,20 @@ impl App {
                     Some(Target::RuleRow(i)) => {
                         self.focus = Focus::List;
                         self.rules_cursor = i;
+                        if double {
+                            self.edit_rule_in_form();
+                        }
+                    }
+                    Some(Target::FormRow(i)) => {
+                        self.focus = Focus::List;
+                        if let Some(form) = &mut self.form {
+                            // a click on the line the cursor is on changes it, as Enter does
+                            let again = form.cursor == i && form.editing.is_none();
+                            form.cursor = i;
+                            if again || double {
+                                self.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+                            }
+                        }
                     }
                     Some(Target::List) => self.focus = Focus::List,
                     None => {}
