@@ -34,6 +34,7 @@ Contents
 
 - `ts` fields are **device monotonic time in nanoseconds**: `SystemClock.elapsedRealtimeNanos()` (CLOCK_BOOTTIME). It never goes backwards, keeps counting during device suspend, and is shared by every process on the device, so segments from successive processes (`--follow`) share one time axis.
 - Every duration and graph bucket on the host is computed from `ts`. Wall-clock time is used only for labels: `hello` and `pong` carry a `clock` pair `{ "ts": <ns>, "wall_ms": <System.currentTimeMillis()> }` sampled back to back; the host keeps the latest offset per source.
+- A device time is at most 2^62 ns (about 146 years after boot). The host treats a message with a later `ts` (or a later time in its `clock`, `started_ts`, `marks` or `since`) as malformed, and drops a body chunk whose `offset` plus length passes 2^64 (since 2026-10-07; the fuzz targets found the arithmetic this protects).
 
 ### Identifiers
 

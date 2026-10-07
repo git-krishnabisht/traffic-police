@@ -239,7 +239,8 @@ traffic-police tail --mode attach -p com.example.app       # the commands withou
 |---|---|
 | Move | `↑` `↓` or `j` `k` · `g` `G` top and bottom · `PgUp` `PgDn` · `Ctrl+D` `Ctrl+U` (or `Ctrl+P`) half a page, the view and the cursor together as in Neovim (`[ui] scroll` sets how far) · `Tab` `Shift+Tab` move focus between graph, list and detail |
 | Views | `1` Connection View · `2` Thread View · `3` Rules |
-| Rules | `r` on a request: a new rule that matches it · in the Rules view: `Space` on or off · `Enter` edit in `$EDITOR` |
+| Rules | `r` on a request: a new rule that matches it, in the rule form · in the Rules view: `Space` on or off · `Enter` edit in the form · `r` (or `a`) a new rule · `K` `J` move the rule up or down (rules apply in order) · `E` edit `rules.toml` in `$EDITOR` |
+| Rule form | `↑` `↓` (or `Tab`) between lines · `Enter` types into a field (`Enter` keeps it, `Esc` puts back what was there), turns a yes/no line, or steps a choice · `←` `→` step a choice (`Space` ticks a method) · `a` adds an action · `Delete` or `Backspace` removes the action or query parameter · `K` `J` move an action · `Ctrl+S` saves · `Esc` leaves (asking when something changed) · `E` `$EDITOR` · the last line lists the captured requests the rule's match selects |
 | Detail pane | `Enter` open · `Esc` close · `h` `l` or `←` `→` switch tabs · `p` parsed or source · `o` original or rule-modified response |
 | Body explorer | The box above the tabs shows the response body and, on its second tab, the request body; `Shift+Tab` from the tabs (or `Tab` from the list, or a click) goes there: `h` `l` (or `←` `→`, `b`, a click on a tab) switch between the two bodies, as in the tabs below · `j` `k` move · `Ctrl+D` `Ctrl+U` half a page · `Enter` fold or unfold, or the value menu on a single value · `[` `]` fold or unfold all |
 | Bodies | `Enter` fold or unfold JSON · `[` fold all · `]` unfold all · <code>&#124;</code> jq filter (empty filter clears) · long lines wrap in every box; with `[ui] wrap = false` they are cut and `<` `>` scroll sideways |
@@ -257,8 +258,8 @@ Mouse: click rows and tabs, double-click a row to open it, wheel to scroll (on t
 wheel zooms and Shift+wheel moves in time), drag on the graph to select a range, drag the divider
 to resize the panes.
 
-Every key can be changed in the config file (below), and so can the layout, the colors and the
-borders.
+Every key can be changed in the config file (below), also in menus, the palette and the pickers,
+and so can the layout, the colors and the borders.
 
 ### Filters
 
@@ -362,7 +363,7 @@ copy = ["y", "ctrl+y"]
 
 [adb]
 server = "127.0.0.1:5037"     # otherwise ADB_SERVER_SOCKET / ANDROID_ADB_SERVER_PORT, as adb reads them
-path = "/opt/android-sdk/platform-tools/adb"   # the adb doctor compares with the server
+path = "/opt/android-sdk/platform-tools/adb"   # starts the server when none runs; doctor compares versions with it
 
 [storage]
 memory = "256mb"              # body bytes kept in memory before the rest goes to disk
@@ -411,12 +412,16 @@ Put a `.traffic-police/project.toml` in your project; traffic-police uses the ne
 above the directory you start it from.
 
 ```toml
+# the app to watch when no --package is given (the picker is skipped)
+package = "com.example.app"
 # paths are relative to the directory that contains .traffic-police/
 source_roots = ["app/src/main/java", "app/src/main/kotlin", "sdk/src/main/kotlin"]
 ```
 
-`source_roots` lets `Enter` on a Call Stack frame open the file at that line in `$VISUAL` or
-`$EDITOR` (VS Code, Cursor, Zed, Sublime Text and Helix get `file:line`; others `+line file`).
+`package` is the app `traffic-police` (and `tail`, `record`, `export` and `doctor`) watches when
+no `--package` is given. `source_roots` lets `Enter` on a Call Stack frame open the file at that
+line in `$VISUAL` or `$EDITOR` (VS Code, Cursor, Zed, Sublime Text and Helix get `file:line`;
+others `+line file`).
 
 ## Rules
 
@@ -459,14 +464,20 @@ The actions are `delay` (`ms`), `fail` (`exception`), `status` (`code`, `reason`
 `replace` (`find`, `with`, `regex`). [docs/PROTOCOL.md §8](docs/PROTOCOL.md#8-rules) has every
 field, and exactly what each action does with OkHttp and HttpURLConnection.
 
-- **Make one:** select a request and press `r`. traffic-police adds a rule that matches it
-  exactly, turned off and with a placeholder action, and opens it in `$EDITOR`: say what it
-  does, save, and turn it on. (With no `.traffic-police` directory yet, `r` creates one in the
-  directory you started from.)
+- **Make one:** select a request and press `r`. The rule form opens with a rule that matches it
+  exactly (method, scheme, host, port, path and its query parameters); add what it does with
+  `a` (delay, fail, status, header, body or replace), set the values, and save with `Ctrl+S`.
+  In the Rules view, `r` starts an empty one. (With no `.traffic-police` directory yet, saving
+  creates one in the directory you started from.)
 - **Change them:** the Rules view (`3`) lists them with how often each applied. `Space` turns
-  the selected rule on or off; `Enter` opens it in `$EDITOR`. Saved changes, to `rules.toml` or a
-  body file, reach the app at once. A mistake is reported with its line, and the rules that were
-  active stay active. The footer says how many rules the app runs.
+  the selected rule on or off, `K` and `J` move it (rules apply in order), `Enter` opens it in
+  the form, `E` in `$EDITOR`. The form checks every field as you change it, as the file is
+  checked, and says what is wrong next to it; a rule with problems is not saved. Its last line
+  lists the captured requests the match selects, so a glob or a regex can be tried before it is
+  saved. Saving changes only that rule's values: comments and the rest of the file stay as they
+  are. Saved changes, to `rules.toml` or a body file, from the form or an editor, reach the app at
+  once. A mistake in the file is reported with its line, and the rules that were active stay
+  active. The footer says how many rules the app runs.
 - **See what they did:** the detail pane shows the response the app received; `o` shows the
   original. `rule:modified` and `rule:<id>` filter for the requests rules changed. `tail --json`,
   HAR and session files keep both.
@@ -510,6 +521,12 @@ field, and exactly what each action does with OkHttp and HttpURLConnection.
   the foreground. On a test device you can turn freezing off in Developer options ("Suspend
   execution for cached apps"; the name varies between versions).
 - **"2 devices connected; choose one with --serial":** use a serial from `adb devices`.
+- **A device whose shell may not read `/proc/net/unix`:** traffic-police then finds the capture
+  runtime by its socket name (from the package and the process id) instead; `doctor` says when it
+  does.
+- **"Android Studio's Network Inspector also watches this app":** both inspectors see every
+  request, and Studio's rules may change a response before or after ours. Close Studio's Network
+  Inspector to be sure what you see is the app's own traffic.
 - **A device shows "unauthorized":** accept the USB debugging prompt on the device.
 - **Android Studio is open too:** fine. traffic-police creates its own adb forwards and removes
   only those (and ones left behind by a traffic-police that was killed); Android Studio's are
@@ -530,9 +547,11 @@ field, and exactly what each action does with OkHttp and HttpURLConnection.
 
 ```sh
 cd host
-cargo test                                    # unit, behavior and conformance tests, 62 UI snapshots
+cargo test                                    # unit, behavior, conformance and fake-adb tests, 65 UI snapshots
 INSTA_UPDATE=always cargo test -p traffic-police-tui   # after an intended UI change; review the snapshot diff
 cargo test --release -p traffic-police-tui --test perf -- --ignored --nocapture   # frame time at 50,000 requests
+cargo test --release -p traffic-police-core --test ingest -- --ignored --nocapture   # ingest speed
+(cd fuzz && cargo +nightly fuzz run device_stream)   # fuzzing (cargo install cargo-fuzz; cargo fuzz list)
 cargo run -- demo --dump-frame 140x40@12 --keys 'g<Enter>l'   # print one frame as text
 TRAFFIC_POLICE_FPS=1 cargo run --release -- demo   # the footer shows the frames drawn a second and the time one takes
 cargo run -- tail --demo --duration 5s --json   # the commands without the UI, on the demo app (hidden --demo)
@@ -541,7 +560,8 @@ cargo run -- tail --demo --duration 5s --json   # the commands without the UI, o
 TP_E2E_SERIAL=emulator-5554 cargo test -p traffic-police-backends --test device_e2e -- --ignored --nocapture
 
 cd android
-./gradlew :capture-core:check                 # JVM tests against eight OkHttp versions, 3.9 to 5.5
+./gradlew :capture-core:check                 # JVM tests against eight OkHttp versions, 3.9 to 5.5 (and the OkHttp 3.9 API check)
+./gradlew :capture:connectedDebugAndroidTest  # the library's tests on a device or emulator (all connected ones; ANDROID_SERIAL picks one)
 ./gradlew :sample-app:assembleDebug           # the sample app (assembleNondebuggable: release-like, with capture; assemblePlain: no traffic-police code)
 ./gradlew :attach-agent:agentArtifacts        # the attach-mode agent (JVMTI .so per ABI, boot and runtime dex)
 ./gradlew :capture-core:benchmarkOverhead     # what capture costs per request on the JVM
