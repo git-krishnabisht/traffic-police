@@ -5,6 +5,7 @@ import java.util.Collections;
 import java.util.List;
 import okhttp3.EventListener;
 import okhttp3.Interceptor;
+import okhttp3.WebSocket;
 
 /**
  * What attach mode's hooks return (ARCHITECTURE.md §4.7.3). OkHttp reads
@@ -31,6 +32,11 @@ public final class OkHttpHooks {
         out.add(CaptureInterceptor.INSTANCE);
         out.addAll(original);
         return Collections.unmodifiableList(out);
+    }
+
+    /** What {@code OkHttpClient.newWebSocket} returned, wrapped so its messages are captured. */
+    public static WebSocket newWebSocket(WebSocket original) {
+        return WebSockets.hooked(original);
     }
 
     /** The client's listener factory wrapped by ours, unless it is ours already. */

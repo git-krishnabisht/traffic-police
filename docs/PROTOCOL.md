@@ -303,6 +303,25 @@ Sent once, after the last `body_end` of the transaction (or after `resp` when th
 - `reason` marks a change the runtime made itself: `cache_guard` (§8.4, rule 7), or `body_changed` for the `Content-Encoding` removed and the `Content-Length` set with a new body (rule 4).
 - `rules` lists every rule that acted, including one whose actions changed nothing: a `replace` that finds nothing reports `body_edit` with `matches: 0`, and the app gets the original.
 
+#### `ws` — a WebSocket message
+
+```jsonc
+{ "t": "ws", "seq": 93, "ts": 5824100000000, "txn": 12,
+  "dir": "out",                          // "out": the app sent it; "in": the app received it
+  "op": "text",                          // "text" | "binary" | "close"
+  "size": 39,                            // the payload's full size in bytes (0 for a close)
+  "text": "{\"type\":\"subscribe\",\"channel\":\"orders\"}" }
+{ "t": "ws", "seq": 94, "ts": 5824160000000, "txn": 12, "dir": "in", "op": "binary", "size": 3, "base64": "AQID" }
+{ "t": "ws", "seq": 99, "ts": 5839000000000, "txn": 12, "dir": "out", "op": "close", "size": 0, "code": 1000, "reason": "done" }
+```
+
+- A WebSocket is one transaction. `req` is the handshake request when the app opens the socket (`GET`, the URL as OkHttp reports it, so `ws://` and `wss://` appear as `http://` and `https://`, with the app's headers; OkHttp adds `Upgrade`, `Connection` and `Sec-WebSocket-*` itself). `resp` is the `101` with its headers, followed by `body_end` with `"none"` for both directions. Then comes one `ws` event per message, in the order the app sent or received them, and `done` when the socket has closed.
+- A refused handshake (any status but 101) is a `resp` with that status and a `fail` with `phase: "response_headers"`. A socket that fails after opening sends `fail` with `phase: "response_body"`. One that never connected sends `phase: "connect"`.
+- Text payloads are in `text`, binary payloads in `base64` (standard alphabet, padded). Payloads are captured up to the body cap or 1 MiB, whichever is smaller. A longer payload keeps its first bytes and adds `"truncated": true`; `size` is always the full size. Messages the app sends follow `capture_request_bodies`, messages it receives follow `capture_response_bodies`: with that setting off, `text` and `base64` are absent and `size` remains.
+- A `close` carries the close `code` and `reason`. `dir: "out"` is the app's close, `dir: "in"` the peer's. Pings and pongs are not reported: OkHttp answers them itself and never shows them to the app.
+- Rules never see WebSockets (§8.4, rule 6).
+- The capture wraps the app's `WebSocketListener` and the `WebSocket` it sends with. Library mode needs `TrafficPolice.newWebSocket(client, request, listener)` in place of `client.newWebSocket(request, listener)`. In attach mode, the exit hook of `OkHttpClient.newWebSocket` does the same to every socket. The app's listener receives the wrapper too, so everything the app sends goes through it.
+
 #### `dropped` — events lost to queue overflow
 
 ```jsonc
@@ -719,6 +738,7 @@ Verified against `platform/packages/modules/adb` (Android 17), older `system/cor
 - A failed transaction adds `"failure":{"class":…,"message":…,"phase":…,"canceled":…,"simulated":…}`; `simulated` is true when a rule's `fail` action threw it.
 - `rules` lists the ids of the rules that applied, each once. When they changed the response, `status` and `response` are what the app received, and `original` adds the response as the network gave it, in the same form plus its `status`.
 - `--bodies` adds `request.body` and `response.body` as `{"text": …}` for UTF-8 text or `{"base64": …}` otherwise (after Content-Encoding decoding).
+- A WebSocket (status 101) adds `"websocket":{"sent":2,"sent_bytes":60,"received":6,"received_bytes":374}`, and its line is printed when the socket closes. `--bodies` adds `messages`, each `{"dir":"out"|"in","op":"text"|"binary"|"close","at_ms":…,"size":…}` with `text` or `base64`, or `code` and `reason` for a close, and `"truncated":true` when the capture cut it. `at_ms` counts from the transaction's start.
 
 `tail --events` prints the captured stream instead, one line per message as the app sent it (the filter does not apply):
 

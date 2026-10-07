@@ -164,6 +164,32 @@ impl Normalizer {
                 changes: m.changes,
                 delivered: m.delivered,
             }))),
+            DeviceMsg::Ws(m) => {
+                let data = match (m.text, m.base64) {
+                    (Some(t), _) => bytes::Bytes::from(t.into_bytes()),
+                    (None, Some(b)) => {
+                        use base64::Engine;
+                        base64::engine::general_purpose::STANDARD
+                            .decode(b.trim())
+                            .map(bytes::Bytes::from)
+                            .unwrap_or_default()
+                    }
+                    (None, None) => bytes::Bytes::new(),
+                };
+                out.push(SessionEvent::WsMessage {
+                    key: self.key(m.txn),
+                    msg: crate::model::WsMessage {
+                        at: m.ts,
+                        out: m.dir == "out",
+                        op: m.op,
+                        size: m.size,
+                        data,
+                        truncated: m.truncated,
+                        code: m.code,
+                        reason: m.reason,
+                    },
+                })
+            }
             DeviceMsg::Dropped(m) => {
                 out.push(SessionEvent::Dropped { source, at: m.ts, events: m.events, bytes: m.bytes, txns: m.txns })
             }

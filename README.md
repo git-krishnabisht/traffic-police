@@ -138,12 +138,19 @@ HttpURLConnection:
 val connection = TrafficPolice.wrap(url.openConnection() as HttpURLConnection)
 ```
 
+WebSockets (OkHttp sends a socket's handshake past interceptors, so the socket is opened through
+traffic-police; you get the handshake and every message, both ways):
+
+```kotlin
+val socket = TrafficPolice.newWebSocket(client, request, listener)   // in place of client.newWebSocket(request, listener)
+```
+
 Capture starts by itself in the app's main process. Apps with more processes
 (`android:process=":sync"`) call `TrafficPolice.start(context)` in `Application.onCreate` to
 capture those too. Requirements: OkHttp 3.9 or newer (older versions are left alone and
 reported) and a debuggable build. The library builds for Android 5.0 (API 21) and newer and is
 tested on Android 8.0 (API 26) to 17 (API 37). It is plain Java with no dependencies of its own;
-in a release build `capture-noop` adds four small pass-through classes and nothing starts.
+in a release build `capture-noop` adds a few small pass-through classes and nothing starts.
 
 **4. Run traffic-police:**
 
@@ -167,15 +174,18 @@ DETACHED.
 the wire (including the ones OkHttp adds), bodies as transferred (gzip, brotli and zstd are
 decoded for display), one row per network attempt (a redirect is two rows, the second marked
 `↪`), the timing phases, and the thread and call stack that made the call; plus the
-HttpURLConnection connections you wrap. **Not captured in library mode:** responses OkHttp
-serves from its cache (they never reach the network), WebSocket frames (Phase 5), other HTTP
-stacks (Cronet, Ktor engines other than OkHttp, ...), and HttpURLConnection connections you do
-not wrap. [Attach mode](#watch-any-debuggable-app-attach-mode) hooks every HttpURLConnection
-instead of the ones you wrap.
+HttpURLConnection connections you wrap, and the WebSockets you open with
+`TrafficPolice.newWebSocket` (a `ws` row: the Response tab lists every message, and Enter opens
+one). **Not captured in library mode:** responses OkHttp serves from its cache (they never reach
+the network), other HTTP stacks (Cronet, Ktor engines other than OkHttp, ...), and the
+HttpURLConnection connections and WebSockets you do not open through traffic-police.
+[Attach mode](#watch-any-debuggable-app-attach-mode) hooks every HttpURLConnection and every
+OkHttp WebSocket instead.
 
 **The sample app** in `android/sample-app` exercises every capture path (Retrofit suspend calls,
 OkHttp `execute` and `enqueue`, HttpURLConnection, streaming, a 5 MB download, a multipart upload,
-a redirect, errors, a timeout, a cancelled call, HTTPS, an unknown host, a second process)
+a redirect, errors, a timeout, a cancelled call, HTTPS, an unknown host, a WebSocket, a second
+process)
 against servers inside the app, so it needs no network:
 
 ```sh
@@ -217,7 +227,7 @@ traffic-police tail --mode attach -p com.example.app       # the commands withou
   agent stays in the app's process until the process exits. After traffic-police quits it keeps
   a replay buffer, like the library; rules stop applying.
 - **What it captures:** OkHttp 3.9 and newer and everything built on it (Retrofit, Coil, ...),
-  and every HttpURLConnection, with no wrapping. Not captured: an OkHttp whose names a minified
+  its WebSockets, and every HttpURLConnection, with no wrapping. Not captured: an OkHttp whose names a minified
   (R8) debug build changed (`doctor` shows each hook's status), and a second OkHttp copy in
   another class loader.
 - **Checks:** `traffic-police doctor --mode attach -p com.example.app` checks the agent, the

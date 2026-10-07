@@ -15,6 +15,9 @@ import okhttp3.Request
 import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
+import okhttp3.WebSocket
+import okhttp3.WebSocketListener
+import okio.ByteString
 import retrofit2.Retrofit
 import retrofit2.converter.scalars.ScalarsConverterFactory
 import retrofit2.http.Body
@@ -83,6 +86,7 @@ class Scenarios(private val context: Context, private val log: (String) -> Unit)
         "protobuf" to ::protobuf,
         "HTTPS (OkHttp and HttpURLConnection)" to ::https,
         "unknown host" to ::unknownHost,
+        "WebSocket" to ::webSocket,
         "second process" to ::secondProcess,
     )
 
@@ -233,6 +237,36 @@ class Scenarios(private val context: Context, private val log: (String) -> Unit)
         withContext(Dispatchers.IO) {
             client.newCall(Request.Builder().url("https://api.nonexistent.invalid/v1/ping").build()).execute().close()
         }
+    }
+
+    /** A WebSocket: subscribe, take the updates until the verdict, close. */
+    private suspend fun webSocket() = withContext<Unit>(Dispatchers.IO) {
+        val closed = java.util.concurrent.CountDownLatch(1)
+        val got = java.util.concurrent.atomic.AtomicInteger()
+        val listener = object : WebSocketListener() {
+            override fun onOpen(webSocket: WebSocket, response: Response) {
+                webSocket.send("""{"type":"subscribe","channel":"verification"}""")
+            }
+
+            override fun onMessage(webSocket: WebSocket, text: String) {
+                got.incrementAndGet()
+                if (text.contains("\"complete\"")) webSocket.close(1000, "done")
+            }
+
+            override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
+                got.incrementAndGet()
+            }
+
+            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) = closed.countDown()
+
+            override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                log("  socket failed: ${t.message}")
+                closed.countDown()
+            }
+        }
+        Capture.newWebSocket(client, Request.Builder().url(base.resolve("/live")!!).build(), listener)
+        closed.await(10, TimeUnit.SECONDS)
+        log("  socket: ${got.get()} messages")
     }
 
     /**

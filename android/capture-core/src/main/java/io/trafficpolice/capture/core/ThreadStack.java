@@ -52,7 +52,7 @@ public final class ThreadStack {
             StackTraceElement[] all = site != null ? site.getStackTrace() : new StackTraceElement[0];
             site = null;
             int start = 0;
-            while (start < all.length && isRuntimeFrame(all[start].getClassName())) {
+            while (start < all.length && isLeadingFrame(all[start].getClassName())) {
                 start++;
             }
             int n = Math.max(0, Math.min(depth, all.length - start));
@@ -71,6 +71,19 @@ public final class ThreadStack {
     /** Frames this stack will have at most, for memory estimates (without resolving it). */
     int sizeEstimate() {
         return depth;
+    }
+
+    /**
+     * Frames above the app's own at capture time: the runtime's, and in attach mode the attach
+     * entry and the reflection that reaches the OkHttp adapter (a hook captures its stack inside
+     * that call).
+     */
+    private static boolean isLeadingFrame(String className) {
+        return isRuntimeFrame(className)
+                || className.startsWith("io.trafficpolice.internal.")
+                || className.startsWith("java.lang.reflect.")
+                || className.startsWith("jdk.internal.reflect.")
+                || className.startsWith("sun.reflect.");
     }
 
     /** Classes of the capture runtime itself (not apps that happen to share the prefix). */

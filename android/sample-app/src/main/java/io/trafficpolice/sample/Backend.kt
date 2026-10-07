@@ -13,7 +13,10 @@ import okhttp3.tls.HandshakeCertificates
 import okhttp3.tls.HeldCertificate
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.WebSocket
+import okhttp3.WebSocketListener
 import okio.Buffer
+import okio.ByteString.Companion.toByteString
 import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.net.InetAddress
@@ -185,6 +188,23 @@ object Backend {
         }
     }
 
+    /**
+     * The server side of the WebSocket scenario: to a subscription, a binary heartbeat and two
+     * status updates; to the app's close, a close.
+     */
+    private object LiveUpdates : WebSocketListener() {
+        override fun onMessage(webSocket: WebSocket, text: String) {
+            if (!text.contains("\"subscribe\"")) return
+            webSocket.send(byteArrayOf(0x01, 0x02, 0x03).toByteString())
+            webSocket.send("""{"type":"status","state":"running"}""")
+            webSocket.send("""{"type":"status","state":"complete","verdict":"pass"}""")
+        }
+
+        override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+            webSocket.close(1000, "bye")
+        }
+    }
+
     /** A tiny protobuf message: field 1 = 4 (varint), field 2 = "ok". */
     private val protobufAck = byteArrayOf(0x08, 0x04, 0x12, 0x02, 'o'.code.toByte(), 'k'.code.toByte())
 
@@ -239,6 +259,7 @@ object Backend {
                     .addHeader("Content-Type", "application/x-protobuf")
                     .body(Buffer().write(protobufAck))
                 "/worker/ping" -> json(200, """{"from":"worker"}""")
+                "/live" -> MockResponse.Builder().webSocketUpgrade(LiveUpdates)
                 "/done" -> MockResponse.Builder().code(204)
                 else -> json(404, """{"ok":false,"path":"${url.encodedPath}"}""")
             }

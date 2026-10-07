@@ -138,6 +138,8 @@ enum OneOff {
     Download,
     Dropped,
     Burst,
+    /// A WebSocket: live order updates for a while, then closed.
+    Socket,
 }
 
 #[derive(Debug)]
@@ -403,6 +405,7 @@ impl DemoDevice {
             DeviceMsg::Dropped(x) => x.seq = s,
             DeviceMsg::Traffic(x) => x.seq = s,
             DeviceMsg::Diag(x) => x.seq = s,
+            DeviceMsg::Ws(x) => x.seq = s,
             _ => self.seq -= 1,
         }
     }
@@ -513,6 +516,8 @@ impl DemoDevice {
                         (123, OneOff::Download),
                         (165, OneOff::Dropped),
                         (190, OneOff::Burst),
+                        // after the moments the snapshot tests show (12 s, 40 s)
+                        (420, OneOff::Socket),
                     ] {
                         self.push_flow(at + secs_x10 * 100 * MS, Flow::OneOff(o));
                     }
@@ -949,6 +954,7 @@ impl DemoDevice {
                 ex.resp_body = ack;
                 self.start(at, ex);
             }
+            OneOff::Socket => self.socket(at),
             OneOff::NotFound => {
                 let body = json!({"ok": false, "error": {"code": "NOT_FOUND", "message": "asset 'promo-banner-v3.json' does not exist", "requestId": self.rng.uuid()}}).to_string();
                 let thread = self.next_worker();
@@ -1213,6 +1219,87 @@ impl DemoDevice {
     }
 
     /// Schedule one exchange starting at `at`; returns when it ends.
+    /// A WebSocket (PROTOCOL.md §7.1 `ws`): the handshake, a subscription, order updates every
+    /// few seconds, and the app closing it when the user leaves the orders screen.
+    fn socket(&mut self, at: u64) {
+        let txn = self.next_txn;
+        self.next_txn += 1;
+        self.next_call += 1;
+        let call = self.next_call - 1;
+        let url = format!("{API}/ws/orders");
+        let thread = content::thread("main", 2, "call");
+        let stack = content::app_stack("socket", "com.example.shop.orders.LiveOrders", "connect", "LiveOrders.kt", 41);
+        let headers = self.api_headers(API_HOST, true, None, None);
+        self.msg(
+            at,
+            DeviceMsg::Req(msg::Req {
+                seq: 0,
+                ts: at,
+                txn,
+                call: Some(call),
+                hop: 0,
+                method: "GET".into(),
+                url,
+                headers,
+                client: Some(ClientInfo { kind: "okhttp".into(), version: Some("4.12.0".into()) }),
+                thread: Some(thread),
+                stack,
+                stack_truncated: false,
+                body: None,
+                marks: vec![("call_start".into(), at)],
+                conn: None,
+            }),
+        );
+        let open = at + 42 * MS;
+        self.msg(
+            open,
+            DeviceMsg::Resp(msg::Resp {
+                seq: 0,
+                ts: open,
+                txn,
+                status: 101,
+                message: "Switching Protocols".into(),
+                protocol: Some("http/1.1".into()),
+                headers: h(&[
+                    ("Upgrade", "websocket"),
+                    ("Connection", "Upgrade"),
+                    ("Sec-WebSocket-Accept", "s3pPLMBiTxaQ9kYGzzhZRbK+xOo="),
+                ]),
+                conn: None,
+            }),
+        );
+        let ws = |ts: u64, out: bool, op: &str, text: Option<String>, code: Option<u16>, reason: Option<&str>| {
+            DeviceMsg::Ws(msg::Ws {
+                seq: 0,
+                ts,
+                txn,
+                dir: if out { "out" } else { "in" }.into(),
+                op: op.into(),
+                size: text.as_ref().map_or(0, |t| t.len() as u64),
+                text,
+                base64: None,
+                truncated: false,
+                code,
+                reason: reason.map(Into::into),
+            })
+        };
+        let sub = json!({"type": "subscribe", "channel": "orders", "userId": "user_1024"}).to_string();
+        self.msg(open + 5 * MS, ws(open + 5 * MS, true, "text", Some(sub), None, None));
+        let ack = json!({"type": "subscribed", "channel": "orders"}).to_string();
+        self.msg(open + 61 * MS, ws(open + 61 * MS, false, "text", Some(ack), None, None));
+        let mut t = open;
+        for (i, state) in ["packed", "shipped", "out_for_delivery", "delivered"].iter().enumerate() {
+            t += 3_000 * MS + self.rng.range(0, 400) * MS;
+            let update = json!({"type": "order_update", "orderId": format!("ord_{:04}", 4210 + i), "state": state, "at": self.wall(t)}).to_string();
+            self.msg(t, ws(t, false, "text", Some(update), None, None));
+        }
+        t += 1_200 * MS;
+        self.msg(t, ws(t, true, "close", None, Some(1000), Some("left the orders screen")));
+        t += 35 * MS;
+        self.msg(t, ws(t, false, "close", None, Some(1000), Some("bye")));
+        self.msg(t + MS, DeviceMsg::Done(msg::Done { seq: 0, ts: t + MS, txn }));
+    }
+
     fn start(&mut self, at: u64, ex: Ex) -> u64 {
         let txn = self.next_txn;
         self.next_txn += 1;

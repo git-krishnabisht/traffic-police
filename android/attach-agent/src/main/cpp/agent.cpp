@@ -57,6 +57,12 @@ std::vector<Hook> g_hooks = {
     {"okhttp_event_listener_factory",
      "okhttp3.OkHttpClient#eventListenerFactory()Lokhttp3/EventListener$Factory;",
      kOkHttpDescriptor, "eventListenerFactory", "()Lokhttp3/EventListener$Factory;", "pending", ""},
+    // WebSockets: OkHttp sends the handshake past interceptors and listeners, so the socket the
+    // app gets is wrapped (its messages, and its listener for what arrives)
+    {"okhttp_new_websocket",
+     "okhttp3.OkHttpClient#newWebSocket(Lokhttp3/Request;Lokhttp3/WebSocketListener;)Lokhttp3/WebSocket;",
+     kOkHttpDescriptor, "newWebSocket", "(Lokhttp3/Request;Lokhttp3/WebSocketListener;)Lokhttp3/WebSocket;",
+     "pending", ""},
 };
 
 JavaVM* g_vm = nullptr;

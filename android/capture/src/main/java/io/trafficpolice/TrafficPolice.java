@@ -5,11 +5,16 @@ import io.trafficpolice.capture.core.CaptureRuntime;
 import io.trafficpolice.capture.huc.Huc;
 import io.trafficpolice.capture.okhttp.CaptureInterceptor;
 import io.trafficpolice.capture.okhttp.ListenerFactory;
+import io.trafficpolice.capture.okhttp.WebSockets;
 import io.trafficpolice.internal.AndroidRuntime;
 import java.net.HttpURLConnection;
 import java.net.URLConnection;
 import okhttp3.EventListener;
 import okhttp3.Interceptor;
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.WebSocket;
+import okhttp3.WebSocketListener;
 
 /**
  * traffic-police library mode. Capture starts by itself in the app's main process when the app
@@ -22,6 +27,8 @@ import okhttp3.Interceptor;
  *     .build();
  *
  * HttpURLConnection conn = TrafficPolice.wrap((HttpURLConnection) url.openConnection());
+ *
+ * WebSocket socket = TrafficPolice.newWebSocket(client, request, listener);
  * }</pre>
  *
  * The {@code capture-noop} artifact has this exact API and does nothing; use it for release
@@ -46,6 +53,15 @@ public final class TrafficPolice {
      */
     public static EventListener.Factory eventListenerFactory(EventListener.Factory existing) {
         return new ListenerFactory(existing);
+    }
+
+    /**
+     * {@code client.newWebSocket(request, listener)}, with the handshake and every message sent
+     * and received captured. (OkHttp sends WebSocket handshakes past network interceptors and
+     * event listeners, so the interceptor alone never sees them.)
+     */
+    public static WebSocket newWebSocket(OkHttpClient client, Request request, WebSocketListener listener) {
+        return WebSockets.newWebSocket(client, request, listener);
     }
 
     /** Records this connection's exchange; returns it unchanged when capture is not running. */

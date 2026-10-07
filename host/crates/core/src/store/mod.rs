@@ -372,6 +372,14 @@ impl SessionStore {
                     headers: r.headers,
                 });
             }
+            SessionEvent::WsMessage { key, msg } => {
+                self.see(msg.at);
+                let idx = self.idx_or_placeholder(key, msg.at);
+                let (out, size, at) = (msg.out, msg.size, msg.at);
+                Arc::make_mut(&mut self.touch(idx).ws).push(msg);
+                // what a socket carries is captured traffic, as bodies are
+                self.account(if out { BodyDir::Request } else { BodyDir::Response }, at, size);
+            }
             SessionEvent::Body { key, dir, at, offset, bytes } => {
                 let len = bytes.len() as u64;
                 // an offset no body reaches comes only from a broken stream (found by fuzzing)

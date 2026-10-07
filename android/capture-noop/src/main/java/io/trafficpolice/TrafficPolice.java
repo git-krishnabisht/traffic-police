@@ -7,7 +7,11 @@ import java.net.URLConnection;
 import okhttp3.Call;
 import okhttp3.EventListener;
 import okhttp3.Interceptor;
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
 import okhttp3.Response;
+import okhttp3.WebSocket;
+import okhttp3.WebSocketListener;
 
 /**
  * The release-build stand-in for traffic-police's library mode: the same API as the
@@ -26,6 +30,10 @@ public final class TrafficPolice {
 
     public static EventListener.Factory eventListenerFactory(EventListener.Factory existing) {
         return existing != null ? existing : NoListener.INSTANCE;
+    }
+
+    public static WebSocket newWebSocket(OkHttpClient client, Request request, WebSocketListener listener) {
+        return client.newWebSocket(request, listener);
     }
 
     public static HttpURLConnection wrap(HttpURLConnection connection) {

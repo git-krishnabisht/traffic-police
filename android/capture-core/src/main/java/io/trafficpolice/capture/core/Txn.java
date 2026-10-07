@@ -73,6 +73,37 @@ public final class Txn {
         return finished.get();
     }
 
+    /** The most of one WebSocket message's payload that is captured. */
+    static final int WS_MESSAGE_CAP = 1 << 20;
+
+    /**
+     * A WebSocket message on this transaction's socket: {@code op} is {@code text}, {@code binary}
+     * or {@code close} (with {@code code} and {@code reason}; {@code code} -1 for none). The
+     * payload is captured up to the body cap (a message at most 1 MiB), when bodies of its
+     * direction are captured (sent: request bodies; received: response bodies).
+     */
+    public void wsMessage(boolean out, String op, byte[] payload, boolean text, int code, String reason) {
+        if (finished.get()) {
+            return;
+        }
+        long size = payload == null ? 0 : payload.length;
+        byte[] kept = null;
+        boolean truncated = false;
+        boolean capture = out ? config.captureRequestBodies : config.captureResponseBodies;
+        if (payload != null && capture) {
+            int cap = (int) Math.min(Math.min(config.bodyCap, WS_MESSAGE_CAP), Integer.MAX_VALUE);
+            if (payload.length > cap) {
+                kept = new byte[cap];
+                System.arraycopy(payload, 0, kept, 0, cap);
+                truncated = true;
+                rec.capReached();
+            } else {
+                kept = payload;
+            }
+        }
+        rec.emit(new Event.Ws(rec.now(), id, out, op, size, kept, text, truncated, code, reason));
+    }
+
     /** One direction's body: teed bytes are captured up to the cap and always counted. */
     public static final class Body {
         private static final long PROG_INTERVAL_NS = 100_000_000L; // at most 10 prog events per second

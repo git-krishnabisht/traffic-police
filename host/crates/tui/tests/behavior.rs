@@ -1344,3 +1344,46 @@ fn the_rule_form_lists_what_its_match_selects() {
     assert!(app.form.is_some());
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+/// A WebSocket: its row says `ws`, the Overview counts what went each way, the Response tab lists
+/// every message after the handshake's headers, and Enter on one opens its payload.
+#[test]
+fn a_websocket_lists_its_messages_and_enter_opens_one() {
+    use traffic_police_tui::app::Tab;
+    let mut app = app_at(60.0);
+    let to = goto(&mut app, MEDIUM, path_is("/ws/orders"));
+    let text = press(&mut app, MEDIUM, &format!("{to}<Enter>"));
+    let txn = app.selected.expect("selected");
+    {
+        let t = app.view_store().txn(txn);
+        assert_eq!(t.type_label(), "ws");
+        assert_eq!(t.status(), Some(101));
+        assert_eq!(t.ws.len(), 8, "{:?}", t.ws);
+    }
+    assert!(text.contains("closed · 2 sent (60 B)") && text.contains("6 received (374 B)"), "{text}");
+    assert!(!text.contains("Response size"), "{text}");
+
+    let text = press(&mut app, MEDIUM, "<Right>");
+    assert_eq!(app.detail.tab, Tab::Response);
+    assert!(text.contains("101 Switching Protocols"), "{text}");
+    assert!(text.contains("Messages (8 · 2 sent, 6 received"), "{text}");
+    let doc = traffic_police_tui::detail::build_doc(&mut app);
+    let lines: Vec<String> =
+        (0..doc.len()).filter_map(|i| traffic_police_tui::detail::row_text(&mut app, &doc, i, txn)).collect();
+    let has = |dir: &str, what: &[&str]| lines.iter().any(|l| l.starts_with(dir) && what.iter().all(|w| l.contains(w)));
+    assert!(has("↑ +", &["text", "{\"type\":\"subscribe\""]), "{lines:#?}");
+    assert!(has("↓ +", &["text", "\"state\":\"delivered\""]), "{lines:#?}");
+    assert!(has("↑ +", &["close", "1000 left the orders screen"]), "{lines:#?}");
+    assert!(has("↓ +", &["close", "1000 bye"]), "{lines:#?}");
+    assert_eq!(doc.messages.len(), 8);
+
+    // Enter on the first message (the subscription the app sent) opens its payload
+    let (row, i) = doc.messages[0];
+    assert_eq!(i, 0);
+    let text = press(&mut app, MEDIUM, &format!("g{}<Enter>", "j".repeat(row)));
+    assert_eq!(app.overlay, Overlay::Decoded, "{text}");
+    assert!(text.contains("message 1 · sent text"), "{text}");
+    assert!(text.contains("\"channel\":\"orders\""), "{text}");
+    press(&mut app, MEDIUM, "<Esc>");
+    assert_eq!(app.overlay, Overlay::None);
+}

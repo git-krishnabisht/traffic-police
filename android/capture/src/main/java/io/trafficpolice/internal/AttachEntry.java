@@ -25,6 +25,8 @@ public final class AttachEntry implements ExitHandler, AttachState {
             "okhttp3.OkHttpClient->networkInterceptors()Ljava/util/List;";
     private static final String OKHTTP_EVENT_LISTENER_FACTORY =
             "okhttp3.OkHttpClient->eventListenerFactory()Lokhttp3/EventListener$Factory;";
+    private static final String OKHTTP_NEW_WEBSOCKET =
+            "okhttp3.OkHttpClient->newWebSocket(Lokhttp3/Request;Lokhttp3/WebSocketListener;)Lokhttp3/WebSocket;";
 
     private final String runtimeDir;
     private final String packageName;
@@ -35,6 +37,7 @@ public final class AttachEntry implements ExitHandler, AttachState {
     /** OkHttpHooks' two methods, looked up once: the OkHttp hooks run for every call. */
     private volatile Method networkInterceptorsHook;
     private volatile Method eventListenerFactoryHook;
+    private volatile Method newWebSocketHook;
     private volatile CaptureRuntime runtime;
     private volatile AndroidPlatform platform;
     /** The entry {@link #start} made, for {@link #listen}. */
@@ -72,6 +75,8 @@ public final class AttachEntry implements ExitHandler, AttachState {
                 "okhttp3.OkHttpClient#networkInterceptors()Ljava/util/List;");
         addHook("okhttp_event_listener_factory",
                 "okhttp3.OkHttpClient#eventListenerFactory()Lokhttp3/EventListener$Factory;");
+        addHook("okhttp_new_websocket",
+                "okhttp3.OkHttpClient#newWebSocket(Lokhttp3/Request;Lokhttp3/WebSocketListener;)Lokhttp3/WebSocket;");
     }
 
     private void startRuntime() {
@@ -164,6 +169,16 @@ public final class AttachEntry implements ExitHandler, AttachState {
                 return result;
             }
         }
+        if (OKHTTP_NEW_WEBSOCKET.equals(method)) {
+            hit("okhttp_new_websocket");
+            try {
+                if (newWebSocketHook == null && !resolveOkHttpHooks()) return result;
+                return newWebSocketHook.invoke(null, result);
+            } catch (Throwable t) {
+                reportError("attach.okhttp.newWebSocket", t);
+                return result;
+            }
+        }
         boolean interceptors = OKHTTP_NETWORK_INTERCEPTORS.equals(method);
         if (!interceptors && !OKHTTP_EVENT_LISTENER_FACTORY.equals(method)) return result;
         hit(interceptors ? "okhttp_network_interceptors" : "okhttp_event_listener_factory");
@@ -189,6 +204,8 @@ public final class AttachEntry implements ExitHandler, AttachState {
         Class<?> factory = Class.forName("okhttp3.EventListener$Factory", false, appLoader);
         eventListenerFactoryHook = hooksClass.getMethod("eventListenerFactory", factory);
         networkInterceptorsHook = hooksClass.getMethod("networkInterceptors", List.class);
+        Class<?> webSocket = Class.forName("okhttp3.WebSocket", false, appLoader);
+        newWebSocketHook = hooksClass.getMethod("newWebSocket", webSocket);
         return true;
     }
 

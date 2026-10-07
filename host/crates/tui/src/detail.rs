@@ -15,6 +15,57 @@ use crate::theme::Theme;
 use crate::wrap::{self, Part, Text};
 use traffic_police_proto::msg::StackFrame;
 
+/// A WebSocket's messages after its handshake's headers: one line each, with the direction,
+/// the time since the socket opened, the type, the size and the start of the payload.
+fn ws_rows(theme: &Theme, t: &Transaction, doc: &mut Doc) {
+    let sent = t.ws.iter().filter(|m| m.out).count();
+    let received = t.ws.len() - sent;
+    doc.head
+        .push(title(theme, format!("Messages ({} · {sent} sent, {received} received · Enter opens one)", t.ws.len())));
+    if t.ws.is_empty() {
+        let what = if t.state.is_open() { "none yet" } else { "none" };
+        doc.head.push(DocRow::Line(Line::styled(what.to_string(), theme.dim())));
+    }
+    for (i, m) in t.ws.iter().enumerate() {
+        let row = doc.head.len();
+        doc.head.push(DocRow::Line(ws_line(theme, t.start, m)));
+        doc.messages.push((row, i));
+    }
+}
+
+/// `↑ +1.204 s  text    27 B  {"type":"subscribe"}`
+pub fn ws_line(theme: &Theme, start: fmt::Ts, m: &traffic_police_core::model::WsMessage) -> Line<'static> {
+    let arrow = if m.out {
+        Span::styled("↑ ", Style::default().fg(theme.send()))
+    } else {
+        Span::styled("↓ ", Style::default().fg(theme.recv()))
+    };
+    let since = m.at.saturating_sub(start);
+    let preview = match m.op.as_str() {
+        "close" => {
+            format!("{} {}", m.code.map(|c| c.to_string()).unwrap_or_default(), m.reason.clone().unwrap_or_default())
+        }
+        "text" => {
+            let s = String::from_utf8_lossy(&m.data);
+            let one: String = s.chars().map(|c| if c == '\n' || c == '\r' { ' ' } else { c }).take(240).collect();
+            one
+        }
+        _ => m.data.iter().take(24).map(|b| format!("{b:02x}")).collect::<Vec<_>>().join(" "),
+    };
+    let size = if m.op == "close" { String::new() } else { fmt::bytes(m.size) };
+    let mut spans = vec![
+        arrow,
+        Span::styled(format!("+{:<9}", fmt::duration(since)), theme.dim()),
+        Span::styled(format!("{:<7}", m.op), theme.title()),
+        Span::styled(format!("{size:>8}  "), theme.dim()),
+        Span::styled(preview, theme.text()),
+    ];
+    if m.truncated {
+        spans.push(Span::styled(" (truncated)".to_string(), theme.warn()));
+    }
+    Line::from(spans)
+}
+
 #[derive(Debug, Clone)]
 pub enum DocRow {
     Line(Line<'static>),
@@ -45,6 +96,8 @@ pub struct Doc {
     pub tail: Vec<DocRow>,
     /// Rows of `head` that show a JWT (Enter decodes it), with the token.
     pub tokens: Vec<(usize, String)>,
+    /// Rows of `head` that show a WebSocket message (Enter opens it), with its index.
+    pub messages: Vec<(usize, usize)>,
 }
 
 impl Doc {
@@ -282,6 +335,11 @@ pub fn build_doc(app: &mut App) -> Doc {
             doc.head.push(blank());
             headers_rows(&theme, &mut doc.head, &headers);
             doc.head.push(blank());
+            let t = app.view_store().txn(txn);
+            if t.is_websocket() {
+                ws_rows(&theme, t, &mut doc);
+                return doc;
+            }
             let dir = app.response_dir(txn);
             doc.body_len = body_rows(app, txn, dir, &mut doc.head);
             doc.body_dir = Some(dir);
@@ -639,7 +697,29 @@ fn overview_rows(app: &mut App, txn: TxnIdx, rows: &mut Vec<DocRow>, tokens: &mu
     } else {
         "—".into()
     };
-    rows.push(label_row(&theme, "Response size", plain(&theme, size)));
+    // a socket's size is what went each way, on the next row
+    if !t.is_websocket() {
+        rows.push(label_row(&theme, "Response size", plain(&theme, size)));
+    }
+    if t.is_websocket() {
+        let (sent, received): (Vec<_>, Vec<_>) = t.ws.iter().partition(|m| m.out);
+        let bytes = |v: &[&traffic_police_core::model::WsMessage]| fmt::bytes(v.iter().map(|m| m.size).sum());
+        let state = if t.state.is_open() { "open" } else { "closed" };
+        rows.push(label_row(
+            &theme,
+            "WebSocket",
+            plain(
+                &theme,
+                format!(
+                    "{state} · {} sent ({}) · {} received ({}) · the messages are on the Response tab",
+                    sent.len(),
+                    bytes(&sent),
+                    received.len(),
+                    bytes(&received)
+                ),
+            ),
+        ));
+    }
     if t.req_body.total > 0 {
         rows.push(label_row(&theme, "Request size", plain(&theme, fmt::bytes(t.req_body.total))));
     }

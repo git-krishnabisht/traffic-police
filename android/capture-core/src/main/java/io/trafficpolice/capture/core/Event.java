@@ -370,6 +370,84 @@ abstract class Event {
         }
     }
 
+    /**
+     * {@code ws}: one WebSocket message, sent ({@code out}) or received, with its payload up to the
+     * capture cap (text as text, binary as base64; PROTOCOL.md §7.1).
+     */
+    static final class Ws extends Event {
+        final boolean out;
+        final String op;
+        final long size;
+        final byte[] payload;
+        final boolean text;
+        final boolean truncated;
+        final int code;
+        final String reason;
+
+        Ws(long ts, long txn, boolean out, String op, long size, byte[] payload, boolean text, boolean truncated,
+                int code, String reason) {
+            super(ts, txn);
+            this.out = out;
+            this.op = op;
+            this.size = size;
+            this.payload = payload;
+            this.text = text;
+            this.truncated = truncated;
+            this.code = code;
+            this.reason = reason;
+        }
+
+        @Override
+        int size() {
+            return 96 + (payload == null ? 0 : payload.length * (text ? 1 : 2));
+        }
+
+        @Override
+        int bodyBytes() {
+            return payload == null ? 0 : payload.length;
+        }
+
+        @Override
+        byte[] encode(long seq) {
+            Json j = start("ws", seq);
+            j.kv("dir", out ? "out" : "in").kv("op", op).kv("size", size);
+            if (payload != null) {
+                if (text) {
+                    j.kv("text", new String(payload, Json.UTF_8));
+                } else {
+                    j.kv("base64", base64(payload));
+                }
+                if (truncated) {
+                    j.kv("truncated", true);
+                }
+            }
+            if (code >= 0) {
+                j.kv("code", code);
+            }
+            if (reason != null) {
+                j.kv("reason", reason);
+            }
+            return Frames.json(j.endObj());
+        }
+
+        private static final char[] ALPHABET =
+                "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/".toCharArray();
+
+        /** Standard base64 with padding (java.util.Base64 needs API 26; the library runs from 21). */
+        static String base64(byte[] b) {
+            StringBuilder out = new StringBuilder((b.length + 2) / 3 * 4);
+            for (int i = 0; i < b.length; i += 3) {
+                int n = (b[i] & 0xff) << 16;
+                if (i + 1 < b.length) n |= (b[i + 1] & 0xff) << 8;
+                if (i + 2 < b.length) n |= b[i + 2] & 0xff;
+                out.append(ALPHABET[(n >> 18) & 63]).append(ALPHABET[(n >> 12) & 63]);
+                out.append(i + 1 < b.length ? ALPHABET[(n >> 6) & 63] : '=');
+                out.append(i + 2 < b.length ? ALPHABET[n & 63] : '=');
+            }
+            return out.toString();
+        }
+    }
+
     // --- events outside transactions ---------------------------------------------------------
 
     /** {@code traffic}: whole-app byte counters. */

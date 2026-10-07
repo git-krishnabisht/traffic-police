@@ -311,8 +311,28 @@ pub struct Transaction {
     pub lossy: bool,
     /// Bookmarked by the user (`m`); saved in session files.
     pub pinned: bool,
+    /// The messages of a WebSocket (this transaction is its handshake), in order.
+    pub ws: Arc<Vec<WsMessage>>,
     /// Store generation of the last change (lets views cache derived values).
     pub rev: u64,
+}
+
+/// One WebSocket message (PROTOCOL.md §7.1 `ws`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WsMessage {
+    pub at: Ts,
+    /// Sent by the app (else received).
+    pub out: bool,
+    /// `text`, `binary` or `close`.
+    pub op: String,
+    /// The payload's whole size.
+    pub size: u64,
+    /// The payload as captured (at most the capture cap).
+    pub data: bytes::Bytes,
+    pub truncated: bool,
+    /// A close's status code and reason.
+    pub code: Option<u16>,
+    pub reason: Option<String>,
 }
 
 impl Transaction {
@@ -345,8 +365,18 @@ impl Transaction {
             failure: None,
             lossy: false,
             pinned: false,
+            ws: Arc::new(Vec::new()),
             rev: 0,
         }
+    }
+
+    /// A WebSocket's handshake: a 101 that upgraded to `websocket`, or messages seen.
+    pub fn is_websocket(&self) -> bool {
+        !self.ws.is_empty()
+            || self.resp.as_ref().is_some_and(|r| {
+                r.status == 101 && header(&r.headers, "upgrade").is_some_and(|u| u.eq_ignore_ascii_case("websocket"))
+            })
+            || header(&self.req_headers, "upgrade").is_some_and(|u| u.eq_ignore_ascii_case("websocket"))
     }
 
     /// Status as the app saw it (after rules).
@@ -383,6 +413,9 @@ impl Transaction {
 
     /// Short label for the Type column (`json`, `png`, `html`, ...).
     pub fn type_label(&self) -> String {
+        if self.is_websocket() {
+            return "ws".into();
+        }
         match self.response_content_type() {
             Some(ct) => content_type_label(ct),
             None => match &self.resp {
@@ -392,8 +425,12 @@ impl Transaction {
         }
     }
 
-    /// Transferred response size (bytes on the wire for the body).
+    /// Transferred response size (bytes on the wire for the body; for a WebSocket, what it
+    /// received).
     pub fn response_size(&self) -> u64 {
+        if !self.ws.is_empty() {
+            return self.ws.iter().filter(|m| !m.out).map(|m| m.size).sum();
+        }
         self.resp_body.total
     }
 }

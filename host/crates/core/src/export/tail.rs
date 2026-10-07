@@ -137,7 +137,49 @@ pub fn json_line(store: &SessionStore, i: TxnIdx, now: Ts, bodies: bool) -> Valu
     if let Some(o) = original {
         line["original"] = o;
     }
+    if t.is_websocket() {
+        line["websocket"] = websocket(t, bodies);
+    }
     line
+}
+
+/// A WebSocket's messages: counts and bytes each way; with `--bodies`, every message.
+fn websocket(t: &Transaction, bodies: bool) -> Value {
+    let (sent, received): (Vec<_>, Vec<_>) = t.ws.iter().partition(|m| m.out);
+    let mut v = json!({
+        "sent": sent.len(),
+        "sent_bytes": sent.iter().map(|m| m.size).sum::<u64>(),
+        "received": received.len(),
+        "received_bytes": received.iter().map(|m| m.size).sum::<u64>(),
+    });
+    if bodies {
+        let messages: Vec<Value> =
+            t.ws.iter()
+                .map(|m| {
+                    let mut x = json!({
+                        "dir": if m.out { "out" } else { "in" },
+                        "op": m.op,
+                        "at_ms": ms(m.at.saturating_sub(t.start)),
+                        "size": m.size,
+                    });
+                    if m.op == "close" {
+                        x["code"] = json!(m.code);
+                        x["reason"] = json!(m.reason);
+                    } else {
+                        match std::str::from_utf8(&m.data) {
+                            Ok(text) if m.op == "text" => x["text"] = json!(text),
+                            _ => x["base64"] = json!(base64::engine::general_purpose::STANDARD.encode(&m.data)),
+                        }
+                        if m.truncated {
+                            x["truncated"] = json!(true);
+                        }
+                    }
+                    x
+                })
+                .collect();
+        v["messages"] = json!(messages);
+    }
+    v
 }
 
 /// One line for people: `07:10:01.123  200  GET      305 ms    225 B  https://…`, with the
@@ -271,6 +313,35 @@ mod tests {
                 "ERR  GET         12 ms         -  https://api.example.com/status?id=7  ✕ UnknownHostException: api.example.com"
             ),
             "{text}"
+        );
+    }
+
+    #[test]
+    fn a_websocket_as_json() {
+        let s = store(
+            vec![
+                json!({ "t": "req", "seq": 1, "ts": 2_000_000_000u64, "txn": 3, "call": 1, "hop": 0, "method": "GET",
+                        "url": "https://api.example.com/live", "headers": [] }),
+                json!({ "t": "resp", "seq": 2, "ts": 2_010_000_000u64, "txn": 3, "status": 101, "message": "Switching Protocols",
+                        "headers": [["Upgrade", "websocket"]] }),
+                json!({ "t": "ws", "seq": 3, "ts": 2_011_000_000u64, "txn": 3, "dir": "out", "op": "text", "size": 5, "text": "hello" }),
+                json!({ "t": "ws", "seq": 4, "ts": 2_020_000_000u64, "txn": 3, "dir": "in", "op": "binary", "size": 3, "base64": "AQID" }),
+                json!({ "t": "ws", "seq": 5, "ts": 2_030_000_000u64, "txn": 3, "dir": "out", "op": "close", "size": 0, "code": 1000, "reason": "done" }),
+                json!({ "t": "done", "seq": 6, "ts": 2_031_000_000u64, "txn": 3 }),
+            ],
+            b"",
+        );
+        let v = json_line(&s, 0, s.latest(), false);
+        assert_eq!(v["status"], 101);
+        assert_eq!(v["websocket"], json!({ "sent": 2, "sent_bytes": 5, "received": 1, "received_bytes": 3 }));
+        let v = json_line(&s, 0, s.latest(), true);
+        assert_eq!(
+            v["websocket"]["messages"],
+            json!([
+                { "dir": "out", "op": "text", "at_ms": 11.0, "size": 5, "text": "hello" },
+                { "dir": "in", "op": "binary", "at_ms": 20.0, "size": 3, "base64": "AQID" },
+                { "dir": "out", "op": "close", "at_ms": 30.0, "size": 0, "code": 1000, "reason": "done" },
+            ])
         );
     }
 

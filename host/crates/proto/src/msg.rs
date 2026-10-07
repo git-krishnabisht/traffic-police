@@ -31,6 +31,8 @@ pub enum DeviceMsg {
     Done(Done),
     Fail(Fail),
     Rule(RuleApplied),
+    /// A WebSocket message on a transaction's socket.
+    Ws(Ws),
     Dropped(Dropped),
     Traffic(Traffic),
     Diag(Diag),
@@ -55,6 +57,7 @@ impl DeviceMsg {
             DeviceMsg::Done(m) => m.ts,
             DeviceMsg::Fail(m) => m.ts,
             DeviceMsg::Rule(m) => m.ts,
+            DeviceMsg::Ws(m) => m.ts,
             DeviceMsg::Dropped(m) => m.ts,
             DeviceMsg::Traffic(m) => m.ts,
             DeviceMsg::Diag(m) => m.ts,
@@ -73,6 +76,7 @@ impl DeviceMsg {
             DeviceMsg::Done(m) => m.seq,
             DeviceMsg::Fail(m) => m.seq,
             DeviceMsg::Rule(m) => m.seq,
+            DeviceMsg::Ws(m) => m.seq,
             DeviceMsg::Dropped(m) => m.seq,
             DeviceMsg::Traffic(m) => m.seq,
             DeviceMsg::Diag(m) => m.seq,
@@ -392,6 +396,35 @@ pub struct Mark {
     pub ts: u64,
     pub txn: u64,
     pub m: String,
+}
+
+/// The `ws` event: one WebSocket message, its payload up to the capture cap.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Ws {
+    pub seq: u64,
+    pub ts: u64,
+    pub txn: u64,
+    /// `out` (the app sent it) or `in`.
+    pub dir: String,
+    /// `text`, `binary` or `close` (a newer runtime may send others).
+    pub op: String,
+    /// The payload's whole size in bytes.
+    #[serde(default)]
+    pub size: u64,
+    /// The payload of a text message (UTF-8).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    /// The payload of a binary message.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base64: Option<String>,
+    /// Only the first part of the payload is here (the capture cap).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub truncated: bool,
+    /// A close: its status code and reason.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -841,6 +874,9 @@ mod tests {
             r#"{ "t": "pong", "id": 7, "clock": { "ts": 5900000000000, "wall_ms": 1790658751000 } }"#,
             r#"{ "t": "bye", "reason": "protocol_mismatch", "message": "device speaks protocol 2", "supported": [1] }"#,
             r#"{ "t": "resp", "seq": 44, "ts": 5822011000000, "txn": 7, "status": 200, "message": "OK", "protocol": "h2", "headers": [["set-cookie", "a=1"], ["set-cookie", "b=2"]] }"#,
+            r#"{ "t": "ws", "seq": 93, "ts": 5824100000000, "txn": 12, "dir": "out", "op": "text", "size": 39, "text": "{\"type\":\"subscribe\",\"channel\":\"orders\"}" }"#,
+            r#"{ "t": "ws", "seq": 94, "ts": 5824160000000, "txn": 12, "dir": "in", "op": "binary", "size": 3, "base64": "AQID" }"#,
+            r#"{ "t": "ws", "seq": 99, "ts": 5839000000000, "txn": 12, "dir": "out", "op": "close", "size": 0, "code": 1000, "reason": "done" }"#,
         ] {
             let msg = parse_device(small.as_bytes()).unwrap_or_else(|e| panic!("{small}: {e}"));
             assert_ne!(msg, DeviceMsg::Unknown, "{small}");

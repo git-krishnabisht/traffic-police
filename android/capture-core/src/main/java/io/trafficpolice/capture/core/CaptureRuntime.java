@@ -185,7 +185,7 @@ public final class CaptureRuntime {
     }
 
     /** A diagnostic reported once per {@code key}. */
-    void diagOnceKeyed(String key, String level, String code, String message, Map<String, String> data) {
+    public void diagOnceKeyed(String key, String level, String code, String message, Map<String, String> data) {
         if (reported.add(key)) {
             diag(level, code, message, data);
         }

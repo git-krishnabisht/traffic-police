@@ -243,7 +243,45 @@ fn entry(store: &SessionStore, t: &Transaction, now: Ts) -> Value {
             e["connection"] = json!(id);
         }
     }
+    if !t.ws.is_empty() {
+        e["_webSocketMessages"] = ws_messages(store, t);
+    }
     e
+}
+
+/// A WebSocket's messages as Chrome's DevTools write them in a HAR (`_webSocketMessages`):
+/// `type` send or receive, `time` in seconds since the epoch, `opcode` 1 (text), 2 (binary, the
+/// data in base64) or 8 (close, the data its code and reason), and the data as captured.
+fn ws_messages(store: &SessionStore, t: &Transaction) -> Value {
+    let messages: Vec<Value> = t
+        .ws
+        .iter()
+        .map(|m| {
+            let (opcode, data) = match m.op.as_str() {
+                "text" => (1, String::from_utf8_lossy(&m.data).into_owned()),
+                "binary" => (2, base64::engine::general_purpose::STANDARD.encode(&m.data)),
+                "close" => (
+                    8,
+                    format!(
+                        "{} {}",
+                        m.code.map(|c| c.to_string()).unwrap_or_default(),
+                        m.reason.as_deref().unwrap_or("")
+                    )
+                    .trim()
+                    .to_string(),
+                ),
+                _ => (0, String::new()),
+            };
+            let time = store.wall_ms(m.at).map_or(0.0, |ms| ms as f64 / 1000.0);
+            let mut v =
+                json!({ "type": if m.out { "send" } else { "receive" }, "time": time, "opcode": opcode, "data": data });
+            if m.truncated {
+                v["_size"] = json!(m.size);
+            }
+            v
+        })
+        .collect();
+    Value::Array(messages)
 }
 
 /// A HAR document for these transactions (in the order given).

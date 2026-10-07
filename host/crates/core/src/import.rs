@@ -379,6 +379,42 @@ fn entry_events(e: &Value, key: TxnKey, start: Ts, out: &mut Vec<SessionEvent>) 
     for (name, at) in later {
         out.push(SessionEvent::Mark { key, at, name });
     }
+    // a WebSocket's messages, as Chrome's DevTools (and traffic-police) write them
+    if let Some(messages) = e["_webSocketMessages"].as_array() {
+        let started_ms = e["startedDateTime"].as_str().and_then(parse_iso8601).unwrap_or(0.0);
+        for m in messages {
+            let ms = m["time"].as_f64().map_or(0.0, |s| s * 1000.0 - started_ms);
+            let at = start + (ms.max(0.0) * NS_PER_MS as f64).round() as Ts;
+            let text = m["data"].as_str().unwrap_or("");
+            let (op, data, code, reason) = match m["opcode"].as_u64().unwrap_or(1) {
+                2 => {
+                    use base64::Engine;
+                    let bytes = base64::engine::general_purpose::STANDARD.decode(text.trim()).unwrap_or_default();
+                    ("binary", Bytes::from(bytes), None, None)
+                }
+                8 => {
+                    let (code, reason) = text.split_once(' ').unwrap_or((text, ""));
+                    let reason = (!reason.is_empty()).then(|| reason.to_string());
+                    ("close", Bytes::new(), code.parse().ok(), reason)
+                }
+                _ => ("text", Bytes::from(text.to_string()), None, None),
+            };
+            let size = m["_size"].as_u64().unwrap_or(data.len() as u64);
+            out.push(SessionEvent::WsMessage {
+                key,
+                msg: crate::model::WsMessage {
+                    at,
+                    out: m["type"] == "send",
+                    op: op.to_string(),
+                    size,
+                    truncated: size > data.len() as u64,
+                    data,
+                    code,
+                    reason,
+                },
+            });
+        }
+    }
 
     // how it ended
     let failure = &tp["failure"];

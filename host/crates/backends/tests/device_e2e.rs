@@ -138,7 +138,7 @@ fn check_main_run(r: &mut Report, store: &SessionStore, source: SourceId, run: &
             });
         }
     }
-    r.check(all.len() == 26, || format!("{run}: expected 26 requests, found {}", all.len()));
+    r.check(all.len() == 27, || format!("{run}: expected 27 requests, found {}", all.len()));
 
     // Retrofit suspend functions on a coroutine worker; the stack reaches the scenario
     if let Some(t) = one(r, "/api/sdk/init") {
@@ -361,6 +361,32 @@ fn check_main_run(r: &mut Report, store: &SessionStore, source: SourceId, run: &
     r.check(secure.iter().any(|t| t.client.as_ref().is_some_and(|c| c.kind == "huc")), || {
         format!("{run}: no HttpsURLConnection /secure")
     });
+
+    // a WebSocket: the handshake, then every message both ways, in order
+    if let Some(t) = one(r, "/live") {
+        r.check(status(t) == 101 && t.is_websocket(), || format!("{run}: /live {}", status(t)));
+        let got: Vec<String> =
+            t.ws.iter()
+                .map(|m| {
+                    let what = match m.op.as_str() {
+                        "close" => m.code.map(|c| c.to_string()).unwrap_or_default(),
+                        "text" => String::from_utf8_lossy(&m.data).into_owned(),
+                        _ => m.data.iter().map(|b| format!("{b:02x}")).collect(),
+                    };
+                    format!("{} {} {what}", if m.out { "out" } else { "in" }, m.op)
+                })
+                .collect();
+        let want = [
+            r#"out text {"type":"subscribe","channel":"verification"}"#,
+            "in binary 010203",
+            r#"in text {"type":"status","state":"running"}"#,
+            r#"in text {"type":"status","state":"complete","verdict":"pass"}"#,
+            "out close 1000",
+            "in close 1000",
+        ];
+        r.check(got == want, || format!("{run}: /live messages {got:#?}"));
+        r.check(app_frame(t, "io.trafficpolice.sample.Scenarios"), || format!("{run}: /live stack {:?}", t.stack));
+    }
 
     if let Some(t) = one(r, "/done") {
         r.check(status(t) == 204 && t.resp_body.state == BodyState::None, || {
@@ -689,7 +715,7 @@ async fn plain_app_attach_end_to_end() {
     for h in &source.hooks {
         report.check(h.status == "installed", || format!("attach run 1: hook {} is {}", h.id, h.status));
     }
-    report.check(source.hooks.len() == 4, || format!("attach run 1: {} hooks", source.hooks.len()));
+    report.check(source.hooks.len() == 5, || format!("attach run 1: {} hooks", source.hooks.len()));
 
     // run 1: the scenarios in the attached process (the intent reaches the running activity)
     let run = adb.shell(id, &format!("am start -n {PLAIN_ACTIVITY} --es run all")).await.unwrap();

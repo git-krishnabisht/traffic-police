@@ -25,6 +25,11 @@ pub enum SessionEvent {
     },
     Request(Box<RequestStarted>),
     Response(Box<ResponseStarted>),
+    /// A WebSocket message on a transaction's socket.
+    WsMessage {
+        key: TxnKey,
+        msg: crate::model::WsMessage,
+    },
     Body {
         key: TxnKey,
         dir: BodyDir,
