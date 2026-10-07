@@ -482,6 +482,15 @@ impl Loaded {
         self.config.ui.images.unwrap_or(true)
     }
 
+    /// The default keys with the `[keymap]` entries applied (invalid ones were reported).
+    pub fn keymap(&self) -> traffic_police_tui::actions::Keymap {
+        let mut keymap = traffic_police_tui::actions::Keymap::default();
+        for (name, keys) in &self.config.keymap {
+            let _ = keymap.apply(&[(name.clone(), key_list(keys.get_ref()))]);
+        }
+        keymap
+    }
+
     /// Applies the `[ui]` and `[keymap]` settings to the app (invalid ones were reported).
     pub fn apply_ui(&self, app: &mut App) {
         let ui = &self.config.ui;
@@ -563,9 +572,7 @@ impl Loaded {
         if let Some(c) = ui.collapse {
             app.rows.set_collapse(c);
         }
-        for (name, keys) in &self.config.keymap {
-            let _ = app.keymap.apply(&[(name.clone(), key_list(keys.get_ref()))]);
-        }
+        app.keymap = self.keymap();
         if !self.problems.is_empty() {
             for p in &self.problems {
                 tracing::warn!("config: {p}");

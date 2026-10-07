@@ -1103,3 +1103,75 @@ fn a_short_detail_pane_never_breaks_the_layout() {
         }
     }
 }
+
+/// A menu entry's letter runs it even when the letter also moves or closes: `q` (request body)
+/// and `k` (one header) in the copy menu, `j` (decode JWT) in a value menu. Up to 0.3.1 those
+/// letters closed the menu or moved its cursor instead.
+#[test]
+fn menu_letters_win_over_the_keys_that_move() {
+    let mut app = app_at(40.0);
+    let to = goto(&mut app, MEDIUM, path_is("/api/v1/sessions"));
+    press(&mut app, MEDIUM, &format!("{to}<Enter>"));
+    let init = app.selected.expect("selected");
+    let store = app.view_store();
+    let body = String::from_utf8(store.body_bytes(&store.txn(init).req_body).to_vec()).expect("a text request body");
+    press(&mut app, MEDIUM, "yq");
+    assert_eq!(app.overlay, Overlay::None);
+    assert_eq!(app.copied.as_deref(), Some(body.as_str()), "q copies the request body");
+    // on the Request tab, the cursor on the Authorization header: k copies it, and its value
+    // menu decodes the JWT with j
+    press(&mut app, MEDIUM, "<Right><Right>g");
+    let doc = traffic_police_tui::detail::build_doc(&mut app);
+    let row = (0..doc.len())
+        .find(|&i| {
+            traffic_police_tui::detail::row_text(&mut app, &doc, i, init)
+                .is_some_and(|t| t.starts_with("Authorization: "))
+        })
+        .expect("the Authorization header");
+    press(&mut app, MEDIUM, &format!("{}yk", "j".repeat(row)));
+    assert_eq!(app.overlay, Overlay::None);
+    assert!(app.copied.as_deref().is_some_and(|c| c.starts_with("Bearer ey")), "{:?}", app.copied);
+    press(&mut app, MEDIUM, "<Enter>");
+    assert_eq!(app.overlay, Overlay::Menu);
+    let text = press(&mut app, MEDIUM, "j");
+    assert_eq!(app.overlay, Overlay::Decoded, "j decodes the JWT");
+    assert!(text.contains("Claims"), "{text}");
+}
+
+/// Remapped keys work inside menus, the column chooser and the palette too.
+#[test]
+fn remapped_keys_move_in_menus_and_the_palette() {
+    let mut app = app_at(40.0);
+    let errors = app.keymap.apply(&[
+        ("down".into(), vec!["ctrl+j".into()]),
+        ("up".into(), vec!["ctrl+k".into()]),
+        ("back".into(), vec!["ctrl+x".into()]),
+        ("open".into(), vec!["ctrl+o".into()]),
+    ]);
+    assert!(errors.is_empty(), "{errors:?}");
+    let to = goto(&mut app, MEDIUM, path_is("/api/v1/sessions"));
+    press(&mut app, MEDIUM, &format!("{to}<Enter>"));
+    // the copy menu: the second entry with the new down key, run with the new open key
+    press(&mut app, MEDIUM, "y<C-j><C-j><C-k>");
+    let menu = app.menu.as_ref().expect("the copy menu");
+    assert_eq!(menu.cursor, 1);
+    let second = menu.items[1].label.clone();
+    press(&mut app, MEDIUM, "<C-o>");
+    assert_eq!(app.overlay, Overlay::None, "{second} ran");
+    assert!(app.copied.is_some());
+    // the new back key closes a menu; the old one no longer does
+    press(&mut app, MEDIUM, "y<Esc>");
+    assert_eq!(app.overlay, Overlay::Menu, "Esc is not back any more");
+    press(&mut app, MEDIUM, "<C-x>");
+    assert_eq!(app.overlay, Overlay::None);
+    // the columns
+    press(&mut app, MEDIUM, "C<C-j><C-j>");
+    assert_eq!(app.overlay, Overlay::Columns { cursor: 2 });
+    press(&mut app, MEDIUM, "<C-x>");
+    // the palette: letters type, the new keys move
+    press(&mut app, MEDIUM, ":graph<C-j>");
+    let p = app.palette.as_ref().expect("the palette");
+    assert_eq!((p.input.value(), p.cursor), ("graph", 1));
+    press(&mut app, MEDIUM, "<C-x>");
+    assert_eq!(app.overlay, Overlay::None);
+}

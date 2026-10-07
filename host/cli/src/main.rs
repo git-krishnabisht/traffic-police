@@ -616,7 +616,7 @@ async fn run_device_mode(
                 }),
             };
             let offer = agent_kit.as_ref().map(|_| ()).map_err(Clone::clone);
-            match traffic_police_tui::picker::pick(adb.clone(), theme.clone(), offer).await? {
+            match traffic_police_tui::picker::pick(adb.clone(), theme.clone(), &settings.keymap(), offer).await? {
                 Some(p) => DeviceTarget {
                     serial: Some(p.serial),
                     package: p.package,

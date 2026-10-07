@@ -145,12 +145,20 @@ impl App {
             return;
         };
         let ctrl = k.modifiers.contains(KeyModifiers::CONTROL);
+        // letters type into the query; other keys move as `[keymap]` says (Ctrl+P and Ctrl+N
+        // too, as in most pickers), and Esc and Enter always close and run
+        let typed =
+            matches!(k.code, KeyCode::Char(_)) && !k.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT);
+        let action = if typed { None } else { self.keymap.action(&k) };
+        let last = p.shown.len().saturating_sub(1);
         match k.code {
-            KeyCode::Esc => {
+            KeyCode::Char('p') if ctrl => p.cursor = p.cursor.saturating_sub(1),
+            KeyCode::Char('n') if ctrl => p.cursor = (p.cursor + 1).min(last),
+            _ if k.code == KeyCode::Esc || action == Some(Action::Back) => {
                 self.overlay = Overlay::None;
                 self.palette = None;
             }
-            KeyCode::Enter => {
+            _ if k.code == KeyCode::Enter || action == Some(Action::Activate) => {
                 let chosen = p.shown.get(p.cursor).map(|&i| p.items[i].command);
                 self.overlay = Overlay::None;
                 self.palette = None;
@@ -163,12 +171,10 @@ impl App {
                     None => self.flash("no command matches"),
                 }
             }
-            KeyCode::Up => p.cursor = p.cursor.saturating_sub(1),
-            KeyCode::Char('p') if ctrl => p.cursor = p.cursor.saturating_sub(1),
-            KeyCode::Down => p.cursor = (p.cursor + 1).min(p.shown.len().saturating_sub(1)),
-            KeyCode::Char('n') if ctrl => p.cursor = (p.cursor + 1).min(p.shown.len().saturating_sub(1)),
-            KeyCode::PageUp => p.cursor = p.cursor.saturating_sub(10),
-            KeyCode::PageDown => p.cursor = (p.cursor + 10).min(p.shown.len().saturating_sub(1)),
+            _ if action == Some(Action::Up) => p.cursor = p.cursor.saturating_sub(1),
+            _ if action == Some(Action::Down) => p.cursor = (p.cursor + 1).min(last),
+            _ if action == Some(Action::PageUp) => p.cursor = p.cursor.saturating_sub(10),
+            _ if action == Some(Action::PageDown) => p.cursor = (p.cursor + 10).min(last),
             _ => {
                 let before = p.input.value().to_string();
                 p.input.handle_event(&Event::Key(k));

@@ -1013,12 +1013,13 @@ impl App {
             }
             Overlay::Columns { cursor } => {
                 let n = Column::OPTIONAL.len();
-                match k.code {
-                    KeyCode::Up | KeyCode::Char('k') => {
-                        self.overlay = Overlay::Columns { cursor: (cursor + n - 1) % n }
-                    }
-                    KeyCode::Down | KeyCode::Char('j') => self.overlay = Overlay::Columns { cursor: (cursor + 1) % n },
-                    KeyCode::Enter | KeyCode::Char(' ') => {
+                let action = self.keymap.action(&k);
+                match action {
+                    Some(Action::Up) => self.overlay = Overlay::Columns { cursor: (cursor + n - 1) % n },
+                    Some(Action::Down) => self.overlay = Overlay::Columns { cursor: (cursor + 1) % n },
+                    Some(Action::Top) => self.overlay = Overlay::Columns { cursor: 0 },
+                    Some(Action::Bottom) => self.overlay = Overlay::Columns { cursor: n - 1 },
+                    _ if action == Some(Action::Activate) || k.code == KeyCode::Char(' ') => {
                         let col = Column::OPTIONAL[cursor];
                         if let Some(i) = self.columns.iter().position(|&c| c == col) {
                             self.columns.remove(i);
@@ -1077,21 +1078,29 @@ impl App {
                     return;
                 };
                 let n = menu.items.len();
-                match k.code {
-                    KeyCode::Esc | KeyCode::Char('q') => {
+                // an entry's own letter first: the menu shows it, so it wins over the keys that
+                // move and close (up to 0.3.1 `q`, `j` and `k` did those instead of running the
+                // copy menu's "request body" and "one header" and the value menu's "decode JWT")
+                let plain = !k.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT);
+                if let KeyCode::Char(c) = k.code
+                    && plain
+                    && let Some(item) = menu.items.iter().find(|i| i.key == c)
+                {
+                    let action = item.action.clone();
+                    self.run_menu(action);
+                    return;
+                }
+                match self.keymap.action(&k) {
+                    Some(Action::Back | Action::Quit) => {
                         self.overlay = Overlay::None;
                         self.menu = None;
                     }
-                    KeyCode::Up | KeyCode::Char('k') if n > 0 => menu.cursor = (menu.cursor + n - 1) % n,
-                    KeyCode::Down | KeyCode::Char('j') if n > 0 => menu.cursor = (menu.cursor + 1) % n,
-                    KeyCode::Enter => {
+                    Some(Action::Up) if n > 0 => menu.cursor = (menu.cursor + n - 1) % n,
+                    Some(Action::Down) if n > 0 => menu.cursor = (menu.cursor + 1) % n,
+                    Some(Action::Top | Action::PageUp | Action::HalfPageUp) => menu.cursor = 0,
+                    Some(Action::Bottom | Action::PageDown | Action::HalfPageDown) => menu.cursor = n.saturating_sub(1),
+                    Some(Action::Activate) => {
                         if let Some(item) = menu.items.get(menu.cursor) {
-                            let action = item.action.clone();
-                            self.run_menu(action);
-                        }
-                    }
-                    KeyCode::Char(c) => {
-                        if let Some(item) = menu.items.iter().find(|i| i.key == c) {
                             let action = item.action.clone();
                             self.run_menu(action);
                         }

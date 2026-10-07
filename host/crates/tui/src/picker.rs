@@ -16,6 +16,7 @@ use tokio_stream::StreamExt;
 use traffic_police_adb::{Adb, Device, TransportId, quote};
 use unicode_width::UnicodeWidthStr;
 
+use crate::actions::{Action, Keymap};
 use crate::terminal;
 use crate::theme::Theme;
 
@@ -57,12 +58,18 @@ async fn about(adb: &Adb, id: TransportId) -> Option<String> {
 }
 
 /// Runs the pickers; `None` when the user quits. `attach`: whether a process without the
-/// capture runtime can be picked (the agent is then attached to it), or why not.
-pub async fn pick(adb: Adb, theme: Theme, attach: Result<(), String>) -> anyhow::Result<Option<Picked>> {
+/// capture runtime can be picked (the agent is then attached to it), or why not. The keys are
+/// the user's (`[keymap]`): up, down, top, bottom, the page keys, open, back and quit.
+pub async fn pick(
+    adb: Adb,
+    theme: Theme,
+    keymap: &Keymap,
+    attach: Result<(), String>,
+) -> anyhow::Result<Option<Picked>> {
     terminal::install_panic_hook();
     let mut term = terminal::setup()?;
     // dropping `term` puts the terminal back
-    run(&mut term, adb, theme, attach).await
+    run(&mut term, adb, theme, keymap, attach).await
 }
 
 /// Which packages are debuggable, asked of `run-as` once each. On userdebug builds (many
@@ -136,6 +143,7 @@ async fn run(
     term: &mut terminal::Term,
     adb: Adb,
     theme: Theme,
+    keymap: &Keymap,
     attach: Result<(), String>,
 ) -> anyhow::Result<Option<Picked>> {
     let mut stop = terminal::StopSignals::new()?;
@@ -204,6 +212,7 @@ async fn run(
                 cursor,
                 message: message.as_deref(),
                 attach: attach.is_ok(),
+                keymap,
             };
             draw(buf, area, &theme, &view);
         })?;
@@ -248,7 +257,8 @@ async fn run(
                 if k.kind == KeyEventKind::Release {
                     continue;
                 }
-                if k.code == KeyCode::Char('q') || (k.code == KeyCode::Char('c') && k.modifiers.contains(KeyModifiers::CONTROL)) {
+                let action = keymap.action(&k);
+                if action == Some(Action::Quit) || (k.code == KeyCode::Char('c') && k.modifiers.contains(KeyModifiers::CONTROL)) {
                     fetcher.abort();
                     return Ok(None);
                 }
@@ -257,17 +267,24 @@ async fn run(
                     (None, _, Ok(d)) => d.len(),
                     _ => 0,
                 };
-                match k.code {
-                    KeyCode::Up | KeyCode::Char('k') => cursor = cursor.saturating_sub(1),
-                    KeyCode::Down | KeyCode::Char('j') => cursor = (cursor + 1).min(len.saturating_sub(1)),
-                    KeyCode::Esc | KeyCode::Backspace | KeyCode::Left if chosen.is_some() => {
+                let last = len.saturating_sub(1);
+                let page = usize::from(term.size().map_or(20, |s| s.height).saturating_sub(10).max(1));
+                let back = matches!(action, Some(Action::Back | Action::Left)) || k.code == KeyCode::Backspace;
+                match action {
+                    Some(Action::Up) => cursor = cursor.saturating_sub(1),
+                    Some(Action::Down) => cursor = (cursor + 1).min(last),
+                    Some(Action::Top) => cursor = 0,
+                    Some(Action::Bottom) => cursor = last,
+                    Some(Action::PageUp | Action::HalfPageUp) => cursor = cursor.saturating_sub(page),
+                    Some(Action::PageDown | Action::HalfPageDown) => cursor = (cursor + page).min(last),
+                    _ if back && chosen.is_some() => {
                         chosen = None;
                         processes = None;
                         cursor = 0;
                         message = None;
                         let _ = want_tx.send(None);
                     }
-                    KeyCode::Enter | KeyCode::Right => {
+                    Some(Action::Activate | Action::Right) => {
                         message = None;
                         match (&chosen, &processes, &devices) {
                             (None, _, Ok(d)) => {
@@ -327,12 +344,14 @@ struct View<'a> {
     message: Option<&'a str>,
     /// Processes without the capture runtime can be picked (attach mode).
     attach: bool,
+    /// The user's keys, for the hints at the bottom.
+    keymap: &'a Keymap,
 }
 
 /// The picker's box: its title on the border, the list inside with a margin, the columns spread
 /// over the whole width, and the keys at the bottom.
 fn draw(buf: &mut ratatui::buffer::Buffer, area: Rect, t: &Theme, v: &View) {
-    let View { loaded, devices, abouts, chosen, processes, cursor, message, attach } = *v;
+    let View { loaded, devices, abouts, chosen, processes, cursor, message, attach, keymap } = *v;
     Block::bordered().border_type(t.borders).border_style(t.accent()).render(area, buf);
     // the title after the corner, as on the main screen's boxes (`╭─ Choose … ─`)
     let bold = t.accent().add_modifier(Modifier::BOLD);
@@ -430,11 +449,13 @@ fn draw(buf: &mut ratatui::buffer::Buffer, area: Rect, t: &Theme, v: &View) {
             }
         }
     }
-    let help = if chosen.is_some() {
-        "↑↓ choose · Enter open · Esc back to devices · q quit"
-    } else {
-        "↑↓ choose · Enter open · q quit"
-    };
+    let key = |a: Action| keymap.key_label(a);
+    let mut help = format!("{}{} choose · {} open", key(Action::Up), key(Action::Down), key(Action::Activate));
+    if chosen.is_some() {
+        help.push_str(&format!(" · {} back to devices", key(Action::Back)));
+    }
+    help.push_str(&format!(" · {} quit", key(Action::Quit)));
+    let help = help.as_str();
     let mut bottom: Vec<Line> = Vec::new();
     if let Some(m) = message {
         bottom.extend(crate::wrap::wrap_line(&Line::styled(m.to_string(), t.warn()), w, 0));
@@ -517,6 +538,7 @@ mod tests {
         let rows = Ok(vec![row(10771, "com.example.shop"), row(20, "com.example.other")]);
         let devices = Ok(vec![device.clone()]);
         let abouts = HashMap::from([(1, "Android 14 (API 34)".to_string())]);
+        let keymap = Keymap::default();
         let mut view = View {
             loaded: true,
             devices: &devices,
@@ -526,6 +548,7 @@ mod tests {
             cursor: 0,
             message: None,
             attach: true,
+            keymap: &keymap,
         };
         let area = Rect::new(0, 0, 160, 14);
         let selected = Theme::new(Palette::Dark, Depth::TrueColor).selected().bg.unwrap();
@@ -571,6 +594,7 @@ mod tests {
         let rows = Ok(vec![row(10, "com.library.app", true), row(20, "com.plain.app", false)]);
         let devices = Ok(vec![device.clone()]);
         let abouts = HashMap::new();
+        let keymap = Keymap::default();
         let mut view = View {
             loaded: true,
             devices: &devices,
@@ -580,6 +604,7 @@ mod tests {
             cursor: 0,
             message: None,
             attach: true,
+            keymap: &keymap,
         };
         let shown = text(&view);
         assert!(shown.contains("● com.library.app") && shown.contains("capture running: ready"), "{shown}");
