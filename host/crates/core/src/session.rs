@@ -359,7 +359,12 @@ pub fn is_session_file(path: &Path) -> bool {
 
 /// Reads a session file into events; sources get fresh ids from `ids`.
 pub fn open(path: &Path, ids: &SourceIds) -> io::Result<Opened> {
-    let mut file = BufReader::new(File::open(path)?);
+    read(BufReader::new(File::open(path)?), ids)
+}
+
+/// Reads a session file's bytes into events (see [`open`]). Nothing in them is trusted: a file
+/// from someone else may be damaged or made up (the fuzz target `session_file` feeds it noise).
+pub fn read(mut file: impl Read, ids: &SourceIds) -> io::Result<Opened> {
     let mut head = [0u8; 8];
     file.read_exact(&mut head).map_err(|_| io::Error::other("not a traffic-police session file"))?;
     if &head[..7] != MAGIC {

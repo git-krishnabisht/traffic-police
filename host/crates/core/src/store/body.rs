@@ -75,7 +75,10 @@ impl BodyStore {
 
     pub fn append(&mut self, id: BodyId, offset: u64, bytes: Bytes) -> Appended {
         let body = &mut self.bodies[id as usize];
-        let end = offset + bytes.len() as u64;
+        // an offset no body reaches comes only from a broken stream: drop the chunk
+        let Some(end) = offset.checked_add(bytes.len() as u64) else {
+            return Appended { added: 0, gap: false };
+        };
         if end <= body.next_offset {
             return Appended { added: 0, gap: false }; // duplicate
         }

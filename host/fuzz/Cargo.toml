@@ -1,0 +1,58 @@
+# Fuzz targets (cargo-fuzz, nightly): `cargo +nightly fuzz run <target>` in this directory. CI runs
+# each for a short while (host.yml). Not a member of the host workspace, which builds on stable.
+[package]
+name = "traffic-police-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+license = "Apache-2.0"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+bytes = "1"
+traffic-police-proto = { path = "../crates/proto" }
+traffic-police-core = { path = "../crates/core" }
+
+[workspace]
+members = ["."]
+
+[profile.release]
+debug = 1
+
+[[bin]]
+name = "frame_decoder"
+path = "fuzz_targets/frame_decoder.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "device_stream"
+path = "fuzz_targets/device_stream.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "session_file"
+path = "fuzz_targets/session_file.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "har_import"
+path = "fuzz_targets/har_import.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "bodies"
+path = "fuzz_targets/bodies.rs"
+test = false
+doc = false
+bench = false

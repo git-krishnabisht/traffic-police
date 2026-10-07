@@ -252,11 +252,11 @@ impl SessionStore {
         match dir {
             BodyDir::Request => {
                 self.traffic.add_captured(at, 0, delta);
-                self.stats.bytes_out += delta;
+                self.stats.bytes_out = self.stats.bytes_out.saturating_add(delta);
             }
             BodyDir::Response => {
                 self.traffic.add_captured(at, delta, 0);
-                self.stats.bytes_in += delta;
+                self.stats.bytes_in = self.stats.bytes_in.saturating_add(delta);
             }
             BodyDir::Delivered => {}
         }
@@ -373,9 +373,11 @@ impl SessionStore {
                 });
             }
             SessionEvent::Body { key, dir, at, offset, bytes } => {
+                let len = bytes.len() as u64;
+                // an offset no body reaches comes only from a broken stream (found by fuzzing)
+                let Some(end) = offset.checked_add(len) else { return };
                 self.see(at);
                 let idx = self.idx_or_placeholder(key, at);
-                let len = bytes.len() as u64;
                 let id = {
                     let t = self.touch(idx);
                     let meta = Self::body_meta(t, dir);
@@ -391,12 +393,12 @@ impl SessionStore {
                     meta.captured += appended.added;
                     meta.gap |= appended.gap;
                     prev_total = meta.total;
-                    meta.total = meta.total.max(offset + len);
+                    meta.total = meta.total.max(end);
                     if !meta.state.is_final() {
                         meta.state = BodyState::Streaming;
                     }
                 }
-                let delta = (offset + len).saturating_sub(prev_total);
+                let delta = end.saturating_sub(prev_total);
                 self.account(dir, at, delta);
             }
             SessionEvent::BodyProgress { key, dir, at, total } => {
@@ -494,7 +496,7 @@ impl SessionStore {
             }
             SessionEvent::Dropped { source, at, events, bytes: _, txns } => {
                 self.see(at);
-                self.stats.dropped_events += events;
+                self.stats.dropped_events = self.stats.dropped_events.saturating_add(events);
                 for txn in txns {
                     if let Some(&i) = self.index.get(&TxnKey { source, txn }) {
                         self.touch(i).lossy = true;

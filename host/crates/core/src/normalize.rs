@@ -25,6 +25,8 @@ pub enum Control {
 pub enum NormalizeError {
     #[error("undecodable JSON message: {0}")]
     Json(#[from] serde_json::Error),
+    #[error("{0} out of range")]
+    OutOfRange(&'static str),
 }
 
 #[derive(Debug)]
@@ -80,6 +82,10 @@ impl Normalizer {
                 Ok(self.message(msg, out))
             }
             Frame::Body(c) => {
+                // a chunk past any device time or body size comes only from a broken stream
+                if c.ts > msg::MAX_DEVICE_TS || c.offset.checked_add(c.data.len() as u64).is_none() {
+                    return Err(NormalizeError::OutOfRange("body chunk"));
+                }
                 if self.fresh(c.seq) {
                     out.push(SessionEvent::Body {
                         key: self.key(c.txn),

@@ -44,6 +44,24 @@ pub enum DeviceMsg {
 }
 
 impl DeviceMsg {
+    /// The event's device time, for events (control messages have none).
+    pub fn ts(&self) -> Option<u64> {
+        Some(match self {
+            DeviceMsg::Req(m) => m.ts,
+            DeviceMsg::Resp(m) => m.ts,
+            DeviceMsg::BodyEnd(m) => m.ts,
+            DeviceMsg::Prog(m) => m.ts,
+            DeviceMsg::Mark(m) => m.ts,
+            DeviceMsg::Done(m) => m.ts,
+            DeviceMsg::Fail(m) => m.ts,
+            DeviceMsg::Rule(m) => m.ts,
+            DeviceMsg::Dropped(m) => m.ts,
+            DeviceMsg::Traffic(m) => m.ts,
+            DeviceMsg::Diag(m) => m.ts,
+            _ => return None,
+        })
+    }
+
     /// The event sequence number, for events (control messages have none).
     pub fn seq(&self) -> Option<u64> {
         Some(match self {
@@ -710,9 +728,26 @@ pub enum RuleAction {
 // Helpers
 // ---------------------------------------------------------------------------------------------
 
-/// Parse the payload of a JSON frame from a device.
+/// The latest device time a message may carry: 2^62 ns, about 146 years after the device booted
+/// (`ts` is `SystemClock.elapsedRealtimeNanos()`). Anything later comes from a broken or forged
+/// stream, and the host's arithmetic on device times stays clear of overflow below it.
+pub const MAX_DEVICE_TS: u64 = 1 << 62;
+
+/// Parse the payload of a JSON frame from a device. A message with a device time past
+/// [`MAX_DEVICE_TS`] is an error.
 pub fn parse_device(json: &[u8]) -> serde_json::Result<DeviceMsg> {
-    serde_json::from_slice(json)
+    let msg: DeviceMsg = serde_json::from_slice(json)?;
+    let ts = match &msg {
+        DeviceMsg::Hello(h) => h.clock.ts.max(h.started_ts.unwrap_or(0)),
+        DeviceMsg::Pong(p) => p.clock.ts,
+        DeviceMsg::Req(r) => r.marks.iter().map(|(_, t)| *t).fold(r.ts, u64::max),
+        DeviceMsg::Traffic(t) => t.ts.max(t.since.unwrap_or(0)),
+        other => other.ts().unwrap_or(0),
+    };
+    if ts > MAX_DEVICE_TS {
+        return Err(serde::de::Error::custom(format!("device time {ts} ns is out of range")));
+    }
+    Ok(msg)
 }
 
 /// Parse the payload of a JSON frame from a host.
@@ -863,8 +898,10 @@ mod tests {
     #[test]
     fn u64_values_survive_exactly() {
         let big = u64::MAX - 1;
-        let json = format!(r#"{{"t":"done","seq":{big},"ts":{big},"txn":{big}}}"#);
+        // the latest device time there may be, which a float could not hold exactly either
+        let ts = MAX_DEVICE_TS - 1;
+        let json = format!(r#"{{"t":"done","seq":{big},"ts":{ts},"txn":{big}}}"#);
         let DeviceMsg::Done(d) = parse_device(json.as_bytes()).unwrap() else { panic!() };
-        assert_eq!((d.seq, d.ts, d.txn), (big, big, big));
+        assert_eq!((d.seq, d.ts, d.txn), (big, ts, big));
     }
 }
