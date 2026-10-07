@@ -16,6 +16,8 @@ object Capture {
 
     fun wrap(connection: HttpURLConnection): HttpURLConnection = connection
 
+    fun grpc(builder: io.grpc.ManagedChannelBuilder<*>): io.grpc.ManagedChannelBuilder<*> = builder
+
     fun newWebSocket(client: OkHttpClient, request: Request, listener: WebSocketListener): WebSocket =
         client.newWebSocket(request, listener)
 

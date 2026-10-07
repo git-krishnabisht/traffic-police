@@ -31,6 +31,9 @@ public final class AndroidRuntime {
         boolean supported = okhttp && OkHttpDetect.supported();
         options.okhttp = supported;
         options.clients.put("okhttp", okhttp ? OkHttpDetect.version() : null);
+        if (grpcPresent()) {
+            options.clients.put("grpc", io.trafficpolice.capture.grpc.GrpcDetect.version());
+        }
         CaptureRuntime rt = CaptureRuntime.start(platform, options);
         if (okhttp && !supported) {
             rt.diag("warn", "okhttp_unsupported_version",
@@ -39,5 +42,15 @@ public final class AndroidRuntime {
         String name = SocketNames.forProcess(app.getPackageName(), platform.app().pid);
         LocalSocketServer.start(rt, name);
         Log.i(TAG, "capturing in " + platform.app().processName + "; socket @" + name);
+    }
+
+    /** Whether grpc-java is in the app (its API; the library links to nothing it does not have). */
+    private static boolean grpcPresent() {
+        try {
+            Class.forName("io.grpc.ClientInterceptor", false, AndroidRuntime.class.getClassLoader());
+            return true;
+        } catch (Throwable t) {
+            return false;
+        }
     }
 }

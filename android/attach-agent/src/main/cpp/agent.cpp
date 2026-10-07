@@ -24,56 +24,88 @@ namespace {
 
 constexpr char kLogTag[] = "TrafficPoliceAgent";
 // Trampoline.VERSION in the boot dex this agent is built with
-constexpr char kVersion[] = "0.1.0";
+constexpr char kVersion[] = "0.2.0";
 constexpr char kTrampolineClass[] = "io/trafficpolice/boot/Trampoline";
 constexpr char kNativeBridgeClass[] = "io/trafficpolice/boot/NativeBridge";
 constexpr char kTrampolineDescriptor[] = "Lio/trafficpolice/boot/Trampoline;";
 constexpr char kOkHttpDescriptor[] = "Lokhttp3/OkHttpClient;";
 constexpr char kUrlDescriptor[] = "Ljava/net/URL;";
+constexpr char kGrpcBuilderDescriptor[] = "Lio/grpc/internal/ManagedChannelImplBuilder;";
+constexpr char kGrpcOldBuilderDescriptor[] = "Lio/grpc/internal/AbstractManagedChannelImplBuilder;";
+constexpr char kGrpcStubDescriptor[] = "Lio/grpc/stub/AbstractStub;";
 
 void Log(int priority, const std::string& message) {
   __android_log_write(priority, kLogTag, message.c_str());
 }
 
+// A hook as the host sees it: its id, what it hooks, and how that went.
 struct Hook {
   const char* id;
-  const char* target;
-  const char* klass;
-  const char* method;
-  const char* signature;
+  std::string target;
   std::string status;
   std::string detail;
 };
 
+// One method a hook instruments. A hook can have several, of which one exists in a given version
+// (gRPC renamed the method it needs twice).
+struct Site {
+  const char* hook;
+  const char* klass;
+  const char* method;
+  const char* signature;
+  // the class can exist without the method, and that is no failure (gRPC 1.34 to 1.58 keep
+  // AbstractManagedChannelImplBuilder as a forwarding shim)
+  bool optional;
+};
+
 std::vector<Hook> g_hooks = {
-    {"url_open_connection", "java.net.URL#openConnection()Ljava/net/URLConnection;",
-     kUrlDescriptor, "openConnection", "()Ljava/net/URLConnection;", "pending", ""},
-    {"url_open_connection_proxy",
-     "java.net.URL#openConnection(Ljava/net/Proxy;)Ljava/net/URLConnection;",
-     kUrlDescriptor, "openConnection", "(Ljava/net/Proxy;)Ljava/net/URLConnection;", "pending", ""},
-    {"okhttp_network_interceptors",
-     "okhttp3.OkHttpClient#networkInterceptors()Ljava/util/List;", kOkHttpDescriptor,
-     "networkInterceptors", "()Ljava/util/List;", "pending", ""},
+    {"url_open_connection", "java.net.URL#openConnection()Ljava/net/URLConnection;", "pending", ""},
+    {"url_open_connection_proxy", "java.net.URL#openConnection(Ljava/net/Proxy;)Ljava/net/URLConnection;",
+     "pending", ""},
+    {"okhttp_network_interceptors", "okhttp3.OkHttpClient#networkInterceptors()Ljava/util/List;", "pending", ""},
     {"okhttp_event_listener_factory",
-     "okhttp3.OkHttpClient#eventListenerFactory()Lokhttp3/EventListener$Factory;",
-     kOkHttpDescriptor, "eventListenerFactory", "()Lokhttp3/EventListener$Factory;", "pending", ""},
-    // WebSockets: OkHttp sends the handshake past interceptors and listeners, so the socket the
-    // app gets is wrapped (its messages, and its listener for what arrives)
+     "okhttp3.OkHttpClient#eventListenerFactory()Lokhttp3/EventListener$Factory;", "pending", ""},
     {"okhttp_new_websocket",
      "okhttp3.OkHttpClient#newWebSocket(Lokhttp3/Request;Lokhttp3/WebSocketListener;)Lokhttp3/WebSocket;",
-     kOkHttpDescriptor, "newWebSocket", "(Lokhttp3/Request;Lokhttp3/WebSocketListener;)Lokhttp3/WebSocket;",
      "pending", ""},
+    {"grpc_channel_interceptors", "io.grpc.internal.ManagedChannelImplBuilder#getEffectiveInterceptors",
+     "pending", ""},
+    {"grpc_stub_channel", "io.grpc.stub.AbstractStub#getChannel()Lio/grpc/Channel;", "pending", ""},
+};
+
+const std::vector<Site> g_sites = {
+    {"url_open_connection", kUrlDescriptor, "openConnection", "()Ljava/net/URLConnection;", false},
+    {"url_open_connection_proxy", kUrlDescriptor, "openConnection", "(Ljava/net/Proxy;)Ljava/net/URLConnection;",
+     false},
+    {"okhttp_network_interceptors", kOkHttpDescriptor, "networkInterceptors", "()Ljava/util/List;", false},
+    {"okhttp_event_listener_factory", kOkHttpDescriptor, "eventListenerFactory",
+     "()Lokhttp3/EventListener$Factory;", false},
+    // WebSockets: OkHttp sends the handshake past interceptors and listeners, so the socket the
+    // app gets is wrapped (its messages, and its listener for what arrives)
+    {"okhttp_new_websocket", kOkHttpDescriptor, "newWebSocket",
+     "(Lokhttp3/Request;Lokhttp3/WebSocketListener;)Lokhttp3/WebSocket;", false},
+    // gRPC: the interceptors of every channel built from now on (ARCHITECTURE.md §4.9)
+    {"grpc_channel_interceptors", kGrpcBuilderDescriptor, "getEffectiveInterceptors",
+     "(Ljava/lang/String;)Ljava/util/List;", false},                                       // 1.64 and newer
+    {"grpc_channel_interceptors", kGrpcBuilderDescriptor, "getEffectiveInterceptors", "()Ljava/util/List;",
+     false},                                                                              // 1.33 to 1.63
+    {"grpc_channel_interceptors", kGrpcOldBuilderDescriptor, "getEffectiveInterceptors", "()Ljava/util/List;",
+     true},                                                                               // 1.10 to 1.32
+    // and the channel of every call a generated stub makes, which reaches channels built before
+    {"grpc_stub_channel", kGrpcStubDescriptor, "getChannel", "()Lio/grpc/Channel;", false},
 };
 
 JavaVM* g_vm = nullptr;
 jvmtiEnv* g_jvmti = nullptr;
 jclass g_trampoline = nullptr;
 jmethodID g_on_okhttp_loader = nullptr;
+jmethodID g_on_grpc_loader = nullptr;
 jmethodID g_on_hook = nullptr;
 jmethodID g_on_diag = nullptr;
 std::mutex g_hooks_mutex;
 std::mutex g_loader_mutex;
 jobject g_okhttp_loader = nullptr;
+jobject g_grpc_loader = nullptr;
 std::string g_runtime_dir;
 std::string g_package_name;
 bool g_startup_agent = false;
@@ -87,6 +119,7 @@ std::atomic<bool> g_initialized{false};
 // until the runtime installs its handler, so an early hook changes nothing.
 std::atomic<bool> g_runtime_active{false};
 std::atomic<bool> g_other_loader_reported{false};
+std::atomic<bool> g_other_grpc_loader_reported{false};
 
 // The Java callbacks catch their own errors, so an exception that still arrives is a bug: log it.
 void ClearCallbackException(JNIEnv* env, const char* callback) {
@@ -103,18 +136,29 @@ Hook* FindHook(const char* id) {
   return nullptr;
 }
 
-std::vector<Hook*> HooksForClass(const char* descriptor) {
-  std::vector<Hook*> result;
-  for (Hook& hook : g_hooks) {
-    if (std::strcmp(hook.klass, descriptor) == 0) result.push_back(&hook);
+std::vector<const Site*> SitesForClass(const std::string& descriptor) {
+  std::vector<const Site*> result;
+  for (const Site& site : g_sites) {
+    if (descriptor == site.klass) result.push_back(&site);
   }
   return result;
+}
+
+// "Lio/grpc/stub/AbstractStub;" and getChannel ()Lio/grpc/Channel; ->
+// "io.grpc.stub.AbstractStub#getChannel()Lio/grpc/Channel;"
+std::string SiteTarget(const Site& site) {
+  std::string klass(site.klass);
+  if (klass.size() >= 2 && klass.front() == 'L' && klass.back() == ';') klass = klass.substr(1, klass.size() - 2);
+  for (char& c : klass) {
+    if (c == '/') c = '.';
+  }
+  return klass + "#" + site.method + site.signature;
 }
 
 void NotifyHook(JNIEnv* env, const Hook& hook) {
   if (g_trampoline == nullptr || g_on_hook == nullptr) return;
   jstring id = env->NewStringUTF(hook.id);
-  jstring target = env->NewStringUTF(hook.target);
+  jstring target = env->NewStringUTF(hook.target.c_str());
   jstring status = env->NewStringUTF(hook.status.c_str());
   jstring detail = hook.detail.empty() ? nullptr : env->NewStringUTF(hook.detail.c_str());
   env->CallStaticVoidMethod(g_trampoline, g_on_hook, id, target, status, detail);
@@ -125,7 +169,10 @@ void NotifyHook(JNIEnv* env, const Hook& hook) {
   env->DeleteLocalRef(id);
 }
 
-void SetStatus(JNIEnv* env, const char* id, const char* status, const char* detail = nullptr) {
+// Sets a hook's status. A failure never replaces "installed": another of the hook's methods
+// (another class, or another signature) is in place.
+void SetStatus(JNIEnv* env, const char* id, const char* status, const char* detail = nullptr,
+               const std::string* target = nullptr, bool force = false) {
   Hook copy{};
   bool changed = false;
   {
@@ -134,9 +181,12 @@ void SetStatus(JNIEnv* env, const char* id, const char* status, const char* deta
     if (hook == nullptr) return;
     const std::string next_status(status != nullptr ? status : "failed");
     const std::string next_detail(detail != nullptr ? detail : "");
-    if (hook->status != next_status || hook->detail != next_detail) {
+    if (hook->status == "installed" && next_status != "installed" && !force) return;
+    if (hook->status != next_status || hook->detail != next_detail ||
+        (target != nullptr && hook->target != *target)) {
       hook->status = next_status;
       hook->detail = next_detail;
+      if (target != nullptr) hook->target = *target;
       copy = *hook;
       changed = true;
     }
@@ -190,26 +240,63 @@ bool IsSelectedOkHttpLoader(JNIEnv* env, jobject loader) {
   return g_okhttp_loader == nullptr || SameObject(env, g_okhttp_loader, loader);
 }
 
+void ReportOtherLoader(JNIEnv* env, std::atomic<bool>* reported, const char* message) {
+  if (reported->exchange(true, std::memory_order_acq_rel)) return;
+  Log(ANDROID_LOG_WARN, message);
+  if (g_trampoline != nullptr && g_on_diag != nullptr) {
+    jstring level = env->NewStringUTF("warn");
+    jstring code = env->NewStringUTF("hook_other_loader");
+    jstring text = env->NewStringUTF(message);
+    env->CallStaticVoidMethod(g_trampoline, g_on_diag, level, code, text);
+    ClearCallbackException(env, "Trampoline.onDiag");
+    env->DeleteLocalRef(text);
+    env->DeleteLocalRef(code);
+    env->DeleteLocalRef(level);
+  }
+}
+
+// One gRPC copy per process, as for OkHttp: the first loader that defines a hooked gRPC class.
+bool AcceptGrpcLoader(JNIEnv* env, jobject loader) {
+  if (loader == nullptr) return true;
+  bool selected = false;
+  bool other = false;
+  {
+    std::lock_guard<std::mutex> lock(g_loader_mutex);
+    if (g_grpc_loader == nullptr) {
+      g_grpc_loader = env->NewGlobalRef(loader);
+      selected = g_grpc_loader != nullptr;
+    } else {
+      other = !SameObject(env, g_grpc_loader, loader);
+    }
+  }
+  // Java is called with no lock held: what it loads comes back through the load hook
+  if (other) {
+    ReportOtherLoader(env, &g_other_grpc_loader_reported,
+                      "another class loader also defines gRPC (io.grpc); that copy was left alone");
+    return false;
+  }
+  if (selected && g_trampoline != nullptr && g_on_grpc_loader != nullptr) {
+    env->CallStaticVoidMethod(g_trampoline, g_on_grpc_loader, loader);
+    ClearCallbackException(env, "Trampoline.onGrpcLoader");
+  }
+  return true;
+}
+
 // One OkHttp copy per process: the first loader's copy is hooked, and a copy in another loader is
 // left alone and reported once as a diagnostic. The hook statuses keep describing the first copy.
 bool AcceptOkHttpLoader(JNIEnv* env, jobject loader) {
   SelectOkHttpLoader(env, loader);
   if (IsSelectedOkHttpLoader(env, loader)) return true;
-  if (!g_other_loader_reported.exchange(true, std::memory_order_acq_rel)) {
-    const char* message = "another class loader also defines okhttp3.OkHttpClient; that copy was left alone";
-    Log(ANDROID_LOG_WARN, message);
-    if (g_trampoline != nullptr && g_on_diag != nullptr) {
-      jstring level = env->NewStringUTF("warn");
-      jstring code = env->NewStringUTF("hook_other_loader");
-      jstring text = env->NewStringUTF(message);
-      env->CallStaticVoidMethod(g_trampoline, g_on_diag, level, code, text);
-      ClearCallbackException(env, "Trampoline.onDiag");
-      env->DeleteLocalRef(text);
-      env->DeleteLocalRef(code);
-      env->DeleteLocalRef(level);
-    }
-  }
+  ReportOtherLoader(env, &g_other_loader_reported,
+                    "another class loader also defines okhttp3.OkHttpClient; that copy was left alone");
   return false;
+}
+
+// Whether to hook this definition of a class: OkHttp's and gRPC's only in their first loader.
+bool AcceptLoader(JNIEnv* env, const std::string& descriptor, jobject loader) {
+  if (descriptor == kOkHttpDescriptor) return AcceptOkHttpLoader(env, loader);
+  if (descriptor.rfind("Lio/grpc/", 0) == 0) return AcceptGrpcLoader(env, loader);
+  return true;
 }
 
 bool InstrumentClass(JNIEnv* env, const char* class_name, jobject loader, jint data_len,
@@ -218,24 +305,20 @@ bool InstrumentClass(JNIEnv* env, const char* class_name, jobject loader, jint d
   if (!g_runtime_active.load(std::memory_order_acquire) || class_name == nullptr || data == nullptr) {
     return false;
   }
-  const char* descriptor = nullptr;
-  if (std::strcmp(class_name, "java/net/URL") == 0) {
-    descriptor = kUrlDescriptor;
-  } else if (std::strcmp(class_name, "okhttp3/OkHttpClient") == 0) {
-    descriptor = kOkHttpDescriptor;
-  } else {
-    return false;
-  }
-  std::vector<Hook*> targets = HooksForClass(descriptor);
-  if (targets.empty()) return false;
+  // the class names to hook are few, and every class loads through here: a cheap check first
+  const char first = class_name[0];
+  if (first != 'j' && first != 'o' && first != 'i') return false;
+  const std::string descriptor = std::string("L") + class_name + ";";
+  std::vector<const Site*> sites = SitesForClass(descriptor);
+  if (sites.empty()) return false;
 
-  if (descriptor == kOkHttpDescriptor && !AcceptOkHttpLoader(env, loader)) return false;
+  if (!AcceptLoader(env, descriptor, loader)) return false;
 
   dex::Reader reader(data, static_cast<size_t>(data_len));
-  const dex::u4 class_index = reader.FindClassIndex(descriptor);
+  const dex::u4 class_index = reader.FindClassIndex(descriptor.c_str());
   if (class_index == dex::kNoIndex) {
-    for (Hook* hook : targets) {
-      SetStatus(env, hook->id, "failed", "class data did not contain the target definition");
+    for (const Site* site : sites) {
+      if (!site->optional) SetStatus(env, site->hook, "failed", "class data did not contain the target definition");
     }
     return false;
   }
@@ -243,17 +326,33 @@ bool InstrumentClass(JNIEnv* env, const char* class_name, jobject loader, jint d
   reader.CreateClassIr(class_index);
   std::shared_ptr<ir::DexFile> dex_ir = reader.GetIr();
   bool transformed = false;
-  for (Hook* hook : targets) {
+  std::vector<const Site*> installed;
+  for (const Site* site : sites) {
     slicer::MethodInstrumenter instrumenter(dex_ir);
     instrumenter.AddTransformation<slicer::ExitHook>(
         ir::MethodId(kTrampolineDescriptor, "onExit"),
         slicer::ExitHook::Tweak::ReturnAsObject |
             slicer::ExitHook::Tweak::PassMethodSignature);
-    if (instrumenter.InstrumentMethod(ir::MethodId(hook->klass, hook->method, hook->signature))) {
-      SetStatus(env, hook->id, "installed");
+    if (instrumenter.InstrumentMethod(ir::MethodId(site->klass, site->method, site->signature))) {
+      installed.push_back(site);
       transformed = true;
-    } else {
-      SetStatus(env, hook->id, "method_not_found", "target method is absent or not instrumentable");
+    }
+  }
+  // per hook: installed when one of its methods in this class was; else a failure, unless every
+  // method it lacks here is optional
+  for (const Site* site : sites) {
+    bool hook_installed = false;
+    for (const Site* done : installed) {
+      if (std::strcmp(done->hook, site->hook) == 0) {
+        if (!hook_installed) {
+          const std::string target = SiteTarget(*done);
+          SetStatus(env, done->hook, "installed", nullptr, &target);
+        }
+        hook_installed = true;
+      }
+    }
+    if (!hook_installed && !site->optional) {
+      SetStatus(env, site->hook, "method_not_found", "target method is absent or not instrumentable");
     }
   }
   if (!transformed) return false;
@@ -264,8 +363,9 @@ bool InstrumentClass(JNIEnv* env, const char* class_name, jobject loader, jint d
   dex::u1* output = writer.CreateImage(&allocator, &output_size);
   if (output == nullptr || output_size > static_cast<size_t>(std::numeric_limits<jint>::max())) {
     if (output != nullptr) allocator.Free(output);
-    for (Hook* hook : targets) {
-      SetStatus(env, hook->id, "failed", "Slicer could not produce a valid transformed dex image");
+    // nothing of this class is hooked after all
+    for (const Site* site : installed) {
+      SetStatus(env, site->hook, "failed", "Slicer could not produce a valid transformed dex image", nullptr, true);
     }
     return false;
   }
@@ -329,8 +429,8 @@ void Retransform(JNIEnv* env, jclass klass) {
     std::string descriptor;
     jobject loader = nullptr;
     if (ClassDescriptor(env, klass, &descriptor, &loader)) {
-      for (Hook* hook : HooksForClass(descriptor.c_str())) {
-        SetStatus(env, hook->id, "failed", message.c_str());
+      for (const Site* site : SitesForClass(descriptor)) {
+        if (!site->optional) SetStatus(env, site->hook, "failed", message.c_str(), nullptr, true);
       }
     }
     if (loader != nullptr) env->DeleteLocalRef(loader);
@@ -342,8 +442,7 @@ void JNICALL OnClassPrepare(jvmtiEnv*, JNIEnv* env, jthread, jclass klass) {
   std::string descriptor;
   jobject loader = nullptr;
   if (!ClassDescriptor(env, klass, &descriptor, &loader)) return;
-  if (!HooksForClass(descriptor.c_str()).empty() &&
-      (descriptor != kOkHttpDescriptor || AcceptOkHttpLoader(env, loader))) {
+  if (!SitesForClass(descriptor).empty() && AcceptLoader(env, descriptor, loader)) {
     Retransform(env, klass);
   }
   if (loader != nullptr) env->DeleteLocalRef(loader);
@@ -365,7 +464,7 @@ jobjectArray JNICALL NativeSnapshot(JNIEnv* env, jclass) {
     jobjectArray row = env->NewObjectArray(4, string_class, nullptr);
     if (row == nullptr) return nullptr;
     env->SetObjectArrayElement(row, 0, env->NewStringUTF(hook.id));
-    env->SetObjectArrayElement(row, 1, env->NewStringUTF(hook.target));
+    env->SetObjectArrayElement(row, 1, env->NewStringUTF(hook.target.c_str()));
     env->SetObjectArrayElement(row, 2, env->NewStringUTF(hook.status.c_str()));
     env->SetObjectArrayElement(row, 3,
                                hook.detail.empty() ? nullptr : env->NewStringUTF(hook.detail.c_str()));
@@ -412,9 +511,8 @@ void RetransformLoadedClasses(JNIEnv* env) {
   for (jint i = 0; i < count; ++i) {
     std::string descriptor;
     jobject loader = nullptr;
-    if (ClassDescriptor(env, classes[i], &descriptor, &loader) &&
-        !HooksForClass(descriptor.c_str()).empty() &&
-        (descriptor != kOkHttpDescriptor || AcceptOkHttpLoader(env, loader))) {
+    if (ClassDescriptor(env, classes[i], &descriptor, &loader) && !SitesForClass(descriptor).empty() &&
+        AcceptLoader(env, descriptor, loader)) {
       Retransform(env, classes[i]);
     }
     if (loader != nullptr) env->DeleteLocalRef(loader);
@@ -744,12 +842,14 @@ jint Attach(JavaVM* vm, char* options) {
   g_trampoline = static_cast<jclass>(env->NewGlobalRef(trampoline_local));
   g_on_okhttp_loader = env->GetStaticMethodID(trampoline_local, "onOkHttpLoader",
                                               "(Ljava/lang/ClassLoader;)V");
+  g_on_grpc_loader = env->GetStaticMethodID(trampoline_local, "onGrpcLoader", "(Ljava/lang/ClassLoader;)V");
   g_on_hook = env->GetStaticMethodID(trampoline_local, "onHook",
                                      "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V");
   g_on_diag = env->GetStaticMethodID(trampoline_local, "onDiag",
                                      "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V");
   env->DeleteLocalRef(trampoline_local);
-  if (g_on_okhttp_loader == nullptr || g_on_hook == nullptr || g_on_diag == nullptr) {
+  if (g_on_okhttp_loader == nullptr || g_on_grpc_loader == nullptr || g_on_hook == nullptr ||
+      g_on_diag == nullptr) {
     if (env->ExceptionCheck()) env->ExceptionClear();
     Log(ANDROID_LOG_ERROR, "bootstrap trampoline methods are missing");
     return JNI_OK;

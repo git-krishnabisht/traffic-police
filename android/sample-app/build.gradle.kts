@@ -1,6 +1,6 @@
 // A small app that exercises every capture path: Retrofit suspend calls, raw OkHttp with
 // execute() and enqueue(), HttpURLConnection, streaming, uploads, redirects, errors, timeouts,
-// cancellation, TLS, and a second process. It talks to an HTTP and an HTTPS server inside the app
+// cancellation, TLS, a WebSocket, gRPC, and a second process. It talks to an HTTP and an HTTPS server inside the app
 // itself (OkHttp's MockWebServer), so it works on any device or emulator without a network.
 
 plugins {
@@ -65,6 +65,8 @@ dependencies {
     implementation(libs.okhttp.latest)
     implementation(libs.okhttp.tls)
     implementation(libs.mockwebserver3)
+    implementation(libs.grpc.okhttp)
+    implementation(libs.grpc.stub)
     implementation(libs.retrofit)
     implementation(libs.retrofit.scalars)
     implementation(libs.coroutines.android)

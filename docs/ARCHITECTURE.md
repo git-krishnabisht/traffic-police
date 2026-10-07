@@ -297,7 +297,7 @@ At launch no app class loader exists. That is why hooks are keyed by name, the C
 - **Where the agent comes from** (the CLI): `--agent-dir` or `TRAFFIC_POLICE_AGENT_DIR`; else the agent built into the binary (`TRAFFIC_POLICE_EMBED_AGENT=1` at build time, or a directory: `host/cli/build.rs`; the release workflow does this, about 3.7 MB); else `android/attach-agent/build/outputs/agent` in the source tree the binary was built from, or under the working directory.
 - **Picker and `--mode`.** Without `--mode`, the picker lists the processes that run capture (●) and the debuggable ones that do not (○, where Enter attaches the agent); `--mode library` offers only the first kind, and `--mode attach` also attaches after a restart of a picked process that already ran capture (`--follow`). With `--package`, the default stays library mode.
 - **Verified** on emulators at API 26, 31 and 37 (37: a user build with 16 KB pages), and since 2026-10-07 also 27, 28 and 29 (`default` arm64 images), with the sample's plain build, by the end-to-end test `plain_app_attach_end_to_end`. Since 2026-10-07 it begins with an attach as soon as the app's process exists (the app loads OkHttp while the agent starts; 26 of 26), waits for the app to be ready before the attach that tests a client built before it, and requires `--launch` to capture all 26 from API 27 on. Before: a runtime attach to a running app whose OkHttp client was built before (26 of 26 requests, every detail checked); the `:worker` process and a restart followed from their start on 31 and 37 (on 26 a restart loses its first five requests, as expected); `--launch` (26 of 26 on 31 and 37); nothing left in `startup_agents` and no forwards afterwards. By hand: attaching again after the app restarts (the first host code failed there: its `cp` could not overwrite the read-only copies), three sessions on one app at once, a non-debuggable app and a missing package (refused), a broken runtime dex (the cause from the log after 5 s), a second attach over a broken agent, an expired startup agent (inactive, and found by `doctor`), the picker on API 26 and 31, and a release binary with the agent built in, run outside the source tree.
-- **WebSockets** (Phase 5, 9.1 #4): the `okhttp_new_websocket` exit hook (§4.2). The end-to-end test checks the sample's socket (the handshake and six messages in order) in every run, which makes 27 requests per run since then, and five hooks.
+- **WebSockets** (Phase 5, 9.1 #4): the `okhttp_new_websocket` exit hook (§4.2). **gRPC** (Phase 5): the `grpc_channel_interceptors` and `grpc_stub_channel` exit hooks (§4.9). The end-to-end test checks the sample's socket (the handshake and six messages in order) and its three gRPC calls in every run. A run has had 30 requests since then, and the agent seven hooks. The attach to an app that is already running reaches its gRPC channel, built at start, through the stub hook.
 
 ### 4.8 Support matrix
 
@@ -315,6 +315,34 @@ At launch no app class loader exists. That is why hooks are keyed by name, the C
 | 3.9–3.13 | Full capture; no `requestFailed`/`responseFailed` events; no one-shot/duplex bodies exist |
 | 3.14–4.x | Full capture; newer listener callbacks (proxy select, canceled, cache) as available |
 | 5.x | Full capture; listener composed with `EventListener.plus()` on 5.3+; connect events may arrive on background threads |
+
+### 4.9 Capturing gRPC (Phase 5)
+
+grpc-java on Android talks HTTP/2 through grpc-okhttp. That transport carries its own copy of OkHttp 2's framing and never touches `okhttp3`, and the Cronet transport is invisible too. So gRPC is captured at gRPC's own API, with a `ClientInterceptor` (`io.trafficpolice.capture.grpc`). It is compiled against grpc-api 1.21.0, the oldest version it supports. Clients that are not grpc-java (Wire's `GrpcClient`, Connect) run on `okhttp3`, so they are already captured as HTTP.
+
+- **Where it sits.**
+  - Library mode: `TrafficPolice.grpcInterceptor()`, added to the channel first. Interceptors run in the reverse of the order they were added, so the first runs last, next to the transport, and sees what the app's other interceptors added.
+  - Attach mode, channels built after the attach: an exit hook on the channel builder's package-private `getEffectiveInterceptors` puts ours at index 0, the same place. The method has three signatures: `AbstractManagedChannelImplBuilder()` in 1.10 to 1.32, `ManagedChannelImplBuilder()` in 1.33 to 1.63, `ManagedChannelImplBuilder(String)` from 1.64. The agent tries each. A class that exists without the method (the forwarding shim of 1.34 to 1.58) is not a failure.
+  - Attach mode, channels built before the attach: these are reached through the stubs. An exit hook on `AbstractStub.getChannel()`, which every generated stub reads for each call, returns the channel with our interceptor on top.
+  - Missed: calls made with `channel.newCall` on a channel built before the attach (not through a stub). With `--launch` every channel is built after the attach.
+- **One capture per call.** Two of ours can see the same call: the library's and an attach hook's, or a stub's channel over a channel that has ours. A claim passed down in `CallOptions` lets the innermost capture the call; the others stand aside.
+- **What is recorded** (PROTOCOL.md §7.1, gRPC calls).
+  - The URL, from the call's authority and the method's full name.
+  - The headers as the stream sends them, from a `ClientStreamTracer`, so call credentials (`authorization`) are included. From 1.40 they come from `streamCreated`; before 1.40, from the tracer factory, which then ran as the stream was created. 1.40 is checked by name, since the code is compiled against 1.21.
+  - The transport's address and TLS session, from its attributes.
+  - Each message, re-marshaled with the method's marshaller and framed as gRPC frames it. Protobuf's marshaller can be read again; gRPC itself does so for each retry. A marshaller that hands out the message itself (an `InputStream`) is not read.
+  - The response headers, and the trailers with `grpc-status` and `grpc-message` rebuilt from the status, because gRPC strips them.
+  - Whether the server or the client library ended the call, from the tracer's `inboundTrailers`.
+- **What it cannot see.**
+  - The transport adds `content-type`, `te`, `user-agent` and `grpc-timeout` below every interceptor. The first two are constant and the third follows from the deadline, so they are added to the request headers; `user-agent` is not known.
+  - HTTP/2's `:status` never reaches gRPC's API, so 200 is reported.
+  - Compressed messages are captured uncompressed.
+  - Re-marshaled bytes can differ from the wire's in field order; for protobuf the content is the same.
+- **Threads.** The stack is captured in `interceptCall`, on the thread that made the call: a stub's caller. The listener's callbacks run on gRPC's executor and only record. Every callback catches its own errors (an `internal_error` diag), because an exception from `onHeaders` or `onMessage` would cancel the app's call.
+- **Tests.**
+  - `GrpcCaptureTest` uses the in-process transport, on gRPC 1.21.0, 1.39.0 (the last before `streamCreated`), 1.40.1, 1.63.0 and 1.84.0. It covers unary and streaming calls, a server error with trailers, a deadline, a cancel, two interceptors on one call, both attach hooks, pause, and the cap.
+  - `GrpcOkHttpTransportTest` uses grpc-okhttp, plaintext and TLS, on 1.84.0.
+  - On devices: the sample app's gRPC scenario (a grpc-okhttp server inside the app) in library and attach mode.
 
 ## 5. Host side (Rust)
 
@@ -761,7 +789,7 @@ Decided while finishing what the plan left (2026-10-07), for review:
 | 3 | Rules | MockWebServer tests for every action, gzip included |
 | 4 | Attach mode | An unmodified debuggable app shows traffic, including clients created before attach; `--launch` captures start-up requests; release binaries embed the agent and dex |
 | Fixes | Everything the plan left (2026-10-07) | The rule form (5.11.1) and rule reordering; the socket-name fallback (5.4); the nightly attach failure (4.7.2); the bugs of 0.3.1; the checks, tests and measurements the design promised (4.1, 8, 6); API 27–29 tried on devices |
-| 5 | Optional | gRPC hooks, Flutter (Dart VM service) backend, WebSocket frames |
+| 5 | Optional | WebSocket frames (§4.2) and gRPC (§4.9) in both modes, built and verified on devices 2026-10-07; Flutter (Dart VM service) backend (§5.13) |
 
 ## 11. Sources checked
 

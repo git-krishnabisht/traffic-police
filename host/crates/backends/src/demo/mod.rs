@@ -140,6 +140,8 @@ enum OneOff {
     Burst,
     /// A WebSocket: live order updates for a while, then closed.
     Socket,
+    /// gRPC calls: a lookup, a NOT_FOUND, a server stream.
+    Grpc,
 }
 
 #[derive(Debug)]
@@ -218,6 +220,9 @@ struct Ex {
     hop: u32,
     last_hop: bool,
     chunk: usize,
+    /// A gRPC call's trailers and status.
+    trailers: Headers,
+    grpc: Option<msg::GrpcStatus>,
 }
 
 impl Ex {
@@ -518,6 +523,7 @@ impl DemoDevice {
                         (190, OneOff::Burst),
                         // after the moments the snapshot tests show (12 s, 40 s)
                         (420, OneOff::Socket),
+                        (445, OneOff::Grpc),
                     ] {
                         self.push_flow(at + secs_x10 * 100 * MS, Flow::OneOff(o));
                     }
@@ -664,7 +670,102 @@ impl DemoDevice {
             hop: 0,
             last_hop: true,
             chunk: 16 * 1024,
+            trailers: Vec::new(),
+            grpc: None,
         }
+    }
+
+    /// gRPC (Phase 5): a stock lookup, one for a SKU the server does not know (a trailers-only
+    /// NOT_FOUND), and a server stream of an order's progress.
+    fn grpc(&mut self, at: u64) {
+        let token = self.proc.token.clone();
+        let call = |this: &mut Self, rpc: &str, req: Vec<u8>, stack: Vec<StackFrame>| {
+            let thread = this.next_worker();
+            let mut ex = this.base_ex("POST", format!("https://grpc.example.com/{rpc}"), thread, stack);
+            ex.protocol = "h2";
+            ex.reason = "";
+            ex.client = ("grpc", Some("1.84.0"));
+            ex.req_headers = h(&[
+                ("authorization", &format!("Bearer {token}")),
+                ("x-app-version", APP_VERSION),
+                ("grpc-accept-encoding", "gzip"),
+                ("content-type", "application/grpc"),
+                ("te", "trailers"),
+                ("grpc-timeout", "4999872u"),
+            ]);
+            ex.req_body = Some(("application/grpc".into(), Bytes::from(content::grpc_frame(&req))));
+            ex.setup_ms = (0, 0, 0);
+            ex
+        };
+        let ok = |code: u32, name: &str, message: Option<&str>| {
+            let mut trailers = vec![("grpc-status".to_string(), code.to_string())];
+            if let Some(m) = message {
+                trailers.push(("grpc-message".into(), m.into()));
+            }
+            (trailers, Some(msg::GrpcStatus { code, status: name.into(), message: message.map(Into::into) }))
+        };
+        let stub = "com.example.shop.inventory.v1.InventoryGrpc$InventoryBlockingStub";
+        let repo = "com.example.shop.inventory.StockRepository";
+
+        let wall = self.wall(at) as u64;
+        let mut ex = call(
+            self,
+            "shop.inventory.v1.Inventory/GetStock",
+            content::stock_request("sku_0042"),
+            content::grpc_stack(stub, "getStock", repo, "stock", "StockRepository.kt", 57),
+        );
+        ex.resp_headers =
+            h(&[("content-type", "application/grpc"), ("grpc-encoding", "identity"), ("grpc-accept-encoding", "gzip")]);
+        ex.resp_body = Bytes::from(content::grpc_frame(&content::stock("sku_0042", 17, 2, wall)));
+        (ex.trailers, ex.grpc) = ok(0, "OK", None);
+        let end = self.start(at, ex);
+
+        let mut ex = call(
+            self,
+            "shop.inventory.v1.Inventory/GetStock",
+            content::stock_request("sku_9999"),
+            content::grpc_stack(stub, "getStock", repo, "stock", "StockRepository.kt", 57),
+        );
+        // trailers only: the server answers with its status and no message
+        ex.resp_headers = h(&[("content-type", "application/grpc")]);
+        ex.wait_ms = self.rng.range(30, 60);
+        (ex.trailers, ex.grpc) = ok(5, "NOT_FOUND", Some("sku sku_9999 is not in warehouse blr-1"));
+        let end = self.start(end + 300 * MS, ex);
+
+        let order = "ord_4214";
+        let mut ex = call(
+            self,
+            "shop.orders.v1.Orders/Track",
+            content::track_request(order),
+            content::grpc_stack(
+                "com.example.shop.orders.v1.OrdersGrpc$OrdersBlockingStub",
+                "track",
+                "com.example.shop.orders.OrderTracker",
+                "follow",
+                "OrderTracker.kt",
+                33,
+            ),
+        );
+        ex.resp_headers = h(&[("content-type", "application/grpc"), ("grpc-encoding", "identity")]);
+        let mut body = Vec::new();
+        let mut frame = 0;
+        for (i, state) in ["picked_up", "nearby", "delivered"].iter().enumerate() {
+            let f = content::grpc_frame(&content::track_update(
+                order,
+                state,
+                wall + 2_000 * i as u64,
+                12.9716 + 0.002 * i as f64,
+                77.5946 - 0.003 * i as f64,
+            ));
+            frame = f.len();
+            body.extend(f);
+        }
+        ex.resp_body = Bytes::from(body);
+        // one update per chunk, two seconds apart
+        ex.chunk = frame;
+        ex.receive_ms = 4_000;
+        (ex.trailers, ex.grpc) = ok(0, "OK", None);
+        self.start(end + 400 * MS, ex);
     }
 
     fn login(&mut self, at: u64) {
@@ -955,6 +1056,7 @@ impl DemoDevice {
                 self.start(at, ex);
             }
             OneOff::Socket => self.socket(at),
+            OneOff::Grpc => self.grpc(at),
             OneOff::NotFound => {
                 let body = json!({"ok": false, "error": {"code": "NOT_FOUND", "message": "asset 'promo-banner-v3.json' does not exist", "requestId": self.rng.uuid()}}).to_string();
                 let thread = self.next_worker();
@@ -1228,7 +1330,7 @@ impl DemoDevice {
         let call = self.next_call - 1;
         let url = format!("{API}/ws/orders");
         let thread = content::thread("main", 2, "call");
-        let stack = content::app_stack("socket", "com.example.shop.orders.LiveOrders", "connect", "LiveOrders.kt", 41);
+        let stack = content::socket_stack("com.example.shop.orders.LiveOrders", "connect", "LiveOrders.kt", 41);
         let headers = self.api_headers(API_HOST, true, None, None);
         self.msg(
             at,
@@ -1297,7 +1399,7 @@ impl DemoDevice {
         self.msg(t, ws(t, true, "close", None, Some(1000), Some("left the orders screen")));
         t += 35 * MS;
         self.msg(t, ws(t, false, "close", None, Some(1000), Some("bye")));
-        self.msg(t + MS, DeviceMsg::Done(msg::Done { seq: 0, ts: t + MS, txn }));
+        self.msg(t + MS, DeviceMsg::Done(msg::Done { seq: 0, ts: t + MS, txn, trailers: Vec::new(), grpc: None }));
     }
 
     fn start(&mut self, at: u64, ex: Ex) -> u64 {
@@ -1395,6 +1497,8 @@ impl DemoDevice {
                         causes: Vec::new(),
                     },
                     conn: None,
+                    trailers: Vec::new(),
+                    grpc: ex.grpc.clone(),
                 }),
             );
             if ex.last_hop {
@@ -1488,7 +1592,10 @@ impl DemoDevice {
             self.mark(t, txn, "resp_body_end");
         }
         t += MS / 5;
-        self.msg(t, DeviceMsg::Done(msg::Done { seq: 0, ts: t, txn }));
+        self.msg(
+            t,
+            DeviceMsg::Done(msg::Done { seq: 0, ts: t, txn, trailers: ex.trailers.clone(), grpc: ex.grpc.clone() }),
+        );
         if ex.last_hop {
             self.mark(t, txn, "call_end");
         }

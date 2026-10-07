@@ -41,6 +41,14 @@ object Backend {
     lateinit var trust: HandshakeCertificates
         private set
 
+    /** The gRPC server (plaintext HTTP/2, grpc-okhttp), and the app's channel and stub for it. */
+    lateinit var grpcServer: io.grpc.Server
+        private set
+    lateinit var grpcChannel: io.grpc.ManagedChannel
+        private set
+    lateinit var verification: Rpc.VerificationStub
+        private set
+
     private val statusPolls = ConcurrentHashMap<String, AtomicInteger>()
     private val sessionIds = AtomicInteger()
 
@@ -59,6 +67,14 @@ object Backend {
             .build()
         trust = HandshakeCertificates.Builder().addTrustedCertificate(cert.certificate).build()
         https = TlsServer(HandshakeCertificates.Builder().heldCertificate(cert).build(), loopback).apply { start() }
+        grpcServer = io.grpc.okhttp.OkHttpServerBuilder.forPort(0, io.grpc.InsecureServerCredentials.create())
+            .addService(Rpc.service())
+            .build()
+            .start()
+        // built at start, as apps build theirs: attach mode then meets a channel made before it
+        grpcChannel = Capture.grpc(io.grpc.okhttp.OkHttpChannelBuilder.forAddress("127.0.0.1", grpcServer.port).usePlaintext())
+            .build()
+        verification = Rpc.VerificationStub(grpcChannel)
     }
 
     /**

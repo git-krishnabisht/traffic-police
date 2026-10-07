@@ -58,6 +58,8 @@ enum Test {
     Url(Regex),
     Method(Vec<String>),
     Status(StatusTest),
+    /// A gRPC status code; `None` for any status but OK.
+    Grpc(Option<u32>),
     Host(Regex),
     Path(Regex),
     Type(String),
@@ -276,7 +278,17 @@ impl Filter {
             } else if let Some((key, value)) = body.split_once(':').filter(|(k, _)| {
                 matches!(
                     *k,
-                    "method" | "status" | "host" | "path" | "type" | "thread" | "rule" | "is" | "header" | "body"
+                    "method"
+                        | "status"
+                        | "grpc"
+                        | "host"
+                        | "path"
+                        | "type"
+                        | "thread"
+                        | "rule"
+                        | "is"
+                        | "header"
+                        | "body"
                 )
             }) {
                 if value.is_empty() && key != "body" {
@@ -300,6 +312,10 @@ impl Filter {
                             if cmp == Cmp::Eq { StatusTest::Code(code) } else { StatusTest::Cmp(cmp, code) }
                         }
                     }),
+                    "grpc" if value.eq_ignore_ascii_case("error") => Test::Grpc(None),
+                    "grpc" => Test::Grpc(Some(crate::model::Grpc::code_of(value).ok_or_else(|| {
+                        err(format!("{value:?}: use a gRPC code (5), its name (not_found), or error"))
+                    })?)),
                     "host" => Test::Host(host_glob(value).map_err(|e| err(e.to_string()))?),
                     "path" => Test::Path(path_glob(value).map_err(|e| err(e.to_string()))?),
                     "type" => Test::Type(value.to_ascii_lowercase()),
@@ -355,6 +371,10 @@ impl Filter {
                     StatusTest::Pending => is_pending(t),
                     StatusTest::Cmp(cmp, n) => t.status().is_some_and(|s| cmp.holds(u64::from(s), u64::from(*n))),
                 },
+                Test::Grpc(code) => t.grpc.as_ref().is_some_and(|g| match code {
+                    Some(c) => g.code == *c,
+                    None => g.code != 0,
+                }),
                 Test::Host(re) => re.is_match(&t.url.host),
                 Test::Path(re) => re.is_match(&t.url.path),
                 Test::Type(v) => {
@@ -483,6 +503,23 @@ mod tests {
         assert!(check("header:Content-Type=JSON", &t), "response headers too");
         assert!(!check("header:x-request-id=zzz", &t));
         assert!(check("-header:authorization", &t));
+    }
+
+    #[test]
+    fn grpc_statuses_by_code_name_or_error() {
+        let mut t = txn("POST", "https://grpc.example.com/shop.inventory.v1.Inventory/GetStock", Some(200));
+        t.grpc = Some(crate::model::Grpc { code: 5, name: "NOT_FOUND".into(), message: None });
+        assert!(check("grpc:5", &t));
+        assert!(check("grpc:not_found", &t));
+        assert!(check("grpc:error status:200", &t));
+        assert!(!check("grpc:ok", &t));
+        assert_eq!(t.status_text(), "NOT_FOUND");
+        assert_eq!(t.status_class(), crate::model::StatusClass::ClientError);
+        t.grpc = Some(crate::model::Grpc { code: 0, name: "OK".into(), message: None });
+        assert!(check("grpc:OK -grpc:error", &t));
+        let plain = txn("GET", "https://api.example.app/", Some(200));
+        assert!(!check("grpc:ok", &plain) && !check("grpc:error", &plain));
+        assert!(Filter::parse("grpc:nope").unwrap_err().message.contains("gRPC code"));
     }
 
     #[test]

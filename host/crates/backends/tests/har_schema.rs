@@ -2,7 +2,7 @@
 //! rules of the HAR 1.2 specification that the schema leaves out: timings that are never
 //! negative except for -1, `time` as the sum of the timings, `ssl` inside `connect`, and query
 //! strings that match the URL. The traffic is the demo's: redirects, failures, gzip, binary and
-//! form bodies, a rule's rewrite, a cancelled call, a timeout and a WebSocket.
+//! form bodies, a rule's rewrite, a cancelled call, a timeout, a WebSocket and gRPC calls.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -233,6 +233,11 @@ fn the_har_export_follows_har_1_2() {
     assert!(
         has(&|e| e["response"]["status"] == 101 && e["_webSocketMessages"].as_array().is_some_and(|m| m.len() == 8)),
         "a WebSocket and its messages"
+    );
+    assert!(
+        has(&|e| e["_trafficPolice"]["grpc"]["status"] == "NOT_FOUND"
+            && e["_trafficPolice"]["trailers"][0]["name"] == "grpc-status"),
+        "a gRPC error with its trailers"
     );
     assert!(problems.is_empty(), "{} problems:\n{}", problems.len(), problems.join("\n"));
 }

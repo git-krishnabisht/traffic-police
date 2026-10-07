@@ -74,6 +74,22 @@ impl Normalizer {
         TxnKey { source: self.source, txn }
     }
 
+    /// A `done` or `fail` that carries trailers or a gRPC status: those first.
+    fn trailers(
+        &self,
+        txn: u64,
+        at: u64,
+        trailers: msg::Headers,
+        grpc: Option<msg::GrpcStatus>,
+        out: &mut Vec<SessionEvent>,
+    ) {
+        if trailers.is_empty() && grpc.is_none() {
+            return;
+        }
+        let grpc = grpc.map(|g| crate::model::Grpc { code: g.code, name: g.status, message: g.message });
+        out.push(SessionEvent::Trailers { key: self.key(txn), at, trailers, grpc });
+    }
+
     /// Feed one frame. Events are appended to `out`; control messages are returned.
     pub fn frame(&mut self, frame: Frame, out: &mut Vec<SessionEvent>) -> Result<Option<Control>, NormalizeError> {
         match frame {
@@ -147,16 +163,22 @@ impl Normalizer {
                 out.push(SessionEvent::BodyProgress { key: self.key(m.txn), dir: m.dir, at: m.ts, total: m.bytes })
             }
             DeviceMsg::Mark(m) => out.push(SessionEvent::Mark { key: self.key(m.txn), at: m.ts, name: m.m }),
-            DeviceMsg::Done(m) => out.push(SessionEvent::Completed { key: self.key(m.txn), at: m.ts }),
-            DeviceMsg::Fail(m) => out.push(SessionEvent::Failed(Box::new(event::Failed {
-                key: self.key(m.txn),
-                at: m.ts,
-                phase: m.phase,
-                canceled: m.canceled,
-                simulated: m.simulated,
-                error: m.error,
-                conn: m.conn,
-            }))),
+            DeviceMsg::Done(m) => {
+                self.trailers(m.txn, m.ts, m.trailers, m.grpc, out);
+                out.push(SessionEvent::Completed { key: self.key(m.txn), at: m.ts })
+            }
+            DeviceMsg::Fail(m) => {
+                self.trailers(m.txn, m.ts, m.trailers, m.grpc, out);
+                out.push(SessionEvent::Failed(Box::new(event::Failed {
+                    key: self.key(m.txn),
+                    at: m.ts,
+                    phase: m.phase,
+                    canceled: m.canceled,
+                    simulated: m.simulated,
+                    error: m.error,
+                    conn: m.conn,
+                })))
+            }
             DeviceMsg::Rule(m) => out.push(SessionEvent::RuleApplied(Box::new(event::RuleApplied {
                 key: self.key(m.txn),
                 at: m.ts,

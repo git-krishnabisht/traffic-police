@@ -222,6 +222,86 @@ fn coroutine_tail(worker: i64) -> Vec<StackFrame> {
     ]
 }
 
+/// A WebSocket opened from a coroutine (`TrafficPolice.newWebSocket` in place of
+/// `client.newWebSocket`).
+pub fn socket_stack(caller_class: &str, caller_method: &str, file: &str, line: i32) -> Vec<StackFrame> {
+    let mut v = vec![
+        f("io.trafficpolice.TrafficPolice", "newWebSocket", "TrafficPolice.java", 141),
+        f(caller_class, caller_method, file, line),
+        f(&format!("{caller_class}${caller_method}$1"), "invokeSuspend", file, line - 6),
+    ];
+    v.extend(coroutine_tail(0));
+    v
+}
+
+/// A blocking gRPC stub's call from a coroutine on `Dispatchers.IO`: what the interceptor sees.
+pub fn grpc_stack(
+    stub: &str,
+    rpc: &str,
+    caller_class: &str,
+    caller_method: &str,
+    file: &str,
+    line: i32,
+) -> Vec<StackFrame> {
+    let stub_file = format!("{}.java", stub.rsplit('.').next().unwrap_or(stub).split('$').next().unwrap_or(stub));
+    let mut v = vec![
+        f("io.grpc.ClientInterceptors$InterceptorChannel", "newCall", "ClientInterceptors.java", 156),
+        f("io.grpc.internal.ForwardingManagedChannel", "newCall", "ForwardingManagedChannel.java", 63),
+        f("io.grpc.stub.ClientCalls", "blockingUnaryCall", "ClientCalls.java", 157),
+        f(stub, rpc, &stub_file, 412),
+        f(caller_class, caller_method, file, line),
+        f(&format!("{caller_class}${caller_method}$2"), "invokeSuspend", file, line - 2),
+    ];
+    v.extend(coroutine_tail(0));
+    v
+}
+
+/// One gRPC message as it travels: not compressed, its length (big-endian), the message.
+pub fn grpc_frame(msg: &[u8]) -> Vec<u8> {
+    let mut out = vec![0];
+    out.extend_from_slice(&(msg.len() as u32).to_be_bytes());
+    out.extend_from_slice(msg);
+    out
+}
+
+/// `GetStockRequest { sku=1, warehouse=2 }`
+pub fn stock_request(sku: &str) -> Vec<u8> {
+    let mut out = Vec::new();
+    pb_bytes(&mut out, 1, sku.as_bytes());
+    pb_bytes(&mut out, 2, b"blr-1");
+    out
+}
+
+/// `Stock { sku=1, available=2, reserved=3, updated_ms=4 }`
+pub fn stock(sku: &str, available: u64, reserved: u64, updated_ms: u64) -> Vec<u8> {
+    let mut out = Vec::new();
+    pb_bytes(&mut out, 1, sku.as_bytes());
+    pb_varint(&mut out, 2, available);
+    pb_varint(&mut out, 3, reserved);
+    pb_varint(&mut out, 4, updated_ms);
+    out
+}
+
+/// `TrackRequest { order_id=1 }`
+pub fn track_request(order: &str) -> Vec<u8> {
+    let mut out = Vec::new();
+    pb_bytes(&mut out, 1, order.as_bytes());
+    out
+}
+
+/// `TrackUpdate { order_id=1, state=2, at_ms=3, Location courier=4 { lat=1, lng=2 } }`
+pub fn track_update(order: &str, state: &str, at_ms: u64, lat: f64, lng: f64) -> Vec<u8> {
+    let mut out = Vec::new();
+    pb_bytes(&mut out, 1, order.as_bytes());
+    pb_bytes(&mut out, 2, state.as_bytes());
+    pb_varint(&mut out, 3, at_ms);
+    let mut loc = Vec::new();
+    pb_double(&mut loc, 1, lat);
+    pb_double(&mut loc, 2, lng);
+    pb_bytes(&mut out, 4, &loc);
+    out
+}
+
 /// A Retrofit suspend call made from `class.method` (the app's call site).
 pub fn app_stack(api_method: &str, caller_class: &str, caller_method: &str, file: &str, line: i32) -> Vec<StackFrame> {
     let mut v = retrofit_suspend_frames();

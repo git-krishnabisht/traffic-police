@@ -622,6 +622,9 @@ async fn attach_checks(
                         _ => Mark::Warn,
                     };
                     let fix = match h.status.as_str() {
+                        "method_not_found" | "class_not_found" if h.id.starts_with("grpc") => Some(
+                            "a minified (R8) build renames gRPC; keep io.grpc.** in the debug build, or use library mode (TrafficPolice.grpcInterceptor())",
+                        ),
                         "method_not_found" | "class_not_found" => Some(
                             "a minified (R8) build renames OkHttp; keep okhttp3.** in the debug build, or use library mode",
                         ),

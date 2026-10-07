@@ -44,6 +44,7 @@ dependencies {
     implementation(project(":capture-core"))
     compileOnly(libs.okhttp.baseline) { exclude(group = "com.squareup.okio") }
     compileOnly(libs.okio.baseline)
+    compileOnly(libs.grpc.api.baseline)
 
     androidTestImplementation(testFixtures(project(":capture-core")))
     androidTestImplementation(libs.okhttp.latest)

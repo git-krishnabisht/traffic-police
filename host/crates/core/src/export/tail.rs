@@ -140,6 +140,12 @@ pub fn json_line(store: &SessionStore, i: TxnIdx, now: Ts, bodies: bool) -> Valu
     if t.is_websocket() {
         line["websocket"] = websocket(t, bodies);
     }
+    if !t.trailers.is_empty() {
+        line["trailers"] = pairs(&t.trailers);
+    }
+    if let Some(g) = &t.grpc {
+        line["grpc"] = json!({ "code": g.code, "status": g.name, "message": g.message });
+    }
     line
 }
 

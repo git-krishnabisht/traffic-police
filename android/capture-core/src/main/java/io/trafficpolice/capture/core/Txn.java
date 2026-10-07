@@ -50,22 +50,45 @@ public final class Txn {
 
     /** Completes the transaction (once; nothing after a failure). */
     public void done() {
+        done(null, null);
+    }
+
+    /** Completes the transaction with its trailers and a gRPC status (either may be null). */
+    public void done(String[] trailers, GrpcStatus grpc) {
         if (finished.compareAndSet(false, true)) {
-            rec.emit(new Event.Done(rec.now(), id));
+            rec.emit(new Event.Done(rec.now(), id, trailers, grpc));
         }
     }
 
     /** Fails the transaction (once). */
     public void fail(String phase, boolean canceled, Throwable error, ConnInfo conn) {
+        fail(phase, canceled, error, conn, null, null);
+    }
+
+    /** Fails the transaction (once), with the trailers and gRPC status known (either may be null). */
+    public void fail(String phase, boolean canceled, Throwable error, ConnInfo conn, String[] trailers, GrpcStatus grpc) {
         if (finished.compareAndSet(false, true)) {
-            rec.emit(new Event.Fail(rec.now(), id, phase, canceled, false, error, conn));
+            rec.emit(new Event.Fail(rec.now(), id, phase, canceled, false, error, conn, trailers, grpc));
+        }
+    }
+
+    /** A gRPC call's status (PROTOCOL.md §7.1 {@code done}, {@code fail}). */
+    public static final class GrpcStatus {
+        final int code;
+        final String name;
+        final String message;
+
+        public GrpcStatus(int code, String name, String message) {
+            this.code = code;
+            this.name = name;
+            this.message = message;
         }
     }
 
     /** Fails the transaction (once) with a failure a rule made. */
     void failSimulated(String phase, Throwable error) {
         if (finished.compareAndSet(false, true)) {
-            rec.emit(new Event.Fail(rec.now(), id, phase, false, true, error, null));
+            rec.emit(new Event.Fail(rec.now(), id, phase, false, true, error, null, null, null));
         }
     }
 
@@ -128,6 +151,22 @@ public final class Txn {
         /** Whether bytes passed now would be captured (else {@link #skip} is enough). */
         public synchronized boolean wantsBytes() {
             return !ended && capture && captured < cap;
+        }
+
+        /**
+         * Whether {@code len} more bytes would all be captured: a body made of messages (gRPC) is
+         * cut between them, never inside one.
+         */
+        public synchronized boolean fits(long len) {
+            return !ended && capture && captured + len <= cap;
+        }
+
+        /** Bytes that were not captured because the cap was reached: counted, and reported once. */
+        public void skipOverCap(long len) {
+            if (capture && len > 0) {
+                txn.rec.capReached();
+            }
+            skip(len);
         }
 
         /** Bytes that passed through but are not captured: counted and reported as progress. */

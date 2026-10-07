@@ -6,10 +6,11 @@ import java.util.concurrent.ConcurrentHashMap;
 /** Small bootstrap-visible dispatch point inserted into boot and app dex methods. */
 public final class Trampoline {
     /** Read by the agent (kVersion in agent.cpp): a second agent finds it and stays inactive. */
-    public static final String VERSION = "0.1.0";
+    public static final String VERSION = "0.2.0";
 
     private static volatile ExitHandler handler;
     private static volatile ClassLoader okhttpLoader;
+    private static volatile ClassLoader grpcLoader;
     private static final ThreadLocal<Boolean> IN_HOOK = new ThreadLocal<Boolean>();
     private static final ConcurrentHashMap<String, Boolean> REPORTED = new ConcurrentHashMap<String, Boolean>();
 
@@ -47,6 +48,24 @@ public final class Trampoline {
         }
     }
 
+    public static void onGrpcLoader(ClassLoader loader) {
+        if (loader == null || grpcLoader != null) return;
+        synchronized (Trampoline.class) {
+            if (grpcLoader == null) {
+                grpcLoader = loader;
+                ExitHandler current = handler;
+                if (current != null) {
+                    try {
+                        current.onGrpcLoader(loader);
+                    } catch (Throwable t) {
+                        // Instrumentation must never change the app's class-loading result.
+                        failed("onGrpcLoader", t);
+                    }
+                }
+            }
+        }
+    }
+
     public static void onHook(String id, String target, String status, String detail) {
         ExitHandler current = handler;
         if (current == null) return;
@@ -78,6 +97,14 @@ public final class Trampoline {
             } catch (Throwable t) {
                 // Instrumentation must never change the app's class-loading result.
                 failed("onOkHttpLoader", t);
+            }
+        }
+        ClassLoader rpcLoader = grpcLoader;
+        if (rpcLoader != null) {
+            try {
+                current.onGrpcLoader(rpcLoader);
+            } catch (Throwable t) {
+                failed("onGrpcLoader", t);
             }
         }
         try {

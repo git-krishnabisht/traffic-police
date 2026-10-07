@@ -268,6 +268,18 @@ Mark names are listed in §9.
 
 Sent once, after the last `body_end` of the transaction (or after `resp` when there is no response body).
 
+A gRPC call (Phase 5) ends with its trailers and status:
+
+```jsonc
+{ "t": "done", "seq": 61, "ts": 5822930100000, "txn": 9,
+  "trailers": [["grpc-status", "5"], ["grpc-message", "sku sku_9999 is not in warehouse blr-1"], ["x-detail", "…"]],
+  "grpc": { "code": 5, "status": "NOT_FOUND", "message": "sku sku_9999 is not in warehouse blr-1" } }
+```
+
+- `trailers` is the response's trailers in order, as `[name, value]` pairs. gRPC strips `grpc-status` and `grpc-message` before an interceptor sees them; they are rebuilt from the call's status and come first. Binary (`-bin`) values are base64 without padding, as HTTP/2 carries them.
+- `grpc` is the call's status: the code, its name, and the description when there is one. A call the server ended has `done` with its status, OK or not; `fail` is for a call the client library ended itself (a deadline, a cancel, no connection), and also carries `grpc` (and `trailers` when some arrived).
+- Both fields are optional, are only sent for gRPC calls today, and a host that does not know them ignores them.
+
 #### `fail` — transaction failed
 
 ```jsonc
@@ -302,6 +314,20 @@ Sent once, after the last `body_end` of the transaction (or after `resp` when th
 - For a `fail` action the `rule` event precedes the `fail` event (which has `simulated: true`); the change's `exception` is the class thrown.
 - `reason` marks a change the runtime made itself: `cache_guard` (§8.4, rule 7), or `body_changed` for the `Content-Encoding` removed and the `Content-Length` set with a new body (rule 4).
 - `rules` lists every rule that acted, including one whose actions changed nothing: a `replace` that finds nothing reports `body_edit` with `matches: 0`, and the app gets the original.
+
+#### gRPC calls
+
+A gRPC call (grpc-java, Phase 5) is one transaction:
+
+- `req`: `method` `POST`, `url` `<scheme>://<authority>/<service>/<method>` (for example `https://grpc.example.com/shop.inventory.v1.Inventory/GetStock`), `client` `{ "kind": "grpc", "version": "1.84.0" }`, `body` `{ "type": "application/grpc", "duplex": … }` (`duplex` for client and bidirectional streaming).
+  - `req` is sent when the call's stream exists (as OkHttp's waits for the network). By then the scheme, the address, the TLS session (`conn`) and the headers as sent are known, including call credentials such as `authorization`. Messages sent before that wait with it.
+  - `call_start` in `marks` is when the app made the call.
+  - gRPC 1.40 and newer report the stream's headers. Before 1.40 they come from the transport, and only when it reports them.
+  - `content-type: application/grpc`, `te: trailers` and, with a deadline, `grpc-timeout` are added. The transport adds them below every interceptor, so no hook sees them. `user-agent` is not known.
+- `resp`: `status` 200 (HTTP/2's status is never shown to gRPC's API; a gRPC response always has one), `protocol` `h2`, and the response headers. A trailers-only response (an error with no messages) gets a `resp` with its `content-type`, and the rest of its metadata goes to the trailers.
+- Bodies: each message re-marshaled in gRPC's framing (a 0 flag byte, the length as 4 bytes big-endian, the message), the request's as `dir = 0` and the response's as `dir = 1`. Messages are always uncompressed, whatever `grpc-encoding` says. The cap cuts a body only between messages: a message that would pass it is counted (`prog`, `body_end.bytes`) and not sent.
+- Marks: `req_headers_end` and `resp_headers_start` from gRPC's stream tracer, `req_body_end` at half-close, `resp_headers_end`, `resp_body_start` and `resp_body_end`.
+- The end: `done` with `trailers` and `grpc`, or `fail` (see `done`).
 
 #### `ws` — a WebSocket message
 
@@ -738,6 +764,7 @@ Verified against `platform/packages/modules/adb` (Android 17), older `system/cor
 - A failed transaction adds `"failure":{"class":…,"message":…,"phase":…,"canceled":…,"simulated":…}`; `simulated` is true when a rule's `fail` action threw it.
 - `rules` lists the ids of the rules that applied, each once. When they changed the response, `status` and `response` are what the app received, and `original` adds the response as the network gave it, in the same form plus its `status`.
 - `--bodies` adds `request.body` and `response.body` as `{"text": …}` for UTF-8 text or `{"base64": …}` otherwise (after Content-Encoding decoding).
+- A gRPC call adds `"grpc":{"code":5,"status":"NOT_FOUND","message":…}` and `"trailers":[[name, value], …]` (`done`, §7.1).
 - A WebSocket (status 101) adds `"websocket":{"sent":2,"sent_bytes":60,"received":6,"received_bytes":374}`, and its line is printed when the socket closes. `--bodies` adds `messages`, each `{"dir":"out"|"in","op":"text"|"binary"|"close","at_ms":…,"size":…}` with `text` or `base64`, or `code` and `reason` for a close, and `"truncated":true` when the capture cut it. `at_ms` counts from the transaction's start.
 
 `tail --events` prints the captured stream instead, one line per message as the app sent it (the filter does not apply):

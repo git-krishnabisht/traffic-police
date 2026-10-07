@@ -3,3 +3,4 @@
 -keep class io.trafficpolice.** { *; }
 -dontwarn okhttp3.**
 -dontwarn okio.**
+-dontwarn io.grpc.**

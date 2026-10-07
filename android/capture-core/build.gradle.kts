@@ -2,9 +2,9 @@
 // ring, connection handling, and the OkHttp and HttpURLConnection capture. Android specifics
 // (LocalServerSocket, TrafficStats, the auto-start provider) live in :capture.
 //
-// Compiled as Java 8 against the oldest API it supports (OkHttp 3.14.9 with Okio 1.13.0), so
-// javac rejects anything newer; only ForwardingEventListener is compiled against OkHttp 5.5.0
-// (docs/research/05-okhttp-okio.md §10). No runtime dependencies.
+// Compiled as Java 8 against the oldest API it supports (OkHttp 3.14.9 with Okio 1.13.0; gRPC
+// 1.21.0), so javac rejects anything newer; only ForwardingEventListener is compiled against
+// OkHttp 5.5.0 (docs/research/05-okhttp-okio.md §10). No runtime dependencies.
 
 plugins {
     `java-library`
@@ -41,6 +41,7 @@ sourceSets.main {
 dependencies {
     compileOnly(libs.okhttp.baseline) { exclude(group = "com.squareup.okio") }
     compileOnly(libs.okio.baseline)
+    compileOnly(libs.grpc.api.baseline)
     "okhttp5CompileOnly"(libs.okhttp.latest)
 }
 
@@ -93,8 +94,52 @@ testing {
     }
 }
 
+// The gRPC tests (src/grpcTest) on the oldest supported gRPC, the last before ClientStreamTracer's
+// streamCreated (1.39), the first with it (1.40), and newer ones. gRPC's in-process transport is a
+// separate artifact from 1.55; the newest suite also runs a real HTTP/2 transport (grpc-okhttp).
+data class GrpcMatrix(val name: String, val grpc: String, val inprocess: Boolean, val okhttp: Boolean = false)
+
+val grpcMatrix = listOf(
+    GrpcMatrix("grpc1_21", "1.21.0", false),
+    GrpcMatrix("grpc1_39", "1.39.0", false),
+    GrpcMatrix("grpc1_40", "1.40.1", false),
+    GrpcMatrix("grpc1_63", "1.63.0", true),
+    GrpcMatrix("grpc1_84", "1.84.0", true, okhttp = true),
+)
+
+testing {
+    suites {
+        for (m in grpcMatrix) {
+            register(m.name, JvmTestSuite::class) {
+                useJUnit(libs.versions.junit.get())
+                sources {
+                    java.setSrcDirs(listOf("src/grpcTest/java") + if (m.okhttp) listOf("src/grpcOkhttpTest/java") else emptyList())
+                }
+                dependencies {
+                    implementation(project())
+                    implementation(testFixtures(project()))
+                    implementation("io.grpc:grpc-api:${m.grpc}")
+                    implementation("io.grpc:grpc-core:${m.grpc}")
+                    implementation("io.grpc:grpc-stub:${m.grpc}")
+                    if (m.inprocess) implementation("io.grpc:grpc-inprocess:${m.grpc}")
+                    if (m.okhttp) {
+                        implementation("io.grpc:grpc-okhttp:${m.grpc}")
+                        implementation(libs.okhttp.tls)
+                    }
+                }
+                targets.all {
+                    testTask.configure {
+                        systemProperty("trafficpolice.grpc", m.grpc)
+                    }
+                }
+            }
+        }
+    }
+}
+
 tasks.named("check") {
     dependsOn(matrix.map { it.name })
+    dependsOn(grpcMatrix.map { it.name })
 }
 
 // Protocol goldens are written only on request (PROTOCOL.md §11).

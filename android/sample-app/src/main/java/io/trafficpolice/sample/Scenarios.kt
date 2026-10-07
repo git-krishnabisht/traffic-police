@@ -87,6 +87,7 @@ class Scenarios(private val context: Context, private val log: (String) -> Unit)
         "HTTPS (OkHttp and HttpURLConnection)" to ::https,
         "unknown host" to ::unknownHost,
         "WebSocket" to ::webSocket,
+        "gRPC (blocking stub)" to ::grpc,
         "second process" to ::secondProcess,
     )
 
@@ -236,6 +237,21 @@ class Scenarios(private val context: Context, private val log: (String) -> Unit)
     private suspend fun unknownHost() {
         withContext(Dispatchers.IO) {
             client.newCall(Request.Builder().url("https://api.nonexistent.invalid/v1/ping").build()).execute().close()
+        }
+    }
+
+    /** gRPC over HTTP/2: a verdict, a server stream of progress, and a NOT_FOUND with a trailer. */
+    private suspend fun grpc() = withContext<Unit>(Dispatchers.IO) {
+        val stub = Backend.verification.withDeadlineAfter(10, TimeUnit.SECONDS)
+        val verdict = stub.check(Rpc.checkRequest("session_grpc"))
+        log("  gRPC check: ${verdict.size} bytes")
+        var updates = 0
+        stub.watch(Rpc.watchRequest("session_grpc")).forEach { _ -> updates++ }
+        log("  gRPC watch: $updates updates")
+        try {
+            stub.lookup(Rpc.lookupRequest("doc_404"))
+        } catch (e: io.grpc.StatusRuntimeException) {
+            log("  gRPC lookup: ${e.status.code}")
         }
     }
 

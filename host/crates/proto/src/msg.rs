@@ -432,6 +432,22 @@ pub struct Done {
     pub seq: u64,
     pub ts: u64,
     pub txn: u64,
+    /// The response's trailers, in order: a gRPC call's, with `grpc-status` and `grpc-message`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub trailers: Headers,
+    /// A gRPC call's status.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grpc: Option<GrpcStatus>,
+}
+
+/// A gRPC call's status (PROTOCOL.md §7.1 `done` and `fail`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GrpcStatus {
+    pub code: u32,
+    /// The code's name: `OK`, `NOT_FOUND`, …
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -465,6 +481,12 @@ pub struct Fail {
     pub error: ErrorInfo,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub conn: Option<Conn>,
+    /// Trailers that arrived before the failure (gRPC).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub trailers: Headers,
+    /// A gRPC call's status: what the client library reported.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grpc: Option<GrpcStatus>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -874,6 +896,7 @@ mod tests {
             r#"{ "t": "pong", "id": 7, "clock": { "ts": 5900000000000, "wall_ms": 1790658751000 } }"#,
             r#"{ "t": "bye", "reason": "protocol_mismatch", "message": "device speaks protocol 2", "supported": [1] }"#,
             r#"{ "t": "resp", "seq": 44, "ts": 5822011000000, "txn": 7, "status": 200, "message": "OK", "protocol": "h2", "headers": [["set-cookie", "a=1"], ["set-cookie", "b=2"]] }"#,
+            r#"{ "t": "done", "seq": 61, "ts": 5822930100000, "txn": 9, "trailers": [["grpc-status", "5"], ["grpc-message", "sku sku_9999 is not in warehouse blr-1"], ["x-detail", "…"]], "grpc": { "code": 5, "status": "NOT_FOUND", "message": "sku sku_9999 is not in warehouse blr-1" } }"#,
             r#"{ "t": "ws", "seq": 93, "ts": 5824100000000, "txn": 12, "dir": "out", "op": "text", "size": 39, "text": "{\"type\":\"subscribe\",\"channel\":\"orders\"}" }"#,
             r#"{ "t": "ws", "seq": 94, "ts": 5824160000000, "txn": 12, "dir": "in", "op": "binary", "size": 3, "base64": "AQID" }"#,
             r#"{ "t": "ws", "seq": 99, "ts": 5839000000000, "txn": 12, "dir": "out", "op": "close", "size": 0, "code": 1000, "reason": "done" }"#,
@@ -925,7 +948,7 @@ mod tests {
     fn unknown_types_and_fields_are_ignored() {
         assert_eq!(parse_device(br#"{"t":"hologram","x":1}"#).unwrap(), DeviceMsg::Unknown);
         let msg = parse_device(br#"{"t":"done","seq":1,"ts":2,"txn":3,"new_field":{"a":[1]}}"#).unwrap();
-        assert_eq!(msg, DeviceMsg::Done(Done { seq: 1, ts: 2, txn: 3 }));
+        assert_eq!(msg, DeviceMsg::Done(Done { seq: 1, ts: 2, txn: 3, trailers: Vec::new(), grpc: None }));
         assert_eq!(msg.seq(), Some(1));
         let action: RuleAction = serde_json::from_str(r#"{"type":"teleport"}"#).unwrap();
         assert_eq!(action, RuleAction::Unknown);

@@ -138,6 +138,20 @@ HttpURLConnection:
 val connection = TrafficPolice.wrap(url.openConnection() as HttpURLConnection)
 ```
 
+gRPC (grpc-java 1.21 and newer, any transport): add the interceptor to each channel, first, so
+it sees what your other interceptors add:
+
+```kotlin
+val channel = OkHttpChannelBuilder.forAddress(host, port)   // or ManagedChannelBuilder, AndroidChannelBuilder, Grpc.newChannelBuilder
+    .intercept(TrafficPolice.grpcInterceptor())
+    .build()
+```
+
+Each call is one row (`POST https://host/package.Service/Method`, type `grpc`): its messages as
+the bodies (decoded as protobuf, one message after another), its status in the Status column
+(`OK`, `NOT_FOUND`, …), and its trailers at the end of the Response tab. `grpc:not_found` or
+`grpc:error` filters by status.
+
 WebSockets (OkHttp sends a socket's handshake past interceptors, so the socket is opened through
 traffic-police; you get the handshake and every message, both ways):
 
@@ -177,15 +191,16 @@ decoded for display), one row per network attempt (a redirect is two rows, the s
 HttpURLConnection connections you wrap, and the WebSockets you open with
 `TrafficPolice.newWebSocket` (a `ws` row: the Response tab lists every message, and Enter opens
 one). **Not captured in library mode:** responses OkHttp serves from its cache (they never reach
-the network), other HTTP stacks (Cronet, Ktor engines other than OkHttp, ...), and the
-HttpURLConnection connections and WebSockets you do not open through traffic-police.
+the network), other HTTP stacks (Cronet, Ktor engines other than OkHttp, ...), gRPC channels
+without the interceptor, and the HttpURLConnection connections and WebSockets you do not open
+through traffic-police.
 [Attach mode](#watch-any-debuggable-app-attach-mode) hooks every HttpURLConnection and every
 OkHttp WebSocket instead.
 
 **The sample app** in `android/sample-app` exercises every capture path (Retrofit suspend calls,
 OkHttp `execute` and `enqueue`, HttpURLConnection, streaming, a 5 MB download, a multipart upload,
-a redirect, errors, a timeout, a cancelled call, HTTPS, an unknown host, a WebSocket, a second
-process)
+a redirect, errors, a timeout, a cancelled call, HTTPS, an unknown host, a WebSocket, gRPC calls
+to a gRPC server in the app, a second process)
 against servers inside the app, so it needs no network:
 
 ```sh
@@ -227,7 +242,9 @@ traffic-police tail --mode attach -p com.example.app       # the commands withou
   agent stays in the app's process until the process exits. After traffic-police quits it keeps
   a replay buffer, like the library; rules stop applying.
 - **What it captures:** OkHttp 3.9 and newer and everything built on it (Retrofit, Coil, ...),
-  its WebSockets, and every HttpURLConnection, with no wrapping. Not captured: an OkHttp whose names a minified
+  its WebSockets, every HttpURLConnection, with no wrapping, and gRPC (grpc-java 1.10 and newer):
+  every channel built after the attach, and the calls generated stubs make on channels built
+  before it (`--launch` catches them all). Not captured: an OkHttp whose names a minified
   (R8) debug build changed (`doctor` shows each hook's status), and a second OkHttp copy in
   another class loader.
 - **Checks:** `traffic-police doctor --mode attach -p com.example.app` checks the agent, the
@@ -281,6 +298,7 @@ Words must all match; `-` in front of one negates it; quotes keep spaces in a wo
 | `/regex/`, `/regex/i` | a regular expression on the URL |
 | `method:GET,POST` | the method |
 | `status:404`, `status:4xx`, `status:>=400`, `status:failed`, `status:pending` | the status, its class, or the state |
+| `grpc:not_found`, `grpc:5`, `grpc:error` | a gRPC call's status, by name or code; `error` is any but OK |
 | `host:*.example.com`, `path:/api/**/status` | the host or path (`*` within a segment, `**` across) |
 | `type:json`, `thread:worker`, `header:x-request-id`, `header:"x-request-id=abc"` | type, initiating thread, a header by name or value |
 | `size>10k`, `time>500ms` | response size, duration |

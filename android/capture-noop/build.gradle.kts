@@ -34,6 +34,7 @@ tasks.withType<JavaCompile>().configureEach {
 dependencies {
     compileOnly(libs.okhttp.baseline) { exclude(group = "com.squareup.okio") }
     compileOnly(libs.okio.baseline)
+    compileOnly(libs.grpc.api.baseline)
 }
 
 publishing {

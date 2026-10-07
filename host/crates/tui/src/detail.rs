@@ -202,7 +202,12 @@ fn body_state_note(meta: &BodyMeta, dir: BodyDir, t: &Transaction) -> Option<Str
 }
 
 fn headers_rows(theme: &Theme, rows: &mut Vec<DocRow>, headers: &[(String, String)]) {
-    rows.push(title(theme, format!("Headers ({})", headers.len())));
+    pair_rows(theme, rows, "Headers", headers);
+}
+
+/// `Headers (3)` or `Trailers (2)`, then `name: value` rows.
+fn pair_rows(theme: &Theme, rows: &mut Vec<DocRow>, what: &str, headers: &[(String, String)]) {
+    rows.push(title(theme, format!("{what} ({})", headers.len())));
     for (n, v) in headers {
         rows.push(DocRow::Line(Line::from(vec![
             Span::styled(n.clone(), theme.tok(traffic_police_core::decode::Tok::Key)),
@@ -343,6 +348,11 @@ pub fn build_doc(app: &mut App) -> Doc {
             let dir = app.response_dir(txn);
             doc.body_len = body_rows(app, txn, dir, &mut doc.head);
             doc.body_dir = Some(dir);
+            let trailers = app.view_store().txn(txn).trailers.clone();
+            if !trailers.is_empty() {
+                doc.tail.push(blank());
+                pair_rows(&theme, &mut doc.tail, "Trailers", &trailers);
+            }
         }
         Tab::Request => {
             let (req_line, query, headers) = {
@@ -677,6 +687,13 @@ fn overview_rows(app: &mut App, txn: TxnIdx, rows: &mut Vec<DocRow>, tokens: &mu
         (None, None) => vec![Span::styled(t.status_text(), theme.dim())],
     };
     rows.push(label_row(&theme, "Status", status));
+    if let Some(g) = &t.grpc {
+        let mut text = format!("{} ({})", g.name, g.code);
+        if let Some(m) = g.message.as_deref().filter(|m| !m.is_empty()) {
+            text.push_str(&format!(": {m}"));
+        }
+        rows.push(label_row(&theme, "gRPC status", vec![Span::styled(text, theme.status(t.status_class()))]));
+    }
     rows.push(label_row(&theme, "URL", vec![Span::styled(t.url.raw.clone(), theme.accent())]));
     if let Some(r) = redirect_note(app.view_store(), txn) {
         rows.push(label_row(&theme, "Redirect", plain(&theme, r)));

@@ -313,8 +313,72 @@ pub struct Transaction {
     pub pinned: bool,
     /// The messages of a WebSocket (this transaction is its handshake), in order.
     pub ws: Arc<Vec<WsMessage>>,
+    /// The response's trailers, in order (a gRPC call's).
+    pub trailers: Headers,
+    /// A gRPC call's status.
+    pub grpc: Option<Grpc>,
     /// Store generation of the last change (lets views cache derived values).
     pub rev: u64,
+}
+
+/// A gRPC call's status: from the server's trailers, or one the client library made itself (a
+/// deadline, a cancel, no connection).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Grpc {
+    pub code: u32,
+    /// `OK`, `NOT_FOUND`, …
+    pub name: String,
+    pub message: Option<String>,
+}
+
+impl Grpc {
+    /// The codes' names (google.rpc.Code), by number.
+    pub const NAMES: [&'static str; 17] = [
+        "OK",
+        "CANCELLED",
+        "UNKNOWN",
+        "INVALID_ARGUMENT",
+        "DEADLINE_EXCEEDED",
+        "NOT_FOUND",
+        "ALREADY_EXISTS",
+        "PERMISSION_DENIED",
+        "RESOURCE_EXHAUSTED",
+        "FAILED_PRECONDITION",
+        "ABORTED",
+        "OUT_OF_RANGE",
+        "UNIMPLEMENTED",
+        "INTERNAL",
+        "UNAVAILABLE",
+        "DATA_LOSS",
+        "UNAUTHENTICATED",
+    ];
+
+    /// A code from its number or name (`5`, `not_found`).
+    pub fn code_of(s: &str) -> Option<u32> {
+        let s = s.trim();
+        if let Ok(n) = s.parse::<u32>() {
+            return Some(n);
+        }
+        Self::NAMES.iter().position(|n| n.eq_ignore_ascii_case(s)).map(|i| i as u32)
+    }
+
+    /// The HTTP status an API gateway gives the code (grpc-gateway's table): the list's colors.
+    pub fn http_like(&self) -> u16 {
+        match self.code {
+            0 => 200,
+            1 => 499,
+            3 | 9 | 11 => 400,
+            4 => 504,
+            5 => 404,
+            6 | 10 => 409,
+            7 => 403,
+            8 => 429,
+            12 => 501,
+            14 => 503,
+            16 => 401,
+            _ => 500,
+        }
+    }
 }
 
 /// One WebSocket message (PROTOCOL.md §7.1 `ws`).
@@ -366,6 +430,8 @@ impl Transaction {
             lossy: false,
             pinned: false,
             ws: Arc::new(Vec::new()),
+            trailers: Vec::new(),
+            grpc: None,
             rev: 0,
         }
     }
@@ -505,6 +571,12 @@ impl Transaction {
         if self.failure.is_some() || self.state == TxnState::Failed {
             return StatusClass::Failed;
         }
+        // a gRPC error arrives with HTTP 200: its own code decides
+        if let Some(g) = &self.grpc
+            && g.code != 0
+        {
+            return if g.http_like() < 500 { StatusClass::ClientError } else { StatusClass::ServerError };
+        }
         match self.status() {
             None => StatusClass::Pending,
             Some(s) if s < 200 => StatusClass::Informational,
@@ -515,8 +587,12 @@ impl Transaction {
         }
     }
 
-    /// Text for the Status column.
+    /// Text for the Status column: a gRPC call's status name (`OK`, `NOT_FOUND`), else the HTTP
+    /// status.
     pub fn status_text(&self) -> String {
+        if let Some(g) = &self.grpc {
+            return g.name.clone();
+        }
         if self.failure.is_some() || self.state == TxnState::Failed {
             return if self.failure.as_ref().is_some_and(|f| f.canceled) { "canceled".into() } else { "failed".into() };
         }

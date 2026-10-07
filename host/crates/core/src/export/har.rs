@@ -206,6 +206,14 @@ fn entry(store: &SessionStore, t: &Transaction, now: Ts) -> Value {
             json!({ "class": f.class, "message": f.message, "phase": f.phase, "canceled": f.canceled, "simulated": f.simulated }),
         );
     }
+    // HAR has no trailers: a gRPC call's are here, with its status
+    if !t.trailers.is_empty() {
+        let pairs: Vec<Value> = t.trailers.iter().map(|(n, v)| json!({ "name": n, "value": v })).collect();
+        extra.insert("trailers".into(), Value::Array(pairs));
+    }
+    if let Some(g) = &t.grpc {
+        extra.insert("grpc".into(), json!({ "code": g.code, "status": g.name, "message": g.message }));
+    }
     if !t.rules.is_empty() {
         let hits: Vec<Value> = t
             .rules

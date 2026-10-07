@@ -29,6 +29,10 @@ import okhttp3.WebSocketListener;
  * HttpURLConnection conn = TrafficPolice.wrap((HttpURLConnection) url.openConnection());
  *
  * WebSocket socket = TrafficPolice.newWebSocket(client, request, listener);
+ *
+ * ManagedChannel channel = OkHttpChannelBuilder.forAddress(host, port)
+ *     .intercept(TrafficPolice.grpcInterceptor())   // first, so it sees what later ones add
+ *     .build();
  * }</pre>
  *
  * The {@code capture-noop} artifact has this exact API and does nothing; use it for release
@@ -65,6 +69,15 @@ public final class TrafficPolice {
     }
 
     /** Records this connection's exchange; returns it unchanged when capture is not running. */
+    /**
+     * gRPC (grpc-java 1.21 and newer): add it to a channel first, so it runs last and sees the
+     * headers the channel's other interceptors add. Each call is one row: its messages as the
+     * bodies (decoded as protobuf), its status and trailers.
+     */
+    public static io.grpc.ClientInterceptor grpcInterceptor() {
+        return io.trafficpolice.capture.grpc.CaptureClientInterceptor.INSTANCE;
+    }
+
     public static HttpURLConnection wrap(HttpURLConnection connection) {
         return Huc.wrap(connection);
     }

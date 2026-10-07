@@ -36,6 +36,10 @@ public final class TrafficPolice {
         return client.newWebSocket(request, listener);
     }
 
+    public static io.grpc.ClientInterceptor grpcInterceptor() {
+        return NoGrpc.INSTANCE;
+    }
+
     public static HttpURLConnection wrap(HttpURLConnection connection) {
         return connection;
     }
@@ -58,6 +62,16 @@ public final class TrafficPolice {
         @Override
         public Response intercept(Chain chain) throws IOException {
             return chain.proceed(chain.request());
+        }
+    }
+
+    private static final class NoGrpc implements io.grpc.ClientInterceptor {
+        static final NoGrpc INSTANCE = new NoGrpc();
+
+        @Override
+        public <Q, R> io.grpc.ClientCall<Q, R> interceptCall(io.grpc.MethodDescriptor<Q, R> method,
+                io.grpc.CallOptions options, io.grpc.Channel next) {
+            return next.newCall(method, options);
         }
     }
 

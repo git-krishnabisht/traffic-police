@@ -27,6 +27,14 @@ public final class AttachEntry implements ExitHandler, AttachState {
             "okhttp3.OkHttpClient->eventListenerFactory()Lokhttp3/EventListener$Factory;";
     private static final String OKHTTP_NEW_WEBSOCKET =
             "okhttp3.OkHttpClient->newWebSocket(Lokhttp3/Request;Lokhttp3/WebSocketListener;)Lokhttp3/WebSocket;";
+    // gRPC (ARCHITECTURE.md §4.9): the channel builders' interceptors, by version, and stubs' channels
+    private static final String GRPC_INTERCEPTORS_1_64 =
+            "io.grpc.internal.ManagedChannelImplBuilder->getEffectiveInterceptors(Ljava/lang/String;)Ljava/util/List;";
+    private static final String GRPC_INTERCEPTORS_1_33 =
+            "io.grpc.internal.ManagedChannelImplBuilder->getEffectiveInterceptors()Ljava/util/List;";
+    private static final String GRPC_INTERCEPTORS_1_10 =
+            "io.grpc.internal.AbstractManagedChannelImplBuilder->getEffectiveInterceptors()Ljava/util/List;";
+    private static final String GRPC_STUB_CHANNEL = "io.grpc.stub.AbstractStub->getChannel()Lio/grpc/Channel;";
 
     private final String runtimeDir;
     private final String packageName;
@@ -38,6 +46,11 @@ public final class AttachEntry implements ExitHandler, AttachState {
     private volatile Method networkInterceptorsHook;
     private volatile Method eventListenerFactoryHook;
     private volatile Method newWebSocketHook;
+    /** The gRPC adapter: GrpcHooks in a loader whose parent resolves the app's io.grpc. */
+    private volatile ClassLoader grpcAppLoader;
+    private volatile ClassLoader grpcAdapterLoader;
+    private volatile Method grpcInterceptorsHook;
+    private volatile Method grpcStubChannelHook;
     private volatile CaptureRuntime runtime;
     private volatile AndroidPlatform platform;
     /** The entry {@link #start} made, for {@link #listen}. */
@@ -77,6 +90,8 @@ public final class AttachEntry implements ExitHandler, AttachState {
                 "okhttp3.OkHttpClient#eventListenerFactory()Lokhttp3/EventListener$Factory;");
         addHook("okhttp_new_websocket",
                 "okhttp3.OkHttpClient#newWebSocket(Lokhttp3/Request;Lokhttp3/WebSocketListener;)Lokhttp3/WebSocket;");
+        addHook("grpc_channel_interceptors", "io.grpc.internal.ManagedChannelImplBuilder#getEffectiveInterceptors");
+        addHook("grpc_stub_channel", "io.grpc.stub.AbstractStub#getChannel()Lio/grpc/Channel;");
     }
 
     private void startRuntime() {
@@ -129,6 +144,16 @@ public final class AttachEntry implements ExitHandler, AttachState {
 
     @Override
     public void clients(Map<String, String> into) {
+        ClassLoader grpc = grpcAdapterLoader;
+        if (grpc != null) {
+            try {
+                Class<?> detect = Class.forName("io.trafficpolice.capture.grpc.GrpcDetect", true, grpc);
+                Object version = detect.getMethod("version").invoke(null);
+                into.put("grpc", version != null ? String.valueOf(version) : null);
+            } catch (Throwable ignored) {
+                into.put("grpc", null);
+            }
+        }
         ClassLoader loader = adapterLoader;
         if (loader == null) {
             into.put("okhttp", null);
@@ -166,6 +191,18 @@ public final class AttachEntry implements ExitHandler, AttachState {
                 return io.trafficpolice.capture.huc.Huc.wrap((URLConnection) result);
             } catch (Throwable t) {
                 reportError("attach.url", t);
+                return result;
+            }
+        }
+        boolean interceptorsHook = GRPC_INTERCEPTORS_1_64.equals(method) || GRPC_INTERCEPTORS_1_33.equals(method)
+                || GRPC_INTERCEPTORS_1_10.equals(method);
+        if (interceptorsHook || GRPC_STUB_CHANNEL.equals(method)) {
+            hit(interceptorsHook ? "grpc_channel_interceptors" : "grpc_stub_channel");
+            try {
+                if (grpcInterceptorsHook == null && !resolveGrpcHooks()) return result;
+                return (interceptorsHook ? grpcInterceptorsHook : grpcStubChannelHook).invoke(null, result);
+            } catch (Throwable t) {
+                reportError(interceptorsHook ? "attach.grpc.interceptors" : "attach.grpc.stubChannel", t);
                 return result;
             }
         }
@@ -207,6 +244,35 @@ public final class AttachEntry implements ExitHandler, AttachState {
         Class<?> webSocket = Class.forName("okhttp3.WebSocket", false, appLoader);
         newWebSocketHook = hooksClass.getMethod("newWebSocket", webSocket);
         return true;
+    }
+
+    /** Looks up GrpcHooks' methods in the gRPC adapter; false while no adapter is loaded. */
+    private boolean resolveGrpcHooks() throws ReflectiveOperationException {
+        ClassLoader adapter = grpcAdapterLoader;
+        if (adapter == null) return false;
+        Class<?> hooksClass = Class.forName("io.trafficpolice.capture.grpc.GrpcHooks", true, adapter);
+        Class<?> channel = Class.forName("io.grpc.Channel", false, grpcAppLoader);
+        grpcStubChannelHook = hooksClass.getMethod("stubChannel", channel);
+        grpcInterceptorsHook = hooksClass.getMethod("effectiveInterceptors", List.class);
+        return true;
+    }
+
+    @Override
+    public void onGrpcLoader(ClassLoader loader) {
+        if (loader == null || grpcAdapterLoader != null) return;
+        synchronized (this) {
+            if (grpcAdapterLoader != null) return;
+            try {
+                ClassLoader parent = new AdapterParent(loader, AttachEntry.class.getClassLoader());
+                ClassLoader adapter = new dalvik.system.InMemoryDexClassLoader(ByteBuffer.wrap(runtimeDex), parent);
+                // the app's loader first: resolveGrpcHooks reads it once it sees the adapter
+                grpcAppLoader = loader;
+                grpcAdapterLoader = adapter;
+            } catch (Throwable t) {
+                // gRPC then goes uncaptured: its hooks pass everything through
+                reportError("attach.grpc.adapter", t);
+            }
+        }
     }
 
     @Override
@@ -305,7 +371,7 @@ public final class AttachEntry implements ExitHandler, AttachState {
             if (name.startsWith("io.trafficpolice.capture.core.")) {
                 return coreLoader.loadClass(name);
             }
-            if (name.startsWith("io.trafficpolice.capture.okhttp.")) {
+            if (name.startsWith("io.trafficpolice.capture.okhttp.") || name.startsWith("io.trafficpolice.capture.grpc.")) {
                 throw new ClassNotFoundException(name);
             }
             return appLoader.loadClass(name);

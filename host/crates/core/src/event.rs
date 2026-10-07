@@ -56,6 +56,13 @@ pub enum SessionEvent {
         at: Ts,
         name: String,
     },
+    /// Trailers and a gRPC status, just before the transaction completes or fails.
+    Trailers {
+        key: TxnKey,
+        at: Ts,
+        trailers: Headers,
+        grpc: Option<crate::model::Grpc>,
+    },
     Completed {
         key: TxnKey,
         at: Ts,

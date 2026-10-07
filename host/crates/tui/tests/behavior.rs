@@ -1387,3 +1387,42 @@ fn a_websocket_lists_its_messages_and_enter_opens_one() {
     press(&mut app, MEDIUM, "<Esc>");
     assert_eq!(app.overlay, Overlay::None);
 }
+
+/// gRPC: the Status column shows the call's status name, the Overview its code and message, the
+/// Response tab the trailers after the body, and `grpc:` filters by status.
+#[test]
+fn a_grpc_error_shows_its_status_and_trailers() {
+    use traffic_police_tui::app::Tab;
+    let mut app = app_at(52.0);
+    let to = goto(&mut app, MEDIUM, |t| t.grpc.as_ref().is_some_and(|g| g.code == 5));
+    let text = press(&mut app, MEDIUM, &format!("{to}<Enter>"));
+    let txn = app.selected.expect("selected");
+    assert_eq!(app.view_store().txn(txn).status_text(), "NOT_FOUND");
+    assert!(text.contains("NOT_FOUND"), "{text}");
+    assert!(text.contains("gRPC status") && text.contains("NOT_FOUND (5): sku sku_9999"), "{text}");
+
+    press(&mut app, MEDIUM, "<Right>");
+    assert_eq!(app.detail.tab, Tab::Response);
+    let doc = traffic_police_tui::detail::build_doc(&mut app);
+    let lines: Vec<String> =
+        (0..doc.len()).filter_map(|i| traffic_police_tui::detail::row_text(&mut app, &doc, i, txn)).collect();
+    let at = |s: &str| lines.iter().position(|l| l == s).unwrap_or_else(|| panic!("{s:?} in {lines:#?}"));
+    assert!(at("Trailers (2)") < at("grpc-status: 5"), "{lines:#?}");
+    assert!(lines.iter().any(|l| l == "grpc-message: sku sku_9999 is not in warehouse blr-1"), "{lines:#?}");
+
+    // the request: one gRPC message, decoded as protobuf
+    press(&mut app, MEDIUM, "<Right>");
+    let doc = traffic_police_tui::detail::build_doc(&mut app);
+    let all: String = (0..doc.len())
+        .filter_map(|i| traffic_police_tui::detail::row_text(&mut app, &doc, i, txn))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(all.contains("sku_9999") && all.contains("blr-1"), "{all}");
+
+    // the filter
+    press(&mut app, MEDIUM, "<Esc>/grpc:not_found<Enter>");
+    let store = app.view_store();
+    let rows = app.view_rows().rows();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(store.txn(rows[0].txn()).grpc.as_ref().unwrap().name, "NOT_FOUND");
+}

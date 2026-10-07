@@ -138,7 +138,7 @@ fn check_main_run(r: &mut Report, store: &SessionStore, source: SourceId, run: &
             });
         }
     }
-    r.check(all.len() == 27, || format!("{run}: expected 27 requests, found {}", all.len()));
+    r.check(all.len() == 30, || format!("{run}: expected 30 requests, found {}", all.len()));
 
     // Retrofit suspend functions on a coroutine worker; the stack reaches the scenario
     if let Some(t) = one(r, "/api/sdk/init") {
@@ -386,6 +386,77 @@ fn check_main_run(r: &mut Report, store: &SessionStore, source: SourceId, run: &
         ];
         r.check(got == want, || format!("{run}: /live messages {got:#?}"));
         r.check(app_frame(t, "io.trafficpolice.sample.Scenarios"), || format!("{run}: /live stack {:?}", t.stack));
+    }
+
+    // gRPC over HTTP/2 (grpc-okhttp): each call one transaction, its messages framed as gRPC
+    // sends them, its status and trailers; the headers as sent, with what gRPC adds below the
+    // interceptors (grpc-accept-encoding)
+    let grpc_frame = |m: &[u8]| -> Vec<u8> {
+        let mut f = vec![0];
+        f.extend_from_slice(&(m.len() as u32).to_be_bytes());
+        f.extend_from_slice(m);
+        f
+    };
+    let pb_str = |field: u8, s: &str| -> Vec<u8> {
+        let mut v = vec![(field << 3) | 2, s.len() as u8];
+        v.extend_from_slice(s.as_bytes());
+        v
+    };
+    let pb_num = |field: u8, n: u8| -> Vec<u8> { vec![field << 3, n] };
+    let grpc_ok = |r: &mut Report, t: &Transaction, what: &str| {
+        r.check(t.method == "POST" && t.url.scheme == "http" && t.url.host == "127.0.0.1", || {
+            format!("{run}: {what} {} {}", t.method, t.url.raw)
+        });
+        r.check(t.client.as_ref().is_some_and(|c| c.kind == "grpc" && c.version.is_some()), || {
+            format!("{run}: {what} client {:?}", t.client)
+        });
+        r.check(t.req_headers.iter().any(|(n, _)| n == "grpc-accept-encoding"), || {
+            format!("{run}: {what} headers as sent {:?}", t.req_headers)
+        });
+        r.check(t.conn.as_ref().and_then(|c| c.remote.as_ref()).is_some_and(|a| a.ip == "127.0.0.1"), || {
+            format!("{run}: {what} conn {:?}", t.conn)
+        });
+        r.check(app_frame(t, "io.trafficpolice.sample.Scenarios"), || format!("{run}: {what} stack {:?}", t.stack));
+    };
+    if let Some(t) = one(r, "/sample.v1.Verification/Check") {
+        grpc_ok(r, t, "gRPC Check");
+        let req = [pb_str(1, "session_grpc"), pb_str(2, "passport")].concat();
+        let resp = [pb_str(1, "session_grpc"), pb_str(2, "pass"), pb_num(3, 97)].concat();
+        r.check(store.body_bytes(&t.req_body)[..] == grpc_frame(&req)[..], || {
+            format!("{run}: gRPC Check request {:?}", store.body_bytes(&t.req_body))
+        });
+        r.check(store.body_bytes(&t.resp_body)[..] == grpc_frame(&resp)[..], || {
+            format!("{run}: gRPC Check response {:?}", store.body_bytes(&t.resp_body))
+        });
+        r.check(
+            t.grpc.as_ref().is_some_and(|g| g.code == 0)
+                && t.trailers.first().is_some_and(|(n, v)| n == "grpc-status" && v == "0"),
+            || format!("{run}: gRPC Check status {:?} trailers {:?}", t.grpc, t.trailers),
+        );
+        r.check(status(t) == 200 && resp_header(t, "content-type") == Some("application/grpc"), || {
+            format!("{run}: gRPC Check response headers {:?}", t.resp)
+        });
+    }
+    if let Some(t) = one(r, "/sample.v1.Verification/Watch") {
+        grpc_ok(r, t, "gRPC Watch");
+        let want: Vec<u8> = [("liveness", 40), ("document", 80), ("done", 100)]
+            .iter()
+            .flat_map(|(s, p)| grpc_frame(&[pb_str(1, s), pb_num(2, *p)].concat()))
+            .collect();
+        r.check(store.body_bytes(&t.resp_body)[..] == want[..], || {
+            format!("{run}: gRPC Watch updates {:?}", store.body_bytes(&t.resp_body))
+        });
+    }
+    if let Some(t) = one(r, "/sample.v1.Verification/Lookup") {
+        grpc_ok(r, t, "gRPC Lookup");
+        r.check(
+            t.state == TxnState::Complete
+                && t.grpc.as_ref().is_some_and(|g| {
+                    g.name == "NOT_FOUND" && g.message.as_deref() == Some("document doc_404 does not exist")
+                })
+                && t.trailers.iter().any(|(n, v)| n == "x-reason" && v == "unknown document"),
+            || format!("{run}: gRPC Lookup {:?} {:?} {:?}", t.state, t.grpc, t.trailers),
+        );
     }
 
     if let Some(t) = one(r, "/done") {
@@ -715,7 +786,7 @@ async fn plain_app_attach_end_to_end() {
     for h in &source.hooks {
         report.check(h.status == "installed", || format!("attach run 1: hook {} is {}", h.id, h.status));
     }
-    report.check(source.hooks.len() == 5, || format!("attach run 1: {} hooks", source.hooks.len()));
+    report.check(source.hooks.len() == 7, || format!("attach run 1: {} hooks", source.hooks.len()));
 
     // run 1: the scenarios in the attached process (the intent reaches the running activity)
     let run = adb.shell(id, &format!("am start -n {PLAIN_ACTIVITY} --es run all")).await.unwrap();

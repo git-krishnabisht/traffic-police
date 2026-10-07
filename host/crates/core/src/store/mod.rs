@@ -449,6 +449,13 @@ impl SessionStore {
                 let pos = t.marks.partition_point(|&(_, ts)| ts <= at);
                 t.marks.insert(pos, (name, at));
             }
+            SessionEvent::Trailers { key, at, trailers, grpc } => {
+                self.see(at);
+                let idx = self.idx_or_placeholder(key, at);
+                let t = self.touch(idx);
+                t.trailers = trailers;
+                t.grpc = grpc;
+            }
             SessionEvent::Completed { key, at } => {
                 self.see(at);
                 let idx = self.idx_or_placeholder(key, at);

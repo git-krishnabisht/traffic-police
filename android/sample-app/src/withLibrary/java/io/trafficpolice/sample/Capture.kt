@@ -19,6 +19,10 @@ object Capture {
 
     fun wrap(connection: HttpURLConnection): HttpURLConnection = TrafficPolice.wrap(connection)
 
+    /** gRPC: our interceptor first on the channel, so it sees what later interceptors add. */
+    fun grpc(builder: io.grpc.ManagedChannelBuilder<*>): io.grpc.ManagedChannelBuilder<*> =
+        builder.intercept(TrafficPolice.grpcInterceptor())
+
     /** A WebSocket and every message on it (interceptors never see a socket's messages). */
     fun newWebSocket(client: OkHttpClient, request: Request, listener: WebSocketListener): WebSocket =
         TrafficPolice.newWebSocket(client, request, listener)

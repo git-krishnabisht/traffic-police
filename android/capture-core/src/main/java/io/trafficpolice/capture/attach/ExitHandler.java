@@ -6,6 +6,9 @@ public interface ExitHandler {
 
     void onOkHttpLoader(ClassLoader loader);
 
+    /** The class loader of the app's gRPC (the first that defined a hooked gRPC class). */
+    void onGrpcLoader(ClassLoader loader);
+
     void onHook(String id, String target, String status, String detail);
 
     /** A diagnostic from the native agent, with a PROTOCOL.md §7.1 code. */

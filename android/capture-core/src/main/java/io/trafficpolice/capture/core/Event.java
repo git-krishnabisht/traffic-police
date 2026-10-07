@@ -324,13 +324,34 @@ abstract class Event {
 
     /** {@code done}. */
     static final class Done extends Event {
-        Done(long ts, long txn) {
+        final String[] trailers;
+        final Txn.GrpcStatus grpc;
+
+        Done(long ts, long txn, String[] trailers, Txn.GrpcStatus grpc) {
             super(ts, txn);
+            this.trailers = trailers;
+            this.grpc = grpc;
         }
 
         @Override
         byte[] encode(long seq) {
-            return Frames.json(start("done", seq).endObj());
+            Json j = start("done", seq);
+            writeTrailers(j, trailers, grpc);
+            return Frames.json(j.endObj());
+        }
+    }
+
+    /** {@code trailers} and {@code grpc} of {@code done} and {@code fail}, when there are any. */
+    static void writeTrailers(Json j, String[] trailers, Txn.GrpcStatus grpc) {
+        if (trailers != null && trailers.length > 0) {
+            j.headers("trailers", trailers);
+        }
+        if (grpc != null) {
+            j.key("grpc").obj().kv("code", grpc.code).kv("status", grpc.name);
+            if (grpc.message != null) {
+                j.kv("message", grpc.message);
+            }
+            j.endObj();
         }
     }
 
@@ -341,14 +362,19 @@ abstract class Event {
         final boolean simulated;
         final Throwable error;
         final ConnInfo conn;
+        final String[] trailers;
+        final Txn.GrpcStatus grpc;
 
-        Fail(long ts, long txn, String phase, boolean canceled, boolean simulated, Throwable error, ConnInfo conn) {
+        Fail(long ts, long txn, String phase, boolean canceled, boolean simulated, Throwable error, ConnInfo conn,
+                String[] trailers, Txn.GrpcStatus grpc) {
             super(ts, txn);
             this.phase = phase;
             this.canceled = canceled;
             this.simulated = simulated;
             this.error = error;
             this.conn = conn;
+            this.trailers = trailers;
+            this.grpc = grpc;
         }
 
         @Override
@@ -366,6 +392,7 @@ abstract class Event {
                 j.key("conn");
                 conn.write(j);
             }
+            writeTrailers(j, trailers, grpc);
             return Frames.json(j.endObj());
         }
     }

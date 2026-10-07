@@ -416,6 +416,22 @@ fn entry_events(e: &Value, key: TxnKey, start: Ts, out: &mut Vec<SessionEvent>) 
         }
     }
 
+    // a gRPC call's trailers and status
+    let trailers: Vec<(String, String)> = tp["trailers"]
+        .as_array()
+        .map(|a| {
+            a.iter().filter_map(|p| Some((p["name"].as_str()?.to_string(), p["value"].as_str()?.to_string()))).collect()
+        })
+        .unwrap_or_default();
+    let grpc = tp["grpc"]["code"].as_u64().map(|code| crate::model::Grpc {
+        code: code as u32,
+        name: tp["grpc"]["status"].as_str().unwrap_or_default().to_string(),
+        message: tp["grpc"]["message"].as_str().map(str::to_string),
+    });
+    if !trailers.is_empty() || grpc.is_some() {
+        out.push(SessionEvent::Trailers { key, at: end, trailers, grpc });
+    }
+
     // how it ended
     let failure = &tp["failure"];
     let error = [&resp["_error"], &e["_error"]].into_iter().find_map(|v| v.as_str()).filter(|s| !s.is_empty());
@@ -578,6 +594,9 @@ mod tests {
         tp["stack"] = json!([{ "class": "com.example.Api", "method": "login", "file": "Api.kt", "line": 12 }]);
         tp["client"] = json!("OkHttp 4.12.0");
         tp["pinned"] = json!(true);
+        tp["trailers"] =
+            json!([{ "name": "grpc-status", "value": "5" }, { "name": "grpc-message", "value": "no such sku" }]);
+        tp["grpc"] = json!({ "code": 5, "status": "NOT_FOUND", "message": "no such sku" });
         let again = har(&serde_json::to_vec(&exported).unwrap(), &SourceIds::default()).unwrap();
         let s = store_of(&again);
         assert_eq!(s.len(), 2);
@@ -586,6 +605,9 @@ mod tests {
         assert_eq!(login.thread.as_ref().unwrap().name, "worker-3");
         assert_eq!(login.stack[0].c, "com.example.Api");
         assert_eq!(login.client.as_ref().unwrap().label(), "OkHttp 4.12.0");
+        assert_eq!(login.trailers[0], ("grpc-status".to_string(), "5".to_string()));
+        assert_eq!(login.grpc.as_ref().map(|g| (g.code, g.name.as_str())), Some((5, "NOT_FOUND")));
+        assert_eq!(login.status_text(), "NOT_FOUND");
         let (a, b) = (first.txn(1), login);
         assert_eq!(a.phases(first.latest()), {
             let p = b.phases(s.latest());
