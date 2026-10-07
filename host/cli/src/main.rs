@@ -131,7 +131,7 @@ enum Command {
     },
     /// Write requests as a HAR file: from a saved session, or captured live for --duration.
     #[command(
-        after_help = "Examples:\n  traffic-police export --har out.har --input login.trafficpolice host:api.example.com\n  traffic-police export --har out.har -p com.example.app --duration 60s"
+        after_help = "Examples:\n  traffic-police export --har out.har --input login.trafficpolice --filter host:api.example.com\n  traffic-police export --har out.har -p com.example.app --duration 60s"
     )]
     Export(ExportArgs),
     /// Internal: run one jq filter over stdin and print the result as JSON.
@@ -874,5 +874,30 @@ mod tests {
         assert!(ui.is_err());
         // the command sender went with the UI, so the backend sees the end and says goodbye
         assert!(backend.recv().await.is_none());
+    }
+
+    /// Every example in the help parses (0.3.1's `export --help` gave a filter without
+    /// `--filter`, which the command rejects).
+    #[test]
+    fn the_examples_in_the_help_work() {
+        use clap::CommandFactory;
+        let cli = Cli::command();
+        let mut examples = Vec::new();
+        for sub in cli.get_subcommands() {
+            let help = sub.get_after_help().map(ToString::to_string).unwrap_or_default();
+            for line in help.lines() {
+                if let Some(at) = line.find("traffic-police ") {
+                    // up to a pipe into another command
+                    let command = line[at..].split(" | ").next().unwrap_or_default();
+                    examples.push(command.split_whitespace().map(str::to_string).collect::<Vec<_>>());
+                }
+            }
+        }
+        assert!(examples.len() >= 5, "{examples:?}");
+        for args in examples {
+            if let Err(e) = Cli::try_parse_from(&args) {
+                panic!("{}: {e}", args.join(" "));
+            }
+        }
     }
 }
