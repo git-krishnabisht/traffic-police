@@ -2634,6 +2634,7 @@ dependencies = [
  "tracing",
  "traffic-police-adb",
  "traffic-police-core",
+ "traffic-police-fakeadb",
  "traffic-police-proto",
 ]
 
@@ -2662,6 +2663,17 @@ dependencies = [
  "thiserror 2.0.21",
  "toml",
  "tracing",
+ "traffic-police-proto",
+]
+
+[[package]]
+name = "traffic-police-fakeadb"
+version = "0.3.1"
+dependencies = [
+ "bytes",
+ "serde_json",
+ "tokio",
+ "traffic-police-adb",
  "traffic-police-proto",
 ]
 

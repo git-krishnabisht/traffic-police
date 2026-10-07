@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/proto", "crates/core", "crates/adb", "crates/backends", "crates/tui", "cli"]
+members = ["crates/proto", "crates/core", "crates/adb", "crates/backends", "crates/tui", "crates/fakeadb", "cli"]
 
 [workspace.package]
 version = "0.3.1"
@@ -16,6 +16,7 @@ traffic-police-core = { path = "crates/core" }
 traffic-police-adb = { path = "crates/adb" }
 traffic-police-backends = { path = "crates/backends" }
 traffic-police-tui = { path = "crates/tui" }
+traffic-police-fakeadb = { path = "crates/fakeadb" }
 
 anyhow = "1.0.104"
 thiserror = "2.0.21"
