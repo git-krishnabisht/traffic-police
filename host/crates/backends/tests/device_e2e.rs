@@ -625,6 +625,9 @@ async fn plain_app_attach_end_to_end() {
     // from Android 11 a startup agent loads the agent as a process starts; before, a runtime
     // attach comes a moment after, and a process's first requests may be missed
     let from_start = api >= 30;
+    // --launch loads it at the start from Android 8.1 on: `am start --attach-agent` on 27 to 29
+    // (first tried on a device, API 28, 2026-10-07), a startup agent from 30
+    let launch_from_start = api >= 27;
 
     let store = SessionStore::new();
     let (event_tx, events) = mpsc::channel(1024);
@@ -751,7 +754,7 @@ async fn plain_app_attach_end_to_end() {
         .until("the launched run to finish", Duration::from_secs(120), |s| has_done(s, source_of(s, PLAIN, 3)))
         .await;
     let main3 = source_of(&session.store, PLAIN, 3).unwrap();
-    if from_start {
+    if launch_from_start {
         check_main_run(&mut report, &session.store, main3, "attach run 3 (--launch)");
     }
     // without --follow the startup agent went once the launched process connected
