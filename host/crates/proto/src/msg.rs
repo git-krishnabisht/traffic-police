@@ -379,6 +379,10 @@ pub struct BodyEnd {
     pub captured: u64,
     /// `complete`, `truncated`, `closed_early`, `none`, `not_captured`, `error`.
     pub state: String,
+    /// The bytes are after Content-Encoding decoding: the HTTP client decompressed them before
+    /// the capture saw them (dart:io does); the headers stay as received.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub decoded: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

@@ -474,7 +474,7 @@ fn entry_events(e: &Value, key: TxnKey, start: Ts, out: &mut Vec<SessionEvent>) 
 }
 
 fn body_end(key: TxnKey, dir: BodyDir, at: Ts, total: u64, captured: u64, state: &str) -> SessionEvent {
-    SessionEvent::BodyEnd { key, dir, at, total, captured, state: state.into() }
+    SessionEvent::BodyEnd { key, dir, at, total, captured, state: state.into(), decoded: false }
 }
 
 impl SessionStore {
@@ -488,7 +488,13 @@ impl SessionStore {
     ) -> Option<std::borrow::Cow<'a, Headers>> {
         let h = headers?;
         let imported = self.source(t.key.source).is_some_and(|s| s.mode == "har");
-        if imported && h.iter().any(|(n, _)| n.eq_ignore_ascii_case("content-encoding")) {
+        // a body the client decoded before the capture saw it (dart:io): which one these
+        // headers are for, the request's or the response's
+        let is = |of: Option<&Headers>| of.is_some_and(|o| std::ptr::eq(o, h));
+        let decoded = (t.req_body.decoded && is(Some(&t.req_headers)))
+            || (t.resp_body.decoded && is(t.resp.as_ref().map(|r| &r.headers)))
+            || (t.delivered_body.as_ref().is_some_and(|b| b.decoded) && is(t.delivered.as_ref().map(|d| &d.headers)));
+        if (imported || decoded) && h.iter().any(|(n, _)| n.eq_ignore_ascii_case("content-encoding")) {
             Some(std::borrow::Cow::Owned(
                 h.iter().filter(|(n, _)| !n.eq_ignore_ascii_case("content-encoding")).cloned().collect(),
             ))

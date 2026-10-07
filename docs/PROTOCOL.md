@@ -243,6 +243,7 @@ These are the **original** status line and headers as received from the network.
   - `none`: there is no body (e.g. HEAD, 204, 304, GET without body).
   - `not_captured`: body capture is disabled for this direction (`bytes` still counts).
   - `error`: reading or writing failed; a `fail` event follows or preceded.
+- `decoded` (optional, default `false`; Phase 5): the chunks are after Content-Encoding decoding, because the HTTP client decompressed the body before the capture saw it. Flutter mode sends it for dart:io bodies that dart:io decompressed. The headers stay as received (`content-encoding: gzip`), and the host does not decode the bytes again.
 
 #### `prog` — body progress past the cap
 

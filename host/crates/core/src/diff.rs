@@ -354,6 +354,7 @@ mod tests {
             total: n,
             captured: n,
             state: "complete".into(),
+            decoded: false,
         });
         s.apply(SessionEvent::Completed { key, at: at + 40 });
     }

@@ -44,6 +44,9 @@ pub struct DeviceTarget {
     /// `--launch`: start the app when the session starts. In attach mode the app is restarted
     /// with the agent loading at its start where Android allows it (§4.7.4).
     pub launch: Option<Launch>,
+    /// Flutter mode (§5.16): the app's dart:io traffic from its Dart VM service, instead of a
+    /// capture runtime.
+    pub flutter: bool,
 }
 
 /// How to start the app (`--launch`).
@@ -127,7 +130,7 @@ pub async fn package_sockets(
 }
 
 /// Whether Android's cached-apps freezer holds the process (it then runs no code at all).
-async fn is_frozen(adb: &Adb, device: &Device, pid: u32) -> bool {
+pub(crate) async fn is_frozen(adb: &Adb, device: &Device, pid: u32) -> bool {
     adb.frozen_pids(device.transport_id, &[pid]).await.is_ok_and(|f| f.contains(&pid))
 }
 
@@ -138,7 +141,7 @@ pub(crate) fn frozen_text(process: &str, pid: u32) -> String {
 }
 
 /// Publishes a status change (and logs it, for troubleshooting).
-fn set_status(status: &watch::Sender<ConnectionStatus>, s: ConnectionStatus) {
+pub(crate) fn set_status(status: &watch::Sender<ConnectionStatus>, s: ConnectionStatus) {
     if *status.borrow() != s {
         tracing::info!("connection: {s:?}");
         status.send_replace(s);
@@ -200,6 +203,9 @@ pub async fn run_device(
     status: watch::Sender<ConnectionStatus>,
     log: Option<Arc<dyn StreamSink>>,
 ) {
+    if target.flutter {
+        return crate::flutter::run_flutter(adb, target, ids, events, commands, status, log).await;
+    }
     let mut attacher = target.attach.clone().map(|kit| Attacher::new(kit, &target));
     run(&adb, &target, ids, Out { events, log }, commands, &status, attacher.as_mut()).await;
     // however the session ended, a startup agent does not outlive it
@@ -477,7 +483,7 @@ async fn find_device(adb: &Adb, serial: Option<&str>) -> Result<Device, String> 
 }
 
 /// The online device to use from a device list: the given serial, or the only online one.
-fn choose_device(list: &DeviceList, serial: Option<&str>) -> Result<Device, String> {
+pub(crate) fn choose_device(list: &DeviceList, serial: Option<&str>) -> Result<Device, String> {
     let devices = match list {
         None => return Err("asking adb for devices…".into()),
         Some(Err(e)) => return Err(format!("cannot reach the adb server: {e}")),

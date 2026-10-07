@@ -4,16 +4,21 @@ Watch an Android app's HTTP and HTTPS traffic from your terminal, the way Androi
 Network Inspector shows it: a live traffic graph, a connection list with a timeline, full request
 and response details, the thread and call stack that made each request, a thread view, and
 response rewrite rules. No proxy and no certificates: a small runtime inside the (debuggable)
-app hooks OkHttp and HttpURLConnection and streams events to the terminal over adb.
+app hooks OkHttp, HttpURLConnection and gRPC and streams events to the terminal over adb. A
+Flutter app's own Dart traffic is read from its Dart VM service.
 
-> **Status: Phase 4.** Watch an app's traffic live from a device or an emulator in one of two
-> ways: add the library to its debug build ([library mode](#watch-your-app-library-mode)), or
-> attach to any debuggable build with no changes at all ([attach mode](#watch-any-debuggable-app-attach-mode)).
-> Then filter, search, copy as cURL, diff, decode tokens, export HAR, save and reopen sessions,
-> or run without the UI (`tail`, `record`, `export`, `doctor`). [Rules](#rules) change what the
-> app receives: delay or fail a request, or change a response's status, headers or body. See
-> [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design and
+> **Status: Phase 5.** Watch an app's traffic live from a device or an emulator in one of three
+> ways: add the library to its debug build ([library mode](#watch-your-app-library-mode)), attach
+> to any debuggable build with no changes at all ([attach mode](#watch-any-debuggable-app-attach-mode)),
+> or read a Flutter app's dart:io traffic from its Dart VM service ([flutter mode](#watch-a-flutter-app-flutter-mode)).
+> WebSockets (every message) and gRPC calls (status, trailers, protobuf messages) are captured
+> too. Then filter, search, copy as cURL, diff, decode tokens, export HAR, save and reopen
+> sessions, or run without the UI (`tail`, `record`, `export`, `doctor`). [Rules](#rules) change
+> what the app receives: delay or fail a request, or change a response's status, headers or
+> body. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design and
 > [docs/PROTOCOL.md](docs/PROTOCOL.md) for the device protocol.
+
+
 
 ## Install
 
@@ -259,6 +264,36 @@ traffic-police tail --mode attach -p com.example.app       # the commands withou
   traffic-police -s <serial> --mode attach -p io.trafficpolice.sample.plain --launch
   adb -s <serial> shell am start -n io.trafficpolice.sample.plain/io.trafficpolice.sample.MainActivity --es run all
   ```
+
+## Watch a Flutter app (flutter mode)
+
+A Flutter app's own HTTP traffic (dart:io: package:http, dio, `NetworkImage`, …) does not go
+through OkHttp or HttpURLConnection, so library and attach mode do not see it. Flutter mode reads
+it from the app's Dart VM service, the way DevTools' Network page does: no library, no agent, any
+debug or profile build of Flutter 3.22 (Dart 3.4) or newer.
+
+```sh
+traffic-police --mode flutter -p com.example.app            # the running app
+traffic-police --mode flutter -p com.example.app --launch   # start it first
+traffic-police tail --mode flutter -p com.example.app --json
+```
+
+- **How it connects.** The app logs its VM service address when it starts; traffic-police reads
+  it from logcat, forwards the port, and turns dart:io's HTTP logging on. If the app started long
+  ago and the line has left the log, restart the app (or use `--launch`). An app that a Flutter
+  tool runs (`flutter run`, an IDE) works too: traffic-police connects through the tool's DDS.
+- **What you see.** A request appears once dart:io has sent it, with its body when it ends;
+  bodies are as the app read them (decompressed, while the headers still say `gzip`). Each row's
+  thread is its isolate. dart:io records only after it is asked to, so requests made before
+  traffic-police connected are missing; it keeps what it recorded in the app's memory, and a
+  second session shows those again. When traffic-police quits, logging is turned off again
+  where it was off.
+- **Pause** (`Space`) turns dart:io's recording off: requests made meanwhile are not recorded.
+  **No rules:** the VM service cannot change a response.
+- **Not captured:** gRPC and dio's HTTP/2 adapter (they use sockets directly), the call stack
+  (Dart does not report it), TLS details, the order of headers with different names (dart:io
+  keeps them in a hash map), and anything on the Java side: watch that with library or attach
+  mode.
 
 ## Keys
 

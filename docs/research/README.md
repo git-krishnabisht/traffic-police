@@ -10,6 +10,8 @@ These notes back the claims in `../ARCHITECTURE.md` and `../PROTOCOL.md`. Each w
 | [04-adb-protocol.md](04-adb-protocol.md) | The adb server protocol the host speaks: framing, trackers, transports, forwarding, shell v2, sync, process tracking, server lifecycle |
 | [05-okhttp-okio.md](05-okhttp-okio.md) | OkHttp 3.9–5.5 and Okio 1.13–3.18 internals and binary compatibility for a Java library compiled once |
 | [06-rust-crates.md](06-rust-crates.md) | Current Rust crate versions, APIs and compatibility for the host |
+| [07-grpc.md](07-grpc.md) | Phase 5: how grpc-java calls can be captured (interceptor placement, the builder and stub hooks by version, headers, trailers, status, framing, threads), and how Studio does it |
+| [08-flutter-dart-vm-service.md](08-flutter-dart-vm-service.md) | Phase 5: a Flutter app's dart:io traffic through its Dart VM service (finding it on Android, DDS, JSON-RPC, the HTTP profiling extensions by Dart version, what is and is not captured) |
 
 `android.googlesource.com` was unreachable from the machine used for Phase 0, so AOSP sources were read from GitHub mirrors (GrapheneOS, LineageOS, `aosp-mirror`, `kroune/platform-tools-base`) and from AOSP Gerrit's REST API. The notes name the mirror and commit for every citation.
 

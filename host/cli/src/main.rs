@@ -77,7 +77,8 @@ struct TargetArgs {
     #[arg(long)]
     pid: Option<u32>,
     /// How capture gets into the app: the traffic-police library in its debug build (the
-    /// default with --package), or attach (any debuggable app, no library needed). Without
+    /// default with --package), attach (any debuggable app, no library needed), or flutter (a
+    /// Flutter app's dart:io traffic, from its Dart VM service; debug and profile builds). Without
     /// --package, the picker attaches to a process that has no library.
     #[arg(long, value_enum)]
     mode: Option<Mode>,
@@ -98,6 +99,7 @@ struct TargetArgs {
 enum Mode {
     Library,
     Attach,
+    Flutter,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -397,6 +399,7 @@ async fn headless_source(
         rules: rules.active(),
         attach: agent_kit,
         launch: (args.launch || outer.launch).then(Launch::default),
+        flutter: args.mode.or(outer.mode) == Some(Mode::Flutter),
     };
     let adb = settings.adb();
     tracing::info!(command, package = %target.package, serial = ?target.serial, follow = target.follow, attach = target.attach.is_some(), "headless session");
@@ -620,10 +623,16 @@ async fn run_device_mode(
                 _ => None,
             },
             launch,
+            flutter: args.mode == Some(Mode::Flutter),
         },
+        None if args.mode == Some(Mode::Flutter) => bail!(
+            "--mode flutter needs the app: --package com.example.app (or package in .traffic-police/project.toml)"
+        ),
         None => {
             // without --mode, a process with no library can be picked when the agent is there
             let agent_kit = match (args.mode, &args.agent_dir) {
+                // Flutter mode needs --package (it returned above)
+                (Some(Mode::Flutter), _) => Err("--mode flutter needs --package".to_string()),
                 (Some(Mode::Library), _) => Err(
                     "Add it to the app's debug build (see the README), or start traffic-police without --mode library to attach the agent instead."
                         .to_string(),
@@ -648,6 +657,7 @@ async fn run_device_mode(
                     // mode was asked for (then --follow attaches to its restarts)
                     attach: agent_kit.ok().filter(|_| !p.capturing || args.mode == Some(Mode::Attach)),
                     launch,
+                    flutter: false,
                 },
                 None => return Ok(()),
             }
@@ -656,7 +666,8 @@ async fn run_device_mode(
     tracing::info!(package = %target.package, serial = ?target.serial, follow = target.follow, attach = target.attach.is_some(), "device session");
 
     let mut app = App::new(SessionStore::new(), theme);
-    app.caps = Capabilities { pause: true, rules: true, live: true };
+    // the VM service cannot change a response: no rules in Flutter mode
+    app.caps = Capabilities { pause: true, rules: !target.flutter, live: true };
     settings.apply_ui(&mut app);
     load_project(&mut app, project);
     rules.apply(&mut app);

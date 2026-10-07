@@ -421,11 +421,12 @@ impl SessionStore {
                 }
                 self.account(dir, at, delta);
             }
-            SessionEvent::BodyEnd { key, dir, at, total, captured, state } => {
+            SessionEvent::BodyEnd { key, dir, at, total, captured, state, decoded } => {
                 self.see(at);
                 let idx = self.idx_or_placeholder(key, at);
                 let t = self.touch(idx);
                 let meta = Self::body_meta(t, dir);
+                meta.decoded = decoded;
                 let delta = total.saturating_sub(meta.total);
                 meta.total = meta.total.max(total);
                 meta.state = BodyState::from_wire(&state);

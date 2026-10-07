@@ -50,6 +50,8 @@ pub enum SessionEvent {
         total: u64,
         captured: u64,
         state: String,
+        /// The bytes are already Content-Encoding-decoded (PROTOCOL.md §7.1 `body_end`).
+        decoded: bool,
     },
     Mark {
         key: TxnKey,

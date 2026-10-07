@@ -158,6 +158,7 @@ impl Normalizer {
                 total: m.bytes,
                 captured: m.captured,
                 state: m.state,
+                decoded: m.decoded,
             }),
             DeviceMsg::Prog(m) => {
                 out.push(SessionEvent::BodyProgress { key: self.key(m.txn), dir: m.dir, at: m.ts, total: m.bytes })

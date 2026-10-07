@@ -63,6 +63,10 @@ struct Dev {
     sockets: HashMap<String, FakeRuntime>,
     unix_readable: bool,
     commands: Vec<String>,
+    /// Logcat lines by pid (`logcat -d --pid=`).
+    logs: Vec<(u32, String)>,
+    /// Device TCP ports and the host address that serves each (`forward tcp:0 tcp:<port>`).
+    tcp: HashMap<u16, std::net::SocketAddr>,
 }
 
 #[derive(Clone)]
@@ -118,6 +122,8 @@ impl FakeAdb {
                 sockets: HashMap::new(),
                 unix_readable: true,
                 commands: Vec::new(),
+                logs: Vec::new(),
+                tcp: HashMap::new(),
             });
             id
         };
@@ -147,6 +153,18 @@ impl FakeAdb {
     /// A debuggable app process (it shows in `track-jdwp`).
     pub fn start_process(&self, serial: &str, pid: u32, name: &str) {
         self.with_device(serial, |d| d.processes.push(Process { pid, name: name.to_string() }));
+    }
+
+    /// A line the process logs (what `logcat -d --pid=<pid>` shows).
+    pub fn log(&self, serial: &str, pid: u32, line: &str) {
+        self.with_device(serial, |d| d.logs.push((pid, line.to_string())));
+    }
+
+    /// A TCP port on the device, served by `to` on this computer (a Flutter app's VM service).
+    pub fn listen_tcp(&self, serial: &str, port: u16, to: std::net::SocketAddr) {
+        self.with_device(serial, |d| {
+            d.tcp.insert(port, to);
+        });
     }
 
     /// A process with a capture runtime listening on its socket.
@@ -385,6 +403,23 @@ async fn transport_command(inner: &Arc<Inner>, s: &mut TcpStream, serial: &str, 
                 let mut connections = tokio::task::JoinSet::new();
                 loop {
                     let Ok((stream, _)) = listener.accept().await else { return };
+                    // a device TCP port: the host address that serves it
+                    let tcp = remote.strip_prefix("tcp:").and_then(|p| p.parse::<u16>().ok()).and_then(|p| {
+                        let st = inner.state.lock().unwrap();
+                        st.devices
+                            .iter()
+                            .find(|d| d.serial == serial && d.state == "device")
+                            .and_then(|d| d.tcp.get(&p).copied())
+                    });
+                    if let Some(to) = tcp {
+                        let mut stream = stream;
+                        connections.spawn(async move {
+                            if let Ok(mut there) = TcpStream::connect(to).await {
+                                let _ = tokio::io::copy_bidirectional(&mut stream, &mut there).await;
+                            }
+                        });
+                        continue;
+                    }
                     let runtime = remote.strip_prefix("localabstract:").and_then(|name| {
                         let st = inner.state.lock().unwrap();
                         st.devices
@@ -504,9 +539,34 @@ fn run_shell(d: &mut Dev, command: &str) -> (String, String, u8) {
     if command.contains("cgroup.events") {
         return (String::new(), String::new(), 0);
     }
+    if let Some(rest) = command.strip_prefix("logcat -d -v brief --pid=") {
+        let pid: u32 = rest.trim().parse().unwrap_or(0);
+        let out: String = d.logs.iter().filter(|(p, _)| *p == pid).map(|(_, l)| format!("{l}\n")).collect();
+        return (out, String::new(), 0);
+    }
+    if let Some(rest) = command.strip_prefix("test -d /proc/") {
+        let pid: u32 = rest.split_whitespace().next().and_then(|p| p.parse().ok()).unwrap_or(0);
+        return if d.processes.iter().any(|p| p.pid == pid) {
+            ("up\n".into(), String::new(), 0)
+        } else {
+            (String::new(), String::new(), 1)
+        };
+    }
     if command.starts_with("getprop ") {
         let mut out = String::new();
         for part in command.split(';') {
+            // the clocks, read with the properties (the Flutter backend's offset)
+            match part.trim() {
+                "cat /proc/uptime" => {
+                    out.push_str("8283.09 18565.22\n");
+                    continue;
+                }
+                "date +%s%N" => {
+                    out.push_str("1790000000000000000\n");
+                    continue;
+                }
+                _ => {}
+            }
             let key = part.trim().strip_prefix("getprop ").unwrap_or("").trim();
             let value = match key {
                 "ro.build.version.sdk" => d.api.to_string(),
@@ -521,8 +581,13 @@ fn run_shell(d: &mut Dev, command: &str) -> (String, String, u8) {
         return (out, String::new(), 0);
     }
     if let Some(name) = command.strip_prefix("pidof ") {
-        let pids: Vec<String> =
-            d.processes.iter().filter(|p| p.name == name.trim()).map(|p| p.pid.to_string()).collect();
+        // as the shell reads it: 'quoted' (traffic_police_adb::quote) or bare
+        let name = name.trim();
+        let name = name
+            .strip_prefix('\'')
+            .and_then(|n| n.strip_suffix('\''))
+            .map_or(name.to_string(), |n| n.replace("'\\''", "'"));
+        let pids: Vec<String> = d.processes.iter().filter(|p| p.name == name).map(|p| p.pid.to_string()).collect();
         return if pids.is_empty() {
             (String::new(), String::new(), 1)
         } else {

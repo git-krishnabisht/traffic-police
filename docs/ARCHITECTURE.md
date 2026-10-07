@@ -1,6 +1,6 @@
 # traffic-police architecture
 
-Status: describes what is built: Phases 0 to 4 (released as 0.1.0 to 0.3.1), the fixes and additions of 2026-10-07 (the rule form, the socket-name fallback, fuzzing, the device tests; §9.2), and Phase 5 as far as it goes (§10). It began as the Phase 0 design; where the building changed it, the text says what was built and why. PROTOCOL.md defines the wire format; this document defines everything else. Statements about Android, ART, OkHttp, adb and Android Studio were checked against their sources; §11 lists where.
+Status: describes what is built: Phases 0 to 4 (released as 0.1.0 to 0.3.1), the fixes and additions of 2026-10-07 (the rule form, the socket-name fallback, fuzzing, the device tests; §9.2), and Phase 5: WebSocket messages (§4.2), gRPC (§4.9) and the Flutter backend (§5.16). It began as the Phase 0 design; where the building changed it, the text says what was built and why. PROTOCOL.md defines the wire format; this document defines everything else. Statements about Android, ART, OkHttp, adb and Android Studio were checked against their sources; §11 lists where.
 
 Contents
 
@@ -355,7 +355,7 @@ grpc-java on Android talks HTTP/2 through grpc-okhttp. That transport carries it
 | `traffic-police-proto` | serde, serde_json, bytes | Wire codec for PROTOCOL.md: frame encoder/decoder, typed messages, version constants. Pure (no IO); a Tokio `Decoder`/`Encoder` behind a feature. Fuzzed. |
 | `traffic-police-core` | traffic-police-proto | Normalized event model, `Backend` trait, session store, body store with disk spill, filter language, rules model (TOML), body decoders, exporters (HAR, cURL, session file), diff. No terminal code. |
 | `traffic-police-adb` | tokio | adb smart-socket client: device tracking, process tracking, forward, shell v2, sync push, socket discovery. Fallback to the `adb` binary. |
-| `traffic-police-backends` | traffic-police-core, traffic-police-adb, traffic-police-proto | `Backend` implementations: demo generator, device socket (library and attach share it), session file, HAR import. Attach orchestration (push, copy, attach). |
+| `traffic-police-backends` | traffic-police-core, traffic-police-adb, traffic-police-proto | `Backend` implementations: demo generator, device socket (library and attach share it), the Flutter backend (Dart VM service, §5.16), session file, HAR import. Attach orchestration (push, copy, attach). |
 | `traffic-police-tui` | traffic-police-core, ratatui, crossterm | Application state, views, widgets, keymap, themes, mouse hit-testing. Reads the store; sends commands. |
 | `traffic-police` (bin) | all | clap CLI, subcommands (`demo`, `open`, `tail`, `record`, `export`, `doctor`), wiring, logging, panic hook. |
 
@@ -582,7 +582,7 @@ Scoped after the Phase 3 review, at the user's request, for a later phase; built
 
 ```
 traffic-police                                   interactive: device picker → process picker → session
-traffic-police --serial S --package P [--process NAME | --pid N] [--mode library|attach] [--launch] [--follow]
+traffic-police --serial S --package P [--process NAME | --pid N] [--mode library|attach|flutter] [--launch] [--follow]
 traffic-police demo [--seed N] [--speed X] [--restart-after SECS]
 traffic-police open FILE                         .trafficpolice or .har (REPLAY)
 traffic-police tail [--json] [TARGET] [FILTER...]  a line per finished transaction: text, or NDJSON (--events: every message)
@@ -635,6 +635,40 @@ Versions are the latest stable releases on crates.io as of 2026-09-29 (toml_edit
 Planned in Phase 0 and never needed: notify and notify-debouncer-full (polling the rules file is enough and works the same everywhere), arboard (the platform's own commands do the job without keeping a process alive for X11 selections), tempfile, memmap2 and etcetera (`std` covers them), shlex (arguments are quoted by our own `adb::quote`), url (the URL model is our own), globset (globs become regexes), async-trait (no `Backend` trait was built, 5.3), ratatui-textarea (one-line fields), and quick-xml (dropped with the tolerant markup tokenizer).
 
 A CI step (`cargo tree -e features`) fails if a C library sneaks back in through default features (chafa, Oniguruma, zstd-sys, dav1d).
+
+### 5.16 Flutter backend (Phase 5)
+
+`--mode flutter` reads a Flutter app's dart:io HTTP traffic from its Dart VM service, the way DevTools' Network page does, with no library and no agent (`backends/src/flutter/`). It works with debug and profile builds (release builds have no VM service) of Flutter 3.22 (Dart 3.4) and newer. Older versions report dart:io's times on another clock, and the backend refuses them with their version. Source notes: docs/research/08-flutter-dart-vm-service.md.
+
+- **Finding it.**
+  - The app logs `The Dart VM service is listening on http://127.0.0.1:<port>/<auth code>/` when it starts. The backend reads `logcat -d -v brief --pid=<pid>` and takes the last address the process logged; a later `no longer listening` cancels it. A line that has rotated out of the log buffer means restarting the app, or `--launch`.
+  - It forwards `tcp:<port>` (the service listens on the device's loopback), opens `ws://127.0.0.1:<forwarded>/<auth code>/ws` with its own small WebSocket client (`ws.rs`; text frames, fragments, pings), and speaks JSON-RPC 2.0 (`vm.rs`).
+- **DDS.** When a Flutter tool (`flutter run`, an IDE) runs the app, its DDS owns the VM service. The upgrade then answers 302 with DDS's address on this computer, and the backend connects there. A `DartDevelopmentServiceConnected` event ends a direct connection; the backend reconnects, and so lands at DDS.
+- **Reading.**
+  - For each isolate with dart:io's extensions at version 4 or newer, it turns `httpEnableTimelineLogging` on. Pause turns it off, and dart:io then records no new request.
+  - Every second it calls `getHttpProfile` with `updatedSince` set to the profile's own timestamp from the previous read. For each entry that ended, it calls `getHttpProfileRequest` once for the bodies.
+  - New isolates come from the `Isolate` stream. Logging turned off by someone else is reported (`flutter_logging_off` diag).
+  - When traffic-police quits, logging goes off again in the isolates where it was off, because dart:io keeps everything it records in the app's heap.
+- **As protocol messages** (`profile.rs`). Each entry becomes one transaction, written as the capture runtime would write it:
+  - `req` once dart:io has the request, because its headers are final then.
+  - Marks from dart:io's events, each of which marks the end of its phase. `connect_start` is set at the entry's start, which dart:io takes before DNS and connecting.
+  - Then `resp`, body chunks, `body_end`, and `done` or `fail`.
+  - So the store, session files, `tail` and HAR take Flutter traffic unchanged.
+  - The VM's times are wall-clock µs. They become the device's CLOCK_BOOTTIME ns through an offset read once per process: `/proc/uptime` and `date +%s%N` in one shell command.
+- **Bodies.**
+  - dart:io keeps them whole, without a cap, until the entry ends; the capture cap applies when they are sent.
+  - A body dart:io decompressed for the app (`compressionState` `decompressed`) is sent with `body_end.decoded`. The host then does not decode it again, while the headers still show `content-encoding: gzip` (PROTOCOL.md §7.1).
+- **What it sees.** dart:io's `HttpClient` and everything on it: package:http's `IOClient`, dio's default adapter, `NetworkImage`, and dart:io WebSocket handshakes. Also clients that report through package:http_profile: cronet_http 1.3 and newer, ok_http, dio's native adapter.
+- **What it does not see.**
+  - gRPC and dio's HTTP/2 adapter, which use sockets directly.
+  - Anything on the Java side: library or attach mode covers that.
+  - The order of headers with different names (dart:io keeps headers in a hash map), the call stack (Dart does not report it), and TLS details.
+  - Requests made before logging was on.
+  - No rules: the VM service cannot change a response.
+- **Tests.**
+  - `backends/tests/fake_flutter.rs` runs a fake VM service behind the fake adb. It covers a GET with its decompressed body and its timings, a failing POST, each entry and body read once though polled again, pause, the app's exit, DDS (with logging restored on quit), and a Dart too old.
+  - Unit tests cover the translator, the WebSocket framing, and reading the address from logcat.
+  - By hand (2026-10-07): a Flutter 3.44.9 (Dart 3.12.2) debug app on the API 37 emulator, with a dart:io server inside it. A gzipped GET, a POST and a refused connection were captured every 3 s, in `tail` and in the UI, and logging was off again after quit.
 
 ## 6. Performance budgets
 
@@ -766,6 +800,16 @@ Decided while finishing what the plan left (2026-10-07), for review:
 - **HAR timings add up to the entry's time,** the gaps between phases counted as `blocked` and a request that never got an answer counted as `wait`.
 - **The host refuses device times past 2^62 ns** and drops body chunks whose end would overflow.
 
+Decided while building Phase 5 (2026-10-07), for review:
+
+- **WebSockets in library mode need `TrafficPolice.newWebSocket(client, request, listener)`** in place of `client.newWebSocket(...)`: no interceptor or listener sees a socket (§4.2). Attach mode needs nothing.
+- **gRPC: `TrafficPolice.grpcInterceptor()`, added to the channel first.** Attach mode hooks the channel builders (channels built after the attach) and the stubs' `getChannel` (calls through generated stubs on older channels). Calls made with `channel.newCall` on a channel built before the attach are missed; `--launch` avoids that (§4.9).
+- **gRPC requests show what the transport adds** below every interceptor: `content-type: application/grpc`, `te: trailers`, and `grpc-timeout` from the deadline. Their HTTP status is shown as 200, since gRPC never exposes it.
+- **The Status column shows a gRPC call's status name** (`OK`, `NOT_FOUND`) in place of the HTTP 200, colored as an API gateway maps the code to HTTP; `grpc:` filters by it.
+- **Flutter mode** turns dart:io's HTTP logging on in every isolate, and off again on quit where it was off. It never clears the app's profile, which DevTools may share. Pause turns logging off, and there are no rules (§5.16).
+- **The attach agent is version 0.2.0:** its boot interface gained the gRPC class loader. An app process that already has the 0.1.0 agent keeps it, and has to restart to get 0.2.0.
+- **Protocol additions, protocol version unchanged (1):** the `ws` event, `trailers` and `grpc` on `done` and `fail`, and `decoded` on `body_end`. An older host ignores them.
+
 ### 9.3 Risks
 
 - **Slicer aborts on unexpected input**, which would crash the app. Mitigation: pinned revision, targets validated before instrumentation, only reference-returning methods, tests on every supported API level.
@@ -789,7 +833,7 @@ Decided while finishing what the plan left (2026-10-07), for review:
 | 3 | Rules | MockWebServer tests for every action, gzip included |
 | 4 | Attach mode | An unmodified debuggable app shows traffic, including clients created before attach; `--launch` captures start-up requests; release binaries embed the agent and dex |
 | Fixes | Everything the plan left (2026-10-07) | The rule form (5.11.1) and rule reordering; the socket-name fallback (5.4); the nightly attach failure (4.7.2); the bugs of 0.3.1; the checks, tests and measurements the design promised (4.1, 8, 6); API 27–29 tried on devices |
-| 5 | Optional | WebSocket frames (§4.2) and gRPC (§4.9) in both modes, built and verified on devices 2026-10-07; Flutter (Dart VM service) backend (§5.13) |
+| 5 | Optional | WebSocket frames (§4.2) and gRPC (§4.9) in both modes, built and verified on devices 2026-10-07; Flutter (Dart VM service) backend (§5.16) |
 
 ## 11. Sources checked
 

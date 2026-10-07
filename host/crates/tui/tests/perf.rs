@@ -83,6 +83,7 @@ fn synth(source: u32, first_txn: u64, count: u64, end: u64, gap: u64) -> Vec<Ses
             total: len,
             captured: len,
             state: "complete".into(),
+            decoded: false,
         });
         out.push(SessionEvent::Completed { key, at: rt + 2 * NS_PER_MS });
     }

@@ -209,6 +209,8 @@ pub struct BodyMeta {
     /// Some chunks were lost to device-side overflow.
     pub gap: bool,
     pub ended: Option<Ts>,
+    /// The bytes are already Content-Encoding-decoded (the client decompressed them).
+    pub decoded: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

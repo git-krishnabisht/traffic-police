@@ -532,6 +532,7 @@ async fn sample_app_end_to_end() {
             rules: Default::default(),
             attach: None,
             launch: None,
+            flutter: false,
         };
         tasks.push(tokio::spawn(run_device(
             adb.clone(),
@@ -678,6 +679,7 @@ fn attach_target(
         rules: Default::default(),
         attach: Some(kit.clone()),
         launch,
+        flutter: false,
     }
 }
 

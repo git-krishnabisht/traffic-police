@@ -1476,6 +1476,7 @@ impl DemoDevice {
                     bytes: len,
                     captured: len,
                     state: "complete".into(),
+                    decoded: false,
                 }),
             );
             self.mark(t, txn, "req_body_end");
@@ -1553,6 +1554,7 @@ impl DemoDevice {
                     bytes: 0,
                     captured: 0,
                     state: "none".into(),
+                    decoded: false,
                 }),
             );
         } else {
@@ -1570,6 +1572,7 @@ impl DemoDevice {
                     bytes: len,
                     captured: len,
                     state: "complete".into(),
+                    decoded: false,
                 }),
             );
             if let Some(rule) = &ex.rule {
@@ -1586,6 +1589,7 @@ impl DemoDevice {
                         bytes: dl,
                         captured: dl,
                         state: "complete".into(),
+                        decoded: false,
                     }),
                 );
             }
