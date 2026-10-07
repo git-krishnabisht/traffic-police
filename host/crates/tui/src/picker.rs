@@ -261,6 +261,7 @@ async fn run(
     let mut processes: Option<Result<Vec<ProcessRow>, String>> = None;
     let mut cursor = 0usize;
     let mut message: Option<String> = None;
+    let mut command: Option<String> = None;
     loop {
         term.draw(|f| {
             let area = f.area();
@@ -275,6 +276,7 @@ async fn run(
                 message: message.as_deref(),
                 attach: attach.is_ok(),
                 keymap,
+                command: command.as_deref(),
             };
             draw(buf, area, &theme, &view);
         })?;
@@ -319,10 +321,36 @@ async fn run(
                 if k.kind == KeyEventKind::Release {
                     continue;
                 }
+                let ctrl_c = k.code == KeyCode::Char('c') && k.modifiers.contains(KeyModifiers::CONTROL);
+                // a `:` line being typed takes every key but Ctrl+C
+                if command.is_some() && !ctrl_c {
+                    match crate::palette::command_line_key(&mut command, &k) {
+                        crate::palette::CommandLine::Quit => {
+                            fetcher.abort();
+                            return Ok(None);
+                        }
+                        crate::palette::CommandLine::Unknown(c) => {
+                            message = Some(format!(":{c} is not a command here (:q quits)"));
+                        }
+                        crate::palette::CommandLine::Editing => {}
+                    }
+                    continue;
+                }
                 let action = keymap.action(&k);
-                if action == Some(Action::Quit) || (k.code == KeyCode::Char('c') && k.modifiers.contains(KeyModifiers::CONTROL)) {
+                if action == Some(Action::Quit) {
                     fetcher.abort();
                     return Ok(None);
+                }
+                // as in Neovim, Ctrl+C does not quit (nor `q`, unless `[keymap]` binds it): say what does
+                if ctrl_c || (action.is_none() && k.code == KeyCode::Char('q') && k.modifiers.is_empty()) {
+                    command = None;
+                    message = Some(crate::app::QUIT_HINT.to_string());
+                    continue;
+                }
+                if action == Some(Action::Palette) {
+                    command = Some(String::new());
+                    message = None;
+                    continue;
                 }
                 let len = match (&chosen, &processes, &devices) {
                     (Some(_), Some(Ok(p)), _) => p.len(),
@@ -408,12 +436,14 @@ struct View<'a> {
     attach: bool,
     /// The user's keys, for the hints at the bottom.
     keymap: &'a Keymap,
+    /// A `:` command being typed (`:q` quits, as in Neovim).
+    command: Option<&'a str>,
 }
 
 /// The picker's box: its title on the border, the list inside with a margin, the columns spread
 /// over the whole width, and the keys at the bottom.
 fn draw(buf: &mut ratatui::buffer::Buffer, area: Rect, t: &Theme, v: &View) {
-    let View { loaded, devices, abouts, chosen, processes, cursor, message, attach, keymap } = *v;
+    let View { loaded, devices, abouts, chosen, processes, cursor, message, attach, keymap, command } = *v;
     Block::bordered().border_type(t.borders).border_style(t.accent()).render(area, buf);
     // the title after the corner, as on the main screen's boxes (`╭─ Choose … ─`)
     let bold = t.accent().add_modifier(Modifier::BOLD);
@@ -516,14 +546,24 @@ fn draw(buf: &mut ratatui::buffer::Buffer, area: Rect, t: &Theme, v: &View) {
     if chosen.is_some() {
         help.push_str(&format!(" · {} back to devices", key(Action::Back)));
     }
-    help.push_str(&format!(" · {} quit", key(Action::Quit)));
+    // `quit = []` in `[keymap]` leaves only `:q` (and Ctrl+C)
+    match key(Action::Quit) {
+        k if k.is_empty() => help.push_str(" · :q quit"),
+        k => help.push_str(&format!(" · {k} or :q quit")),
+    }
     let help = help.as_str();
     let mut bottom: Vec<Line> = Vec::new();
     if let Some(m) = message {
         bottom.extend(crate::wrap::wrap_line(&Line::styled(m.to_string(), t.warn()), w, 0));
         bottom.push(Line::default());
     }
-    bottom.push(Line::styled(help, t.faint()));
+    // a `:` command being typed takes the hints' line, as Neovim's command line does
+    match command {
+        Some(c) => {
+            bottom.push(Line::from(vec![Span::styled(format!(":{c}"), t.text()), Span::styled("▏", t.accent())]))
+        }
+        None => bottom.push(Line::styled(help, t.faint())),
+    }
     let bottom_h = (bottom.len() as u16).min(inner.height.saturating_sub(1));
     let list_h = inner.height.saturating_sub(bottom_h + 1);
     // keep the cursor's row in view
@@ -587,6 +627,29 @@ mod tests {
     }
 
     #[test]
+    fn a_colon_command_takes_the_hints_line() {
+        let devices = Ok(vec![phone()]);
+        let abouts = HashMap::new();
+        let keymap = Keymap::default();
+        let mut view = View {
+            loaded: true,
+            devices: &devices,
+            abouts: &abouts,
+            chosen: None,
+            processes: None,
+            cursor: 0,
+            message: None,
+            attach: false,
+            keymap: &keymap,
+            command: None,
+        };
+        assert!(text(&view).contains("Enter open · :q quit"), "{}", text(&view));
+        view.command = Some("q");
+        let shown = text(&view);
+        assert!(shown.contains(":q▏") && !shown.contains(":q quit"), "{shown}");
+    }
+
+    #[test]
     fn the_process_list_spans_the_width_inside_a_margin() {
         let device = phone();
         let row = |pid, name: &str| ProcessRow {
@@ -611,6 +674,7 @@ mod tests {
             message: None,
             attach: true,
             keymap: &keymap,
+            command: None,
         };
         let area = Rect::new(0, 0, 160, 14);
         let selected = Theme::new(Palette::Dark, Depth::TrueColor).selected().bg.unwrap();
@@ -667,6 +731,7 @@ mod tests {
             message: None,
             attach: true,
             keymap: &keymap,
+            command: None,
         };
         let shown = text(&view);
         assert!(shown.contains("● com.library.app") && shown.contains("capture running: ready"), "{shown}");

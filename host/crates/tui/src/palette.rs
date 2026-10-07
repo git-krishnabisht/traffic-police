@@ -58,6 +58,72 @@ const LEFT_OUT: [Action; 14] = [
     Action::Palette,
 ];
 
+/// Neovim's ways out, typed after `:` (`:q`, `:q!`, `:qa`, `:wq`, `:x`, …): Enter on them quits.
+pub fn is_quit_command(s: &str) -> bool {
+    matches!(
+        s.trim(),
+        "q" | "q!"
+            | "qa"
+            | "qa!"
+            | "qall"
+            | "qall!"
+            | "quit"
+            | "quit!"
+            | "quitall"
+            | "quitall!"
+            | "wq"
+            | "wq!"
+            | "wqa"
+            | "wqa!"
+            | "wqall"
+            | "x"
+            | "x!"
+            | "xa"
+            | "xa!"
+            | "xall"
+            | "exit"
+            | "exit!"
+    )
+}
+
+/// The picker's `:` line (it has no palette): what a key does to it.
+#[derive(Debug, PartialEq, Eq)]
+pub enum CommandLine {
+    /// Still typing (or it was closed with Esc).
+    Editing,
+    /// Enter on a quit command.
+    Quit,
+    /// Enter on something else.
+    Unknown(String),
+}
+
+/// One key on a `:` line being typed: letters add, Backspace removes (and closes it when it is
+/// empty, as in Neovim), Esc closes, Enter runs.
+pub fn command_line_key(line: &mut Option<String>, k: &KeyEvent) -> CommandLine {
+    let Some(text) = line.as_mut() else { return CommandLine::Editing };
+    match k.code {
+        KeyCode::Enter => {
+            let text = line.take().unwrap_or_default();
+            if is_quit_command(&text) { CommandLine::Quit } else { CommandLine::Unknown(text) }
+        }
+        KeyCode::Esc => {
+            *line = None;
+            CommandLine::Editing
+        }
+        KeyCode::Backspace => {
+            if text.pop().is_none() {
+                *line = None;
+            }
+            CommandLine::Editing
+        }
+        KeyCode::Char(c) if !k.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) => {
+            text.push(c);
+            CommandLine::Editing
+        }
+        _ => CommandLine::Editing,
+    }
+}
+
 /// How well `query` matches `text` (lower is better): every word of the query must appear, a
 /// match at the start of a word counts most; a word that only matches as a subsequence (`cpc`
 /// for "copy as cURL") ranks after those.
@@ -89,11 +155,17 @@ impl Palette {
         let mut items: Vec<Item> = ACTIONS
             .iter()
             .filter(|i| !LEFT_OUT.contains(&i.action))
-            .map(|i| Item {
-                command: Command::Action(i.action),
-                title: i.title.to_string(),
-                name: i.name.to_string(),
-                keys: app.keymap.keys(i.action).iter().map(ToString::to_string).collect::<Vec<_>>().join(" "),
+            .map(|i| {
+                let mut keys: Vec<String> = app.keymap.keys(i.action).iter().map(ToString::to_string).collect();
+                if i.action == Action::Quit {
+                    keys.push(":q".into());
+                }
+                Item {
+                    command: Command::Action(i.action),
+                    title: i.title.to_string(),
+                    name: i.name.to_string(),
+                    keys: keys.join(" "),
+                }
             })
             .collect();
         for g in GraphStyle::ALL {
@@ -129,6 +201,13 @@ impl Palette {
             .collect();
         scored.sort();
         self.shown = scored.into_iter().map(|(_, i)| i).collect();
+        // `:q`, `:wq`, `:x` and the like: Quit first, so Enter quits as in Neovim
+        if is_quit_command(&q)
+            && let Some(quit) = self.items.iter().position(|it| it.command == Command::Action(Action::Quit))
+        {
+            self.shown.retain(|&i| i != quit);
+            self.shown.insert(0, quit);
+        }
         self.cursor = self.cursor.min(self.shown.len().saturating_sub(1));
     }
 }
@@ -234,6 +313,39 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn neovims_quit_commands() {
+        for c in ["q", "q!", " q ", "qa", "qall!", "quit", "wq", "wqa", "x", "xa!", "exit"] {
+            assert!(is_quit_command(c), "{c}");
+        }
+        for c in ["", "w", "qq", "quitter", "jq", "copy"] {
+            assert!(!is_quit_command(c), "{c}");
+        }
+    }
+
+    #[test]
+    fn a_command_line_types_runs_and_closes() {
+        let key = |c: KeyCode| KeyEvent::new(c, KeyModifiers::NONE);
+        let mut line = Some(String::new());
+        for c in "wq".chars() {
+            assert_eq!(command_line_key(&mut line, &key(KeyCode::Char(c))), CommandLine::Editing);
+        }
+        assert_eq!(line.as_deref(), Some("wq"));
+        assert_eq!(command_line_key(&mut line, &key(KeyCode::Enter)), CommandLine::Quit);
+        assert_eq!(line, None);
+        let mut line = Some("w".to_string());
+        assert_eq!(command_line_key(&mut line, &key(KeyCode::Enter)), CommandLine::Unknown("w".into()));
+        // Backspace on an empty line closes it, as in Neovim; Esc does too
+        let mut line = Some("q".to_string());
+        command_line_key(&mut line, &key(KeyCode::Backspace));
+        assert_eq!(line.as_deref(), Some(""));
+        command_line_key(&mut line, &key(KeyCode::Backspace));
+        assert_eq!(line, None);
+        let mut line = Some("q".to_string());
+        command_line_key(&mut line, &key(KeyCode::Esc));
+        assert_eq!(line, None);
+    }
 
     #[test]
     fn words_match_anywhere_and_word_starts_rank_first() {

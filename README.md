@@ -314,7 +314,7 @@ traffic-police tail --mode flutter -p com.example.app --json
 | Copy and save | `y` copy: as cURL, the URL, headers, one header, a body, the JSON value at the cursor · `w` save a body to a file · `e` export: HAR (all, listed or selected requests) or a session file |
 | Compare | `d` marks a request (◆), `d` on another compares them: request and status lines, headers (`s` in order or as sets), bodies (JSON with keys sorted); `n` `N` step through changes, `y` copies the diff |
 | Decode | `Enter` on a header or a JSON value: copy it, decode a JWT, base64 or URL encoding, or filter by it · the Overview lists JWTs with their expiry (`Enter` decodes) |
-| Session | `:` command palette (every command by name, and the graph styles and layouts) · `x` clear (asks first) · `?` help · `q` quit |
+| Session | `:` command palette (every command by name, and the graph styles and layouts) · `x` clear (asks first) · `?` help · `:q` Enter quits, as in Neovim (`:q!`, `:qa`, `:wq` and `:x` too, also in the device and app pickers); `q` and Ctrl+C do not quit, they say how (`quit = ["q"]` under `[keymap]` brings `q` back) |
 
 Mouse: click rows and tabs, double-click a row to open it, wheel to scroll (on the graph the
 wheel zooms and Shift+wheel moves in time), drag on the graph to select a range, drag the divider

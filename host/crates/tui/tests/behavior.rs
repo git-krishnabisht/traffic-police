@@ -182,14 +182,26 @@ fn timeline_bars_keep_their_width_and_edge_while_scrolling() {
 }
 
 #[test]
-fn quit_keys_work_everywhere() {
+fn only_colon_q_quits() {
+    // `q` and Ctrl+C do not quit (as in Neovim): they say what does
     let mut app = app_at(5.0);
+    let text = press(&mut app, MEDIUM, "q");
+    assert!(!app.should_quit);
+    assert!(text.contains("type :q and press Enter to quit"), "{text}");
+    app.handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
+    assert!(!app.should_quit, "Ctrl+C does not quit");
+    press(&mut app, MEDIUM, ":q<Enter>");
+    assert!(app.should_quit);
+    // the footer and the help show it
+    let mut app = app_at(5.0);
+    let text = press(&mut app, LARGE, "");
+    assert!(text.contains(":q quit"), "{text}");
+    // with `quit = ["q"]` in [keymap], `q` quits again
+    let mut app = app_at(5.0);
+    let errors = app.keymap.apply(&[("quit".to_string(), vec!["q".to_string()])]);
+    assert!(errors.is_empty(), "{errors:?}");
     press(&mut app, MEDIUM, "q");
     assert!(app.should_quit);
-    let mut app = app_at(5.0);
-    press(&mut app, MEDIUM, "?");
-    app.handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
-    assert!(app.should_quit, "Ctrl+C quits even with an overlay open");
 }
 
 #[test]
@@ -1425,4 +1437,29 @@ fn a_grpc_error_shows_its_status_and_trailers() {
     let rows = app.view_rows().rows();
     assert_eq!(rows.len(), 1);
     assert_eq!(store.txn(rows[0].txn()).grpc.as_ref().unwrap().name, "NOT_FOUND");
+}
+
+/// Neovim's quit commands after `:` quit too (`q` alone still does): the palette puts Quit first
+/// for them, so Enter quits; another entry can still be chosen, and Esc goes back.
+#[test]
+fn colon_q_quits_like_neovim() {
+    for keys in [":q<Enter>", ":q!<Enter>", ":qa<Enter>", ":wq<Enter>", ":x<Enter>", ":quit<Enter>"] {
+        let mut app = app_at(5.0);
+        press(&mut app, MEDIUM, keys);
+        assert!(app.should_quit, "{keys} quits");
+    }
+    let mut app = app_at(5.0);
+    let text = press(&mut app, MEDIUM, ":q");
+    assert_eq!(app.overlay, Overlay::Palette);
+    let first = text.lines().find(|l| l.contains("Quit")).expect("Quit is listed");
+    assert!(first.contains(":q"), "{first}");
+    press(&mut app, MEDIUM, "<Down><Enter>");
+    assert!(!app.should_quit, "another entry was chosen");
+    let mut app = app_at(5.0);
+    press(&mut app, MEDIUM, ":q<Esc>");
+    assert!(!app.should_quit);
+    assert_eq!(app.overlay, Overlay::None);
+    // the help says so
+    let text = press(&mut app, MEDIUM, "?");
+    assert!(text.contains(":q quit"), "{text}");
 }

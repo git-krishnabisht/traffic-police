@@ -21,7 +21,7 @@ expression: "frame(12.0, SMALL, \"?\")"
 │ re│ Live     Space pause · F freeze · L live · +/= zoom in · - zoom out · 0 reset zoom       │   │
 │ no│          v range                                                                         │   │
 │ ch│ Graph    T source · t clock                                                              │▎  │
-│ ca│ Session  y copy · w save body · e export · : commands · ? help · x clear · q quit        │  ▐│
+│ ca│ Session  y copy · w save body · e export · : commands · ? help · x clear · :q quit       │  ▐│
 │ lo│ Mouse    click rows and tabs · double-click opens                                        │▏ ▐│
 │ no│          wheel scrolls (zooms on the graph; Shift+wheel moves in time)                   │🮋▎▐│
 │ ev│          drag the graph to select a range, the border between boxes to resize            │🮊 ▐│

@@ -588,9 +588,10 @@ mod tests {
     #[tokio::test]
     async fn keys_after_quit_stay_waiting() {
         let mut app = App::new(SessionStore::new(), Theme::default());
-        let mut input = waiting([key('q'), key('j'), key('j')]);
+        let enter = Ok(Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)));
+        let mut input = waiting([key(':'), key('q'), enter, key('j'), key('j')]);
         assert!(take_waiting_input(&mut input, &mut app, &mut false).await.is_none());
-        assert!(app.should_quit);
+        assert!(app.should_quit, ":q Enter quits");
         assert_eq!(input.0.len(), 2);
     }
 

@@ -24,7 +24,7 @@ expression: "frame(12.0, MEDIUM, \"?\")"
 │ config   │ Rules    K move up · J move down · a add · Del/Backspace remove · Ctrl+s save · E $EDITOR                          │         ▐│
 │ ↪ config.│ Live     Space pause · F freeze · L live · +/= zoom in · - zoom out · 0 reset zoom · v range                       │         ▐│
 │ items    │ Graph    T source · t clock                                                                                        │██▋      ▐│
-│ metrics  │ Session  y copy · w save body · e export · : commands · ? help · x clear · q quit                                  │▎        ▐│
+│ metrics  │ Session  y copy · w save body · e export · : commands · ? help · x clear · :q quit                                 │▎        ▐│
 │ notificat│ Mouse    click rows and tabs · double-click opens · wheel scrolls (zooms on the graph; Shift+wheel moves in time)  │🮋█▍      ▐│
 │ events   │          drag the graph to select a range, the border between boxes to resize                                      │🮉▉       ▐│
 │ promo-ban│                                                                                                                    │ ▍       ▐│

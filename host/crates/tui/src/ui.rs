@@ -1740,7 +1740,17 @@ fn draw_footer(app: &App, r: Rect, buf: &mut Buffer) {
     let shown = if app.prefs.hints { hints(app) } else { Vec::new() };
     let mut items: Vec<(String, &str)> = shown
         .into_iter()
-        .map(|(actions, label)| (actions.iter().map(|&a| app.keymap.key_label(a)).collect::<String>(), label))
+        .map(|(actions, label)| {
+            let keys: String = actions
+                .iter()
+                .map(|&a| match app.keymap.key_label(a) {
+                    // quitting is `:q` unless a key is bound to it
+                    k if k.is_empty() && a == Action::Quit => ":q".to_string(),
+                    k => k,
+                })
+                .collect();
+            (keys, label)
+        })
         .filter(|(keys, _)| !keys.is_empty())
         .collect();
     let width_of = |items: &[(String, &str)]| items.iter().map(|(k, l)| k.width() + l.width() + 4).sum::<usize>();
@@ -1786,7 +1796,11 @@ fn draw_help(app: &App, area: Rect, buf: &mut Buffer) {
                 .iter()
                 .filter(|i| i.group == *g)
                 .filter_map(|i| {
-                    let keys: Vec<String> = app.keymap.keys(i.action).iter().map(ToString::to_string).collect();
+                    let mut keys: Vec<String> = app.keymap.keys(i.action).iter().map(ToString::to_string).collect();
+                    // the palette's `:q` (and `:wq`, `:x`, …) quits as in Neovim
+                    if i.action == crate::actions::Action::Quit {
+                        keys.push(":q".into());
+                    }
                     (!keys.is_empty()).then(|| (keys.join("/"), i.hint))
                 })
                 .collect();

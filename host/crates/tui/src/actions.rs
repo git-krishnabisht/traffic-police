@@ -240,7 +240,8 @@ pub const ACTIONS: &[Info] = &[
     ),
     info!(SaveRule, "save-rule", Rules, "save", "Rule form: save the rule to rules.toml", ["ctrl+s"]),
     info!(EditFile, "edit-file", Rules, "$EDITOR", "Open rules.toml in $EDITOR at the rule", ["E"]),
-    info!(Quit, "quit", Session, "quit", "Quit", ["q"]),
+    // only `:q` (the palette's quit commands) quits unless `[keymap]` binds a key (2026-10-08)
+    info!(Quit, "quit", Session, "quit", "Quit", []),
 ];
 
 impl Action {

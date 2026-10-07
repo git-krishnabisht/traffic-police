@@ -41,4 +41,4 @@ expression: "frame(12.0, MEDIUM, \"t++\")"
 │ notifications                                                            ···          500 ms                                          ██▐│
 │ status?orderId=ord_15bce3a5a963c9fd                       0 B  json      200          413 ms                                          🮊▉ │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
- Enter open   / filter   Space pause   m pin   y copy   e export   c collapse   s sort   Tab next panel   q quit   ? help     window 10.0 s
+ Enter open   / filter   Space pause   m pin   y copy   e export   c collapse   s sort   Tab next panel   :q quit   ? help    window 10.0 s

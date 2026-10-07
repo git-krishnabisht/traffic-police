@@ -51,4 +51,4 @@ expression: "frame(40.0, LARGE, \"\")"
 │ notifications                                                                                             ···          500 ms                                                                     ▕█▐│
 │ events                                                                                                    ···          359 ms                                                                      🮋 │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
- Enter open   / filter   Space pause   m pin   y copy   e export   c collapse   s sort   Tab next panel   q quit   ? help                                                    ⚠ studio inspector present
+ Enter open   / filter   Space pause   m pin   y copy   e export   c collapse   s sort   Tab next panel   :q quit   ? help                                                   ⚠ studio inspector present
