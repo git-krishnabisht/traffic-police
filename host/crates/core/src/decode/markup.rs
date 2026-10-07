@@ -142,7 +142,9 @@ fn highlight_tag(line: &mut StyledLine, raw: &str) {
             let e = raw[i..]
                 .find(|c: char| c.is_whitespace() || c == '=' || c == '>' || c == '/')
                 .map_or(raw.len(), |p| i + p);
-            let e = e.max(i + 1);
+            // at least one whole character: a space that is not ASCII (U+00A0) stops the search
+            // where it starts, and one byte on would cut it in half (up to 0.3.1 that panicked)
+            let e = if e > i { e } else { i + raw[i..].chars().next().map_or(1, char::len_utf8) };
             line.push(&raw[i..e], Tok::Attr);
             i = e;
         }
@@ -237,6 +239,18 @@ mod tests {
         );
         let a = &out[1];
         assert!(a.spans.iter().any(|&(s, e, t)| t == Tok::AttrValue && &a.text[s as usize..e as usize] == "\"1\""));
+    }
+
+    /// Spaces that are not ASCII inside a tag: the tag is shown whole, character by character
+    /// (up to 0.3.1 a U+00A0 there panicked; found by fuzzing).
+    #[test]
+    fn non_ascii_spaces_inside_a_tag() {
+        for dialect in [Dialect::Html, Dialect::Xml] {
+            let out = pretty("<a\u{a0}b=\"1\"\u{2003}c\u{a0}>x</a>", dialect);
+            assert!(text(&out).contains("\u{a0}b"), "{:?}", text(&out));
+            let _ = pretty("<a b=\u{a0}\u{a0}>", dialect);
+            let _ = pretty("<\u{a0}>", dialect);
+        }
     }
 
     #[test]

@@ -71,6 +71,59 @@ fn device_streams_that_once_crashed() {
     }
 }
 
+/// The `bodies` target: one body under each Content-Type and Content-Encoding, decoded and parsed
+/// by every viewer (the first byte picks the type and the encoding).
+fn bodies(data: &[u8]) {
+    use traffic_police_core::decode::{self, decode_body, json, kind, markup, multipart, protobuf};
+    const TYPES: &[&str] = &[
+        "application/json",
+        "text/html; charset=utf-8",
+        "application/xml",
+        "application/x-www-form-urlencoded",
+        "multipart/form-data; boundary=b",
+        "application/x-protobuf",
+        "application/grpc",
+        "image/png",
+        "text/plain; charset=iso-8859-1",
+        "application/octet-stream",
+    ];
+    const ENCODINGS: &[&str] = &["", "gzip", "deflate", "br", "zstd", "gzip, br", "identity"];
+    let Some((&pick, body)) = data.split_first() else { return };
+    let content_type = TYPES[usize::from(pick) % TYPES.len()];
+    let encoding = ENCODINGS[usize::from(pick / 16) % ENCODINGS.len()];
+    let mut headers = vec![("Content-Type".to_string(), content_type.to_string())];
+    if !encoding.is_empty() {
+        headers.push(("Content-Encoding".to_string(), encoding.to_string()));
+    }
+    let decoded = decode_body(bytes::Bytes::copy_from_slice(body), Some(&headers), 1 << 20);
+    let bytes = decoded.bytes.clone();
+    let _ = kind::detect(Some(content_type), &bytes);
+    let _ = json::parse(&bytes);
+    let text = String::from_utf8_lossy(&bytes);
+    let _ = markup::pretty(&text, markup::Dialect::Html);
+    let _ = markup::pretty(&text, markup::Dialect::Xml);
+    let _ = decode::form::parse_pairs(&text);
+    let _ = multipart::parse(&bytes, "b");
+    let _ = protobuf::decode_raw(&bytes);
+    let _ = protobuf::grpc_messages(&bytes);
+    let _ = decode::doc::text_lines(&text);
+    for row in 0..decode::hex::line_count(bytes.len()).min(64) {
+        let _ = decode::hex::line(&bytes, row);
+    }
+}
+
+/// A tag with a non-ASCII space in it (U+00A0): up to 0.3.1 the markup viewer cut that character
+/// in half and panicked (found by the CI fuzz job on its first run, 2026-10-08).
+#[test]
+fn bodies_that_once_crashed() {
+    let all = inputs("bodies");
+    assert!(!all.is_empty());
+    for (name, data) in all {
+        let r = std::panic::catch_unwind(|| bodies(&data));
+        assert!(r.is_ok(), "{name} panics again");
+    }
+}
+
 #[test]
 fn device_times_past_the_limit_are_refused() {
     let at = |ts: u64| format!(r#"{{"t":"done","seq":1,"ts":{ts},"txn":1}}"#);
