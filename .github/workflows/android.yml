@@ -33,7 +33,7 @@ jobs:
       - run: >-
           ./gradlew --stacktrace
           :capture-core:check
-          :capture:assembleRelease :capture-noop:assembleRelease
+          :capture:assembleRelease :capture-noop:assembleRelease :capture:assembleDebugAndroidTest
           :attach-agent:agentArtifacts
           :sample-app:assembleDebug :sample-app:assembleRelease :sample-app:assembleNondebuggable
           :sample-app:assemblePlain
@@ -87,7 +87,7 @@ jobs:
         with:
           packages: platform-tools ndk;28.2.13676358 cmake;3.22.1
       - uses: gradle/actions/setup-gradle@v5
-      - run: ./gradlew :sample-app:assembleDebug :sample-app:assemblePlain :attach-agent:agentArtifacts
+      - run: ./gradlew :sample-app:assembleDebug :sample-app:assemblePlain :attach-agent:agentArtifacts :capture:assembleDebugAndroidTest
       - working-directory: host
         run: rustup toolchain install 1.98.1 --profile minimal
       - uses: Swatinem/rust-cache@v2
@@ -102,8 +102,11 @@ jobs:
           target: google_apis
           disable-animations: true
           working-directory: host
-          # one test at a time: both drive the same emulator
+          # the library's device tests (am instrument exits 0 either way: its report says), then
+          # the end-to-end tests one at a time, since both drive the same emulator
           script: |
+            adb install -r -t ../android/capture/build/outputs/apk/androidTest/debug/capture-debug-androidTest.apk
+            adb shell am instrument -w io.trafficpolice.test/androidx.test.runner.AndroidJUnitRunner > instrumented.txt; cat instrumented.txt; grep -q "^OK (" instrumented.txt
             adb install -r ../android/sample-app/build/outputs/apk/debug/sample-app-debug.apk
             adb install -r ../android/sample-app/build/outputs/apk/plain/sample-app-plain.apk
             TP_E2E_SERIAL=emulator-5554 cargo test --locked -p traffic-police-backends --test device_e2e -- --ignored --nocapture --test-threads=1

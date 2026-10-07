@@ -8,6 +8,7 @@
 
 plugins {
     `java-library`
+    `java-test-fixtures`
     `maven-publish`
 }
 
@@ -76,6 +77,7 @@ testing {
                 }
                 dependencies {
                     implementation(project())
+                    implementation(testFixtures(project()))
                     implementation("com.squareup.okhttp3:okhttp:${m.okhttp}")
                     implementation("com.squareup.okhttp3:mockwebserver:${m.okhttp}")
                     if (m.okio != null) implementation("com.squareup.okio:okio:${m.okio}!!")
@@ -125,6 +127,12 @@ tasks.withType<Test>().configureEach {
         exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
     }
 }
+
+// TestHost (the pretend host the JVM tests and the capture library's device tests connect with)
+// is a test fixture, not part of the published library
+val javaComponent = components["java"] as AdhocComponentWithVariants
+javaComponent.withVariantsFromConfiguration(configurations["testFixturesApiElements"]) { skip() }
+javaComponent.withVariantsFromConfiguration(configurations["testFixturesRuntimeElements"]) { skip() }
 
 publishing {
     publications {

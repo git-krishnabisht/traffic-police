@@ -15,6 +15,12 @@ android {
         // no newer than OkHttp's own floor, so any app that can use OkHttp can use this
         minSdk = 21
         consumerProguardFiles("consumer-rules.pro")
+        // the device tests (src/androidTest): ./gradlew :capture:connectedDebugAndroidTest
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    packaging {
+        resources.excludes += listOf("META-INF/versions/9/module-info.class", "META-INF/*.kotlin_module")
     }
 
     compileOptions {
@@ -38,6 +44,14 @@ dependencies {
     implementation(project(":capture-core"))
     compileOnly(libs.okhttp.baseline) { exclude(group = "com.squareup.okio") }
     compileOnly(libs.okio.baseline)
+
+    androidTestImplementation(testFixtures(project(":capture-core")))
+    androidTestImplementation(libs.okhttp.latest)
+    androidTestImplementation(libs.okhttp.tls)
+    androidTestImplementation(libs.mockwebserver3)
+    androidTestImplementation(libs.junit)
+    androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(libs.androidx.test.junit)
 }
 
 publishing {
