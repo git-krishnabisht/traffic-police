@@ -23,3 +23,4 @@ tracing.workspace = true
 
 [dev-dependencies]
 traffic-police-fakeadb.workspace = true
+regex.workspace = true

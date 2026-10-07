@@ -60,12 +60,52 @@ fn body_text(
     })
 }
 
-fn timing(p: Option<(Ts, Ts)>, required: bool) -> Value {
-    match p {
-        Some((a, b)) => json!(ms(b.saturating_sub(a))),
-        None if required => json!(0),
-        None => json!(-1),
-    }
+/// HAR's `time` and `timings`, which HAR 1.2 requires to add up: `time` is the sum of the
+/// timings that apply (`ssl` is counted inside `connect`). The phases come from the marks, each
+/// cut to start where the one before ended (OkHttp 5 may connect while it still resolves); a
+/// request that failed or was cancelled before an answer spent its last part waiting; and
+/// `blocked` is what no phase covers (queueing, picking a connection, the end of the call).
+/// Up to 0.3.1 the timings were the bare phases, so the time between them was in no timing, and a
+/// timeout's ten seconds were in none at all.
+fn timings(t: &Transaction, now: Ts) -> (f64, Value) {
+    let p = t.phases(now);
+    let seg = t.segments(now);
+    let (begin, end) = (seg.start, seg.end);
+    let mut cursor = begin;
+    let mut take = |span: Option<(Ts, Ts)>| -> Option<f64> {
+        let (a, b) = span?;
+        let a = a.max(cursor).min(end);
+        let b = b.max(a).min(end);
+        cursor = b;
+        Some(ms(b - a))
+    };
+    let dns = take(p.dns);
+    let connect = take(p.connect);
+    let send = take(p.send.or(Some((seg.sent, seg.sent)))).unwrap_or(0.0);
+    let wait = take(Some((seg.sent, seg.first_byte.unwrap_or(end)))).unwrap_or(0.0);
+    let receive = seg.first_byte.and_then(|f| take(Some((f, end)))).unwrap_or(0.0);
+    // TLS is part of connect
+    let ssl = match (p.tls, p.connect) {
+        (Some((a, b)), Some((ca, cb))) => {
+            let (a, b) = (a.max(ca), b.min(cb));
+            (b > a).then(|| ms(b - a)).map(|x| x.min(connect.unwrap_or(0.0)))
+        }
+        _ => None,
+    };
+    let time = ms(end - begin);
+    let phases = dns.unwrap_or(0.0) + connect.unwrap_or(0.0) + send + wait + receive;
+    let blocked = ((time - phases) * 1000.0).round().max(0.0) / 1000.0;
+    let or_none = |x: Option<f64>| x.map_or(json!(-1), |v| json!(v));
+    let timings = json!({
+        "blocked": blocked,
+        "dns": or_none(dns),
+        "connect": or_none(connect),
+        "ssl": or_none(ssl),
+        "send": send,
+        "wait": wait,
+        "receive": receive,
+    });
+    (time, timings)
 }
 
 fn entry(store: &SessionStore, t: &Transaction, now: Ts) -> Value {
@@ -135,16 +175,7 @@ fn entry(store: &SessionStore, t: &Transaction, now: Ts) -> Value {
         None => (original, None),
     };
 
-    let p = t.phases(now);
-    let timings = json!({
-        "blocked": timing(p.queued, false),
-        "dns": timing(p.dns, false),
-        "connect": timing(p.connect, false),
-        "ssl": timing(p.tls, false),
-        "send": timing(p.send, true),
-        "wait": timing(p.wait, true),
-        "receive": timing(p.receive, true),
-    });
+    let (time, timings) = timings(t, now);
 
     let mut extra = Map::new();
     if let Some(s) = store.source(t.key.source) {
@@ -197,7 +228,7 @@ fn entry(store: &SessionStore, t: &Transaction, now: Ts) -> Value {
 
     let mut e = json!({
         "startedDateTime": started,
-        "time": ms(t.duration(now)),
+        "time": time,
         "request": request,
         "response": response,
         "cache": {},

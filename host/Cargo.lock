@@ -2629,6 +2629,7 @@ dependencies = [
  "bytes",
  "flate2",
  "image",
+ "regex",
  "serde_json",
  "tokio",
  "tracing",
