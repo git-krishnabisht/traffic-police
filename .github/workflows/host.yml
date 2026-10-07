@@ -56,6 +56,8 @@ jobs:
         with:
           workspaces: host
       - run: cargo test --locked --release -p traffic-police-tui --test perf -- --ignored --nocapture
+      # ingest from protocol bytes to the store: a 50,000-event replay, then 20,000 events a second
+      - run: cargo test --locked --release -p traffic-police-core --test ingest -- --ignored --nocapture
 
   # cargo-fuzz targets (host/fuzz): each runs a minute; a crash fails the job and its input is
   # kept as an artifact (add it to testdata/fuzz/<target>/ once fixed)

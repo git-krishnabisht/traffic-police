@@ -1,7 +1,8 @@
 //! Traffic over time for the graph (ARCHITECTURE.md §5.6, §5.8).
 //!
-//! Two series: bytes the runtime captured (10 ms bins, sparse), and the whole-app `TrafficStats`
-//! counters the runtime samples every 500 ms (the default graph source).
+//! Two series: bytes the runtime captured (10 ms bins, sparse; past an hour's worth of bins the
+//! older ones merge into 100 ms bins), and the whole-app `TrafficStats` counters the runtime
+//! samples every 500 ms (the default graph source).
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -9,6 +10,11 @@ use crate::fmt::{NS_PER_SEC, Ts};
 use crate::model::SourceId;
 
 pub const BIN_NS: u64 = 10_000_000;
+/// The bins older captured bytes merge into.
+pub const COARSE_BIN_NS: u64 = 100_000_000;
+/// Fine bins kept at most: an hour of traffic in every 10 ms bin. Past it, the older half merges
+/// into coarse bins, so a long session costs a tenth as much per hour (ARCHITECTURE.md §5.6).
+const FINE_BINS: usize = (3600 * NS_PER_SEC / BIN_NS) as usize;
 
 /// Which numbers the graph draws.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -63,22 +69,72 @@ struct AppInterval {
     tx: u64,
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
 pub struct TrafficSeries {
-    /// bin index (ts / BIN_NS) -> [rx, tx]
+    /// bin index (ts / BIN_NS) -> [rx, tx], from `fine_from` on
     captured: BTreeMap<u64, [u64; 2]>,
+    /// bin index (ts / COARSE_BIN_NS) -> [rx, tx], before `fine_from`
+    coarse: BTreeMap<u64, [u64; 2]>,
+    fine_from: Ts,
+    fine_limit: usize,
     app: Vec<AppInterval>,
     last_sample: HashMap<SourceId, (Ts, u64, u64)>,
 }
 
+impl Default for TrafficSeries {
+    fn default() -> Self {
+        TrafficSeries::with_fine_limit(FINE_BINS)
+    }
+}
+
+fn add_to(map: &mut BTreeMap<u64, [u64; 2]>, bin: u64, rx: u64, tx: u64) {
+    let b = map.entry(bin).or_insert([0, 0]);
+    b[0] = b[0].saturating_add(rx);
+    b[1] = b[1].saturating_add(tx);
+}
+
 impl TrafficSeries {
+    /// A series that keeps at most `fine_limit` 10 ms bins before merging the older half.
+    pub fn with_fine_limit(fine_limit: usize) -> Self {
+        TrafficSeries {
+            captured: BTreeMap::new(),
+            coarse: BTreeMap::new(),
+            fine_from: 0,
+            fine_limit: fine_limit.max(2),
+            app: Vec::new(),
+            last_sample: HashMap::new(),
+        }
+    }
+
     pub fn add_captured(&mut self, at: Ts, rx: u64, tx: u64) {
         if rx == 0 && tx == 0 {
             return;
         }
-        let bin = self.captured.entry(at / BIN_NS).or_insert([0, 0]);
-        bin[0] += rx;
-        bin[1] += tx;
+        if at < self.fine_from {
+            return add_to(&mut self.coarse, at / COARSE_BIN_NS, rx, tx);
+        }
+        add_to(&mut self.captured, at / BIN_NS, rx, tx);
+        if self.captured.len() > self.fine_limit {
+            self.coarsen();
+        }
+    }
+
+    /// Merges the older half of the fine bins into coarse bins, cut on a coarse bin's edge.
+    fn coarsen(&mut self) {
+        let Some((&oldest, _)) = self.captured.first_key_value() else { return };
+        let Some((&newest, _)) = self.captured.last_key_value() else { return };
+        let middle = oldest + (newest - oldest) / 2;
+        let cut = (middle * BIN_NS / COARSE_BIN_NS + 1) * COARSE_BIN_NS;
+        let keep = self.captured.split_off(&(cut / BIN_NS));
+        for (bin, [rx, tx]) in std::mem::replace(&mut self.captured, keep) {
+            add_to(&mut self.coarse, bin * BIN_NS / COARSE_BIN_NS, rx, tx);
+        }
+        self.fine_from = self.fine_from.max(cut);
+    }
+
+    /// How many bins the captured series holds (fine, coarse).
+    pub fn bins(&self) -> (usize, usize) {
+        (self.captured.len(), self.coarse.len())
     }
 
     /// A cumulative whole-app sample. The first sample of a source is only a baseline.
@@ -112,6 +168,19 @@ impl TrafficSeries {
             if wanted == GraphSource::AppTotal && !self.has_app_data() { GraphSource::Captured } else { wanted };
         match source {
             GraphSource::Captured => {
+                // a coarse bin is spread over the buckets it covers, as a rate
+                for (&bin, &[r, t]) in self.coarse.range(from / COARSE_BIN_NS..to.div_ceil(COARSE_BIN_NS)) {
+                    let (lo, hi) = (bin * COARSE_BIN_NS, (bin + 1) * COARSE_BIN_NS);
+                    let mut at = lo.max(from);
+                    while at < hi.min(to) {
+                        let i = (((at - from) / bucket_ns) as usize).min(n - 1);
+                        let bucket_end = (from + (i as u64 + 1) * bucket_ns).min(hi).min(to).max(at + 1);
+                        let frac = (bucket_end - at) as f64 / COARSE_BIN_NS as f64;
+                        rx[i] += r as f64 * frac;
+                        tx[i] += t as f64 * frac;
+                        at = bucket_end;
+                    }
+                }
                 for (&bin, &[r, t]) in self.captured.range(from / BIN_NS..to.div_ceil(BIN_NS)) {
                     let at = bin * BIN_NS;
                     if at < from || at >= to {
@@ -178,6 +247,29 @@ mod tests {
         assert!((total - 1000.0).abs() < 1e-6);
         assert!(b.rx[..19].iter().all(|&r| r == 0.0));
         assert!((b.rx[19] - 2000.0).abs() < 1e-6);
+    }
+
+    /// Past the limit, older bins merge into 100 ms ones: no byte is lost, the newest stay fine,
+    /// and a window over the old part still shows the traffic at 100 ms resolution.
+    #[test]
+    fn old_captured_bins_merge_into_coarse_ones() {
+        let mut s = TrafficSeries::with_fine_limit(1000);
+        // 30 s of traffic, 1 KB in every 10 ms bin
+        for i in 0..3000u64 {
+            s.add_captured(i * BIN_NS + 1, 1000, 1);
+        }
+        let (fine, coarse) = s.bins();
+        assert!(fine <= 1000 && coarse > 0, "{fine} fine, {coarse} coarse");
+        let all = s.buckets(GraphSource::Captured, 0, 30 * NS_PER_SEC, 30);
+        let total: f64 = all.rx.iter().sum::<f64>() * all.bucket_ns as f64 / NS_PER_SEC as f64;
+        assert!((total - 3_000_000.0).abs() < 1.0, "{total}");
+        // a steady 100 KB/s everywhere, merged or not
+        assert!(all.rx.iter().all(|r| (r - 100_000.0).abs() < 1.0), "{:?}", all.rx);
+        let old = s.buckets(GraphSource::Captured, 0, NS_PER_SEC, 20);
+        assert!(old.rx.iter().all(|r| (r - 100_000.0).abs() < 1.0), "{:?}", old.rx);
+        // late bytes for the merged part go to its coarse bins
+        s.add_captured(5 * BIN_NS, 1000, 0);
+        assert_eq!(s.bins().0, fine);
     }
 
     #[test]
