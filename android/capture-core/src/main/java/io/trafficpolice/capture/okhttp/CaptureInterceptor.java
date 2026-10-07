@@ -56,6 +56,8 @@ public final class CaptureInterceptor implements Interceptor {
         } catch (Throwable t) {
             rt.internalError("okhttp.rules", t);
         }
+        // without our listener, the only place to see Studio's interceptor (when it runs first)
+        StudioDetector.sample(rt);
         if (!rt.recorder().recording()) {
             // paused: rules still apply (PROTOCOL.md §6); nothing is recorded
             if (rules == null) {

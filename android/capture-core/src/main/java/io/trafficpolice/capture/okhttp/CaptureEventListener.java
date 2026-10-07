@@ -94,6 +94,8 @@ final class CaptureEventListener extends EventListener {
     @Override
     public void requestHeadersStart(Call call) {
         mark("req_headers_start");
+        // below every network interceptor: Studio's is on the stack wherever it sits
+        StudioDetector.sample(rt);
     }
 
     @Override
