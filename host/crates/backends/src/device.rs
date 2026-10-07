@@ -94,6 +94,38 @@ async fn sweep_stale_forwards(adb: &Adb, device: &Device) {
     }
 }
 
+/// The package's capture-runtime sockets (of process `pid` only, when given): from the device's
+/// socket list, or where the shell may not read it, the name the runtime uses in each of the
+/// package's processes, probed one by one (`traffic-police_<package>_<pid>`, PROTOCOL.md §2).
+pub async fn package_sockets(
+    adb: &Adb,
+    device: &Device,
+    package: &str,
+    pid: Option<u32>,
+) -> Result<Vec<RuntimeSocket>, AdbError> {
+    let id = device.transport_id;
+    let unreadable = match adb.runtime_sockets(id).await {
+        Ok(sockets) => {
+            return Ok(sockets.into_iter().filter(|s| s.is_for(package) && pid.is_none_or(|p| s.pid == p)).collect());
+        }
+        Err(AdbError::Unreadable(why)) => why,
+        Err(e) => return Err(e),
+    };
+    tracing::debug!("{unreadable}; probing the socket names of {package}'s processes");
+    let features = adb.device_features(id).await?;
+    let mut found = Vec::new();
+    for p in adb.app_processes(id, &features).await? {
+        if !attach::of_package(&p, package) || pid.is_some_and(|want| p.pid != want) {
+            continue;
+        }
+        let name = traffic_police_adb::socket_name(package, p.pid);
+        if adb.probe_abstract(id, &name).await? {
+            found.push(RuntimeSocket { name, package_part: traffic_police_adb::package_part(package), pid: p.pid });
+        }
+    }
+    Ok(found)
+}
+
 /// Whether Android's cached-apps freezer holds the process (it then runs no code at all).
 async fn is_frozen(adb: &Adb, device: &Device, pid: u32) -> bool {
     adb.frozen_pids(device.transport_id, &[pid]).await.is_ok_and(|f| f.contains(&pid))
@@ -367,11 +399,7 @@ async fn run(
         };
         // Is the same process still there? Then this was a connection hiccup: resume it.
         let alive = match &resume {
-            Some(r) => adb
-                .runtime_sockets(device.transport_id)
-                .await
-                .map(|s| s.iter().any(|x| x.pid == r.pid && x.is_for(&target.package)))
-                .unwrap_or(false),
+            Some(r) => package_sockets(adb, &device, &target.package, Some(r.pid)).await.is_ok_and(|s| !s.is_empty()),
             None => false,
         };
         if alive {
@@ -480,8 +508,8 @@ async fn find_socket(
     resume: Option<&Resume>,
     not_pid: Option<u32>,
 ) -> Result<Option<RuntimeSocket>, AdbError> {
-    let sockets: Vec<RuntimeSocket> =
-        adb.runtime_sockets(device.transport_id).await?.into_iter().filter(|s| s.is_for(&target.package)).collect();
+    let only = resume.map(|r| r.pid).or(target.pid);
+    let sockets = package_sockets(adb, device, &target.package, only).await?;
     if let Some(r) = resume {
         return Ok(sockets.into_iter().find(|s| s.pid == r.pid));
     }

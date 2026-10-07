@@ -17,7 +17,10 @@ use tokio::sync::watch;
 
 pub use apps::AppProcess;
 pub use devices::{Device, TransportId};
-pub use sockets::{PREFIX, RuntimeSocket, socket_name};
+pub use sockets::{PREFIX, RuntimeSocket, package_part, socket_name};
+
+/// How long [`Adb::probe_abstract`] waits for a socket to speak or close.
+const PROBE_WAIT: Duration = Duration::from_millis(1500);
 
 #[derive(Debug, thiserror::Error)]
 pub enum AdbError {
@@ -30,6 +33,9 @@ pub enum AdbError {
     Protocol(String),
     #[error("adb request timed out: {0}")]
     Timeout(String),
+    /// A file the device's shell may not read, with what the shell said.
+    #[error("{0}")]
+    Unreadable(String),
     #[error(transparent)]
     Io(#[from] std::io::Error),
 }
@@ -309,10 +315,42 @@ impl Adb {
             .collect())
     }
 
-    /// Listening capture-runtime sockets on the device.
+    /// Listening capture-runtime sockets on the device, from `/proc/net/unix`.
+    /// [`AdbError::Unreadable`] when the shell may not read that file (some devices hide it):
+    /// then a runtime is found by its name instead ([`socket_name`] of the package and the pid,
+    /// checked with [`probe_abstract`](Self::probe_abstract)). Up to 0.3.1 an unreadable file
+    /// read as "no sockets".
     pub async fn runtime_sockets(&self, id: TransportId) -> Result<Vec<RuntimeSocket>> {
         let out = self.shell(id, "cat /proc/net/unix").await?;
-        Ok(sockets::parse_proc_net_unix(&out.stdout_text()))
+        let text = out.stdout_text();
+        if out.exit != 0 || text.trim().is_empty() {
+            let said = String::from_utf8_lossy(&out.stderr).trim().to_string();
+            let said = if said.is_empty() { format!("cat exited with {}", out.exit) } else { said };
+            return Err(AdbError::Unreadable(format!("/proc/net/unix cannot be read ({said})")));
+        }
+        Ok(sockets::parse_proc_net_unix(&text))
+    }
+
+    /// Whether something listens on the device's abstract socket `name`. A forward to a missing
+    /// socket connects and is closed at once; the capture runtime speaks first (`hello`); a
+    /// socket whose process Android froze takes the connection and says nothing until the
+    /// process runs again, which counts as there. Nothing is sent: a runtime lets a connection
+    /// take over only after `hello_ack`, and takes this one's end as the host going away.
+    pub async fn probe_abstract(&self, id: TransportId, name: &str) -> Result<bool> {
+        let port = self.forward(id, &format!("localabstract:{name}")).await?;
+        let there = async {
+            let mut tcp = TcpStream::connect(("127.0.0.1", port)).await?;
+            let mut first = [0u8; 1];
+            match tokio::time::timeout(PROBE_WAIT, tcp.read(&mut first)).await {
+                Ok(Ok(n)) => Ok(n > 0),
+                Ok(Err(e)) if e.kind() == std::io::ErrorKind::ConnectionReset => Ok(false),
+                Ok(Err(e)) => Err(AdbError::Io(e)),
+                Err(_) => Ok(true),
+            }
+        }
+        .await;
+        let _ = self.kill_forward(id, port).await;
+        there
     }
 
     /// Debuggable (and profileable) processes once, with names: from `track-app` when the

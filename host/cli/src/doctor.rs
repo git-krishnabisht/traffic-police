@@ -357,11 +357,32 @@ pub async fn run(t: &Target, settings: &config::Loaded, adb: &Adb) -> Report {
             r.check(Mark::Ok, "/proc/net/unix is readable", None);
             s
         }
+        Err(AdbError::Unreadable(why)) => {
+            // the runtime's socket is found by its name instead (package and pid)
+            match traffic_police_backends::device::package_sockets(adb, device, package, None).await {
+                Ok(found) => {
+                    r.check(
+                        Mark::Ok,
+                        format!("{why}: the capture runtime is looked for by its socket name instead"),
+                        None,
+                    );
+                    found
+                }
+                Err(e) => {
+                    r.check(
+                        Mark::Fail,
+                        format!("{why}, and its socket names could not be checked: {e}"),
+                        Some("check that the device is still connected (adb devices), then run doctor again"),
+                    );
+                    Vec::new()
+                }
+            }
+        }
         Err(e) => {
             r.check(
                 Mark::Fail,
                 format!("/proc/net/unix did not read: {e}"),
-                Some("traffic-police finds the capture runtime there; try another device or image"),
+                Some("check that the device is still connected (adb devices), then run doctor again"),
             );
             Vec::new()
         }

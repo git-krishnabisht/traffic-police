@@ -94,21 +94,83 @@ async fn learn_debuggable(adb: &Adb, id: TransportId, packages: &[&str], known: 
     }
 }
 
-async fn fetch_processes(
+/// What the picker remembers about a device between refreshes.
+#[derive(Default)]
+struct Known {
+    /// package → debuggable (`run-as` works)
+    debuggable: HashMap<String, bool>,
+    /// pid → whether its capture socket answered, and when it was asked: where the device hides
+    /// its socket list, each process's socket is probed by name (a "no" is asked again later,
+    /// since the agent can start a runtime in a running process)
+    probed: HashMap<u32, (bool, std::time::Instant)>,
+}
+
+/// How long a probe's "no runtime" stands.
+const PROBE_AGAIN: Duration = Duration::from_secs(5);
+
+/// The capture sockets on the device: its socket list, or where the shell may not read it, the
+/// socket names of the debuggable processes, probed (each "yes" once per pid).
+async fn find_sockets(
     adb: &Adb,
     id: TransportId,
-    debuggable: &mut HashMap<String, bool>,
-) -> Result<Vec<ProcessRow>, String> {
+    procs: &[traffic_police_adb::AppProcess],
+    known: &mut Known,
+) -> Result<Vec<traffic_police_adb::RuntimeSocket>, String> {
+    match adb.runtime_sockets(id).await {
+        Ok(s) => return Ok(s),
+        Err(traffic_police_adb::AdbError::Unreadable(_)) => {}
+        Err(e) => return Err(e.to_string()),
+    }
+    known.probed.retain(|pid, _| procs.iter().any(|p| p.pid == *pid));
+    // only apps that run-as accepts can run capture (userdebug images list every app)
+    let packages: Vec<String> = procs.iter().filter(|p| p.debuggable).map(package_of).collect();
+    let packages: Vec<&str> = packages.iter().map(String::as_str).collect();
+    learn_debuggable(adb, id, &packages, &mut known.debuggable).await;
+    let mut found = Vec::new();
+    for p in procs.iter().filter(|p| p.debuggable) {
+        let package = package_of(p);
+        if known.debuggable.get(&package) != Some(&true) {
+            continue;
+        }
+        let name = traffic_police_adb::socket_name(&package, p.pid);
+        let there = match known.probed.get(&p.pid) {
+            Some((yes, at)) if *yes || at.elapsed() < PROBE_AGAIN => *yes,
+            _ => {
+                let yes = adb.probe_abstract(id, &name).await.unwrap_or(false);
+                known.probed.insert(p.pid, (yes, std::time::Instant::now()));
+                yes
+            }
+        };
+        if there {
+            found.push(traffic_police_adb::RuntimeSocket {
+                name,
+                package_part: traffic_police_adb::package_part(&package),
+                pid: p.pid,
+            });
+        }
+    }
+    Ok(found)
+}
+
+/// The package a process belongs to: as `track-app` names it, else from the process name.
+fn package_of(p: &traffic_police_adb::AppProcess) -> String {
+    match p.package_names.first() {
+        Some(package) => package.clone(),
+        None => p.process_name.as_deref().unwrap_or_default().split(':').next().unwrap_or_default().to_string(),
+    }
+}
+
+async fn fetch_processes(adb: &Adb, id: TransportId, known: &mut Known) -> Result<Vec<ProcessRow>, String> {
     let features = adb.device_features(id).await.map_err(|e| e.to_string())?;
     let procs = adb.app_processes(id, &features).await.map_err(|e| e.to_string())?;
-    let sockets = adb.runtime_sockets(id).await.map_err(|e| e.to_string())?;
+    let sockets = find_sockets(adb, id, &procs, known).await?;
+    let debuggable = &mut known.debuggable;
     let mut rows: Vec<ProcessRow> = procs
         .into_iter()
         .filter(|p| p.debuggable)
         .map(|p| {
             let name = p.process_name.clone().unwrap_or_else(|| format!("pid {}", p.pid));
-            let package =
-                p.package_names.first().cloned().unwrap_or_else(|| name.split(':').next().unwrap_or("").to_string());
+            let package = package_of(&p);
             let capturing = sockets.iter().any(|s| s.pid == p.pid);
             ProcessRow { pid: p.pid, name, package, capturing, frozen: false, arch: p.architecture }
         })
@@ -158,8 +220,8 @@ async fn run(
     let fetcher = tokio::spawn(async move {
         let mut device: Option<TransportId> = None;
         let mut asked = std::collections::HashSet::new();
-        // per device: package → debuggable (run-as works)
-        let mut debuggable: HashMap<TransportId, HashMap<String, bool>> = HashMap::new();
+        // per device: which packages are debuggable, which sockets answered
+        let mut known: HashMap<TransportId, Known> = HashMap::new();
         loop {
             let online: Vec<TransportId> = match &*fetch_watch.borrow_and_update() {
                 Some(Ok(list)) => list.iter().filter(|d| d.is_online()).map(|d| d.transport_id).collect(),
@@ -174,7 +236,7 @@ async fn run(
                 }
             }
             if let Some(id) = device {
-                let procs = fetch_processes(&fetch_adb, id, debuggable.entry(id).or_default()).await;
+                let procs = fetch_processes(&fetch_adb, id, known.entry(id).or_default()).await;
                 if tx.send(Snapshot::Processes(id, procs)).is_err() {
                     return;
                 }
