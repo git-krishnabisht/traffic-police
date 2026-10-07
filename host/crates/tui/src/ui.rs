@@ -1413,16 +1413,21 @@ fn draw_rules(app: &mut App, r: Rect, buf: &mut Buffer) {
 /// The request's side: the body explorer on top (`[ui] body_height` of it; none at 0), the
 /// tabs below.
 fn draw_detail_pane(app: &mut App, r: Rect, buf: &mut Buffer) {
-    if app.prefs.body_height == 0 {
+    // the body box on top (at least 3 rows), `[ui] gap` rows, then the tabs (at least 8 rows);
+    // a pane too short for both shows only the tabs
+    let gap = gap_rows(app);
+    app.body_box_shown = app.prefs.body_height > 0 && r.height >= 3 + gap + 8;
+    if !app.body_box_shown {
         if app.focus == Focus::Preview {
             app.focus = Focus::Detail;
         }
         return draw_tabs_box(app, r, buf);
     }
-    // the body box on top, `[ui] gap` rows, then the tabs (at least 8 rows of them)
-    let gap = gap_rows(app);
+    // the body box's share, 5 rows at least where the tabs leave that many (up to 0.3.1 a
+    // `clamp` here panicked in a pane under 13 rows plus the gap)
     let share = u32::from(r.height) * u32::from(app.prefs.body_height) / 100;
-    let top_h = (share as u16).clamp(5, r.height.saturating_sub(8 + gap).max(3));
+    let most = r.height - 8 - gap;
+    let top_h = (share as u16).clamp(5.min(most), most);
     let top = Rect { height: top_h, ..r };
     let bottom = Rect { y: r.y + top_h + gap, height: r.height.saturating_sub(top_h + gap), ..r };
     crate::explorer::draw(app, top, buf);

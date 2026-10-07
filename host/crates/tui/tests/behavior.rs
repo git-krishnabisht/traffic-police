@@ -1079,3 +1079,27 @@ fn boxes_are_the_same_distance_apart_both_ways() {
         assert!((tabs - gap..tabs).all(blank), "gap {gap}: {text}");
     }
 }
+
+/// A request opened in a short detail pane: the body box and the tabs share what is there. Up to
+/// 0.3.1 the layout panicked (`clamp` with its bounds crossed) when the pane was under 13 rows
+/// plus the gap, e.g. 120×30 with `graph_height = 14`, or `gap = 3` at 30 rows.
+#[test]
+fn a_short_detail_pane_never_breaks_the_layout() {
+    for size in [SMALL, (120, 30), MEDIUM] {
+        let mut app = app_at(12.0);
+        press(&mut app, size, "<Enter>");
+        assert!(app.selected.is_some(), "a request is open");
+        for graph_height in [None, Some(0), Some(8), Some(14), Some(16), Some(20), Some(26), Some(40)] {
+            for gap in 0..=4 {
+                for body_height in [0, 15, 40, 85] {
+                    app.prefs.graph_height = graph_height;
+                    app.prefs.gap = gap;
+                    app.prefs.body_height = body_height;
+                    let text = render_text(&mut app, size.0, size.1);
+                    let what = format!("{size:?} graph_height {graph_height:?} gap {gap} body_height {body_height}");
+                    assert!(text.contains("Overview"), "{what}: the tabs are drawn\n{text}");
+                }
+            }
+        }
+    }
+}

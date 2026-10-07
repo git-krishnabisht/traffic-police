@@ -371,6 +371,8 @@ pub struct App {
     pub list_offset: usize,
     pub list_height: usize,
     pub detail_open: bool,
+    /// Whether the last frame had room for the body box above the tabs (`[ui] body_height`).
+    pub body_box_shown: bool,
     pub detail: DetailState,
     pub detail_height: usize,
     /// The detail tabs' width when last drawn, for wrapping.
@@ -466,6 +468,7 @@ impl App {
             list_offset: 0,
             list_height: 10,
             detail_open: false,
+            body_box_shown: true,
             detail: DetailState::default(),
             detail_height: 10,
             detail_width: 0,
@@ -826,7 +829,8 @@ impl App {
         let c = if frac < 0.0 { cursor.saturating_sub(step) } else { cursor + step };
         let origin = self.view_store().origin();
         let live_right = self.now();
-        let c = c.clamp(origin, live_right);
+        // not `clamp`, which panics if the clock ever reads earlier than the session's start
+        let c = c.max(origin).min(live_right);
         self.graph.cursor = Some(c);
         if c < left {
             self.graph.pinned_right = Some(c + self.graph.span);
@@ -1450,7 +1454,7 @@ impl App {
         // hidden boxes take no focus
         order.retain(|f| match f {
             Focus::Graph => self.prefs.graph_height != Some(0),
-            Focus::Preview => self.prefs.body_height > 0,
+            Focus::Preview => self.prefs.body_height > 0 && self.body_box_shown,
             _ => true,
         });
         let i = order.iter().position(|&f| f == self.focus).unwrap_or(1) as i32;
