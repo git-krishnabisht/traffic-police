@@ -61,9 +61,10 @@ jobs:
 
   # The sample app on emulators, driven by the host's end-to-end tests: every scenario, both
   # processes, kill and relaunch, the same-uid refusal; and in attach mode the plain build
-  # (attach while it runs, --follow, --launch). Slow, so on demand and nightly.
+  # (attach while it runs, --follow, --launch). Slow, so nightly, on demand, and on pushes that
+  # change the Android side (since 2026-10-09: a broken device test went unseen for two nights).
   device:
-    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    if: github.event_name != 'pull_request'
     strategy:
       fail-fast: false
       matrix:
@@ -103,10 +104,13 @@ jobs:
           disable-animations: true
           working-directory: host
           # the library's device tests (am instrument exits 0 either way: its report says), then
-          # the end-to-end tests one at a time, since both drive the same emulator
+          # the end-to-end tests one at a time, since both drive the same emulator. A failure in
+          # the first does not skip the second (until 2026-10-09 it did): the last line fails the
+          # job for it. Each line runs on its own, so the mark is a file.
           script: |
             adb install -r -t ../android/capture/build/outputs/apk/androidTest/debug/capture-debug-androidTest.apk
-            adb shell am instrument -w io.trafficpolice.test/androidx.test.runner.AndroidJUnitRunner > instrumented.txt; cat instrumented.txt; grep -q "^OK (" instrumented.txt
+            adb shell am instrument -w io.trafficpolice.test/androidx.test.runner.AndroidJUnitRunner > instrumented.txt; cat instrumented.txt; grep -q "^OK (" instrumented.txt || touch instrumented.failed
             adb install -r ../android/sample-app/build/outputs/apk/debug/sample-app-debug.apk
             adb install -r ../android/sample-app/build/outputs/apk/plain/sample-app-plain.apk
             TP_E2E_SERIAL=emulator-5554 cargo test --locked -p traffic-police-backends --test device_e2e -- --ignored --nocapture --test-threads=1
+            if [ -e instrumented.failed ]; then echo "::error::the library's device tests failed (their report is above)"; exit 1; fi

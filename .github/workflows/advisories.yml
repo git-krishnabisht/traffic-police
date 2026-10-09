@@ -1,0 +1,28 @@
+name: advisories
+
+# Known security problems in the host's dependencies (the RustSec advisory database, through
+# cargo-deny's defaults: vulnerabilities, unsound and unmaintained crates). On changes to the
+# dependencies, and weekly, since new advisories appear without any change here.
+on:
+  push:
+    paths: ["host/Cargo.lock", "host/**/Cargo.toml", ".github/workflows/advisories.yml"]
+  pull_request:
+    paths: ["host/Cargo.lock", "host/**/Cargo.toml", ".github/workflows/advisories.yml"]
+  schedule:
+    - cron: "41 4 * * 1"
+  workflow_dispatch:
+
+defaults:
+  run:
+    working-directory: host
+
+jobs:
+  cargo-deny:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup toolchain install 1.98.1 --profile minimal
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny
+      - run: cargo deny --locked check advisories

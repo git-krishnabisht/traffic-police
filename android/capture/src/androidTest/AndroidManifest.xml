@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- The device tests' own app (io.trafficpolice.test). Cleartext only reaches the tests'
+         servers on 127.0.0.1; Android 9 and newer refuse it to an app that targets them unless
+         the app allows it (until 2026-10-09 the tests failed there, e.g. on API 31 and 36). -->
+    <application android:usesCleartextTraffic="true" />
+</manifest>
