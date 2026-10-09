@@ -56,7 +56,7 @@ public final class WebSocketCaptureTest {
 
     /** The server: to each text message, three binary bytes and an echo; then a close. */
     private void serveEcho() {
-        server.enqueue(new MockResponse().withWebSocketUpgrade(new WebSocketListener() {
+        WebSocketListener echo = new WebSocketListener() {
             @Override
             public void onMessage(WebSocket webSocket, String text) {
                 webSocket.send(ByteString.of((byte) 1, (byte) 2, (byte) 3));
@@ -67,7 +67,16 @@ public final class WebSocketCaptureTest {
             public void onClosing(WebSocket webSocket, int code, String reason) {
                 webSocket.close(1000, "bye");
             }
-        }));
+        };
+        // The handshake's answer comes after 250 ms, as a server's would over a network. In attach
+        // mode the hook swaps the socket's listener when newWebSocket returns, after OkHttp has
+        // started the handshake: a server in this JVM answered within a millisecond, and on a busy
+        // CI runner that once beat the hook (ARCHITECTURE.md §4.2). OkHttp 3.9's server delays an
+        // HTTP/1 answer by its body delay, later ones by the headers delay.
+        server.enqueue(new MockResponse()
+                .setHeadersDelay(250, TimeUnit.MILLISECONDS)
+                .setBodyDelay(250, TimeUnit.MILLISECONDS)
+                .withWebSocketUpgrade(echo));
     }
 
     /** The app's side: says hello once open, closes after the echo; records what it got. */
