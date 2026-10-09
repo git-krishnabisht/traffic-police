@@ -61,7 +61,8 @@ val buildToolsDirectory = sdkDirectory.resolve("build-tools").listFiles()
 val d8 = buildToolsDirectory.resolve("d8")
 val androidJar = sdkDirectory.resolve("platforms/android-37.0/android.jar")
 
-val captureCoreJar = project(":capture-core").layout.buildDirectory.file("libs/capture-core-0.1.0.jar")
+// the jar is named with the version (until 2026-10-09 the name was written here, as 0.1.0)
+val captureCoreJar = project(":capture-core").layout.buildDirectory.file("libs/capture-core-${project(":capture-core").version}.jar")
 val bootApiJar = tasks.register<Jar>("bootApiJar") {
     dependsOn(":capture-core:compileJava")
     archiveFileName.set("traffic-police-boot-api.jar")

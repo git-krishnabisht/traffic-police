@@ -167,6 +167,8 @@ tasks.register<Test>("benchmarkOverhead") {
 
 tasks.withType<Test>().configureEach {
     systemProperty("trafficpolice.testdata", rootProject.projectDir.parentFile.resolve("testdata").absolutePath)
+    // CaptureRuntime.VERSION, which the runtime reports in its hello, must be the build's
+    systemProperty("trafficpolice.version", project.version.toString())
     testLogging {
         events("failed")
         exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
