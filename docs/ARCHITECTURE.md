@@ -1,6 +1,6 @@
 # traffic-police architecture
 
-Status: describes what is built: Phases 0 to 4 (released as 0.1.0 to 0.3.1), the fixes and additions of 2026-10-07 (the rule form, the socket-name fallback, fuzzing, the device tests; §9.2), and Phase 5: WebSocket messages (§4.2), gRPC (§4.9) and the Flutter backend (§5.16). It began as the Phase 0 design; where the building changed it, the text says what was built and why. PROTOCOL.md defines the wire format; this document defines everything else. Statements about Android, ART, OkHttp, adb and Android Studio were checked against their sources; §11 lists where.
+Status: describes what is built: Phases 0 to 4 (released as 0.1.0 to 0.3.1), the fixes and additions of 2026-10-07 (the rule form, the socket-name fallback, fuzzing, the device tests; §9.2), and Phase 5: WebSocket messages (§4.2), gRPC (§4.9) and the Flutter backend (§5.16), released with the one-line installers and the Android libraries' Maven repository (§8) as 0.4.0. It began as the Phase 0 design; where the building changed it, the text says what was built and why. PROTOCOL.md defines the wire format; this document defines everything else. Statements about Android, ART, OkHttp, adb and Android Studio were checked against their sources; §11 lists where.
 
 Contents
 

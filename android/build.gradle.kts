@@ -5,7 +5,7 @@ plugins {
 
 allprojects {
     group = "io.trafficpolice"
-    version = "0.1.0"
+    version = "0.4.0"
 }
 
 // `./gradlew publishAllPublicationsToBuildRepository` writes the artifacts to build/repo, to test

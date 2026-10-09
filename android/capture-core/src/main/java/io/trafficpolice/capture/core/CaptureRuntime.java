@@ -11,7 +11,7 @@ import java.util.UUID;
 
 /** The capture runtime of one app process: wiring, configuration, diagnostics, {@code hello}. */
 public final class CaptureRuntime {
-    public static final String VERSION = "0.1.0";
+    public static final String VERSION = "0.4.0";
     public static final int PROTOCOL = 1;
 
     private static volatile CaptureRuntime current;

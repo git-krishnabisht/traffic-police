@@ -2604,7 +2604,7 @@ dependencies = [
 
 [[package]]
 name = "traffic-police"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "base64",
@@ -2626,7 +2626,7 @@ dependencies = [
 
 [[package]]
 name = "traffic-police-adb"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "thiserror 2.0.21",
  "tokio",
@@ -2635,7 +2635,7 @@ dependencies = [
 
 [[package]]
 name = "traffic-police-backends"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "base64",
@@ -2654,7 +2654,7 @@ dependencies = [
 
 [[package]]
 name = "traffic-police-core"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "base64",
  "brotli",
@@ -2683,7 +2683,7 @@ dependencies = [
 
 [[package]]
 name = "traffic-police-fakeadb"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "bytes",
  "serde_json",
@@ -2694,7 +2694,7 @@ dependencies = [
 
 [[package]]
 name = "traffic-police-proto"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "bytes",
  "proptest",
@@ -2705,7 +2705,7 @@ dependencies = [
 
 [[package]]
 name = "traffic-police-tui"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "base64",

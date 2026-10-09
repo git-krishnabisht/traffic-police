@@ -2,7 +2,7 @@
 source: crates/core/tests/goldens.rs
 expression: summarize(stringify! (rule_rewrite))
 ---
-hello: io.trafficpolice.test pid 4242 on API 36, runtime 0.1.0 (library), protocol 1, capabilities ["okhttp", "okhttp_events", "huc", "rules", "pause", "resume", "prog"]
+hello: io.trafficpolice.test pid 4242 on API 36, runtime 0.4.0 (library), protocol 1, capabilities ["okhttp", "okhttp_events", "huc", "rules", "pause", "resume", "prog"]
 rules_ack 1: version Some("r1"), active Some(2), 0 errors
 replay begin: seq Some(1)..Some(1), Some(1) events
 replay end: seq None..None, None events
@@ -29,5 +29,5 @@ txn 2 (call Some(21), hop 0): POST https://api.example.app/api/sdk/enroll
   failed: java.io.IOException: Some("simulated by traffic-police") (phase Some("connect"), canceled false, simulated true), causes []
 
 stats: 2 requests, 1 failed, 153 B in, 216 B out, 0 dropped events
-diag info started "traffic-police 0.1.0 (library) started in io.trafficpolice.test (pid 4242)" at +0.000 ms
+diag info started "traffic-police 0.4.0 (library) started in io.trafficpolice.test (pid 4242)" at +0.000 ms
 marker Attach "io.trafficpolice.test pid 4242" at +0.000 ms

@@ -2,7 +2,7 @@
 source: crates/core/tests/goldens.rs
 expression: summarize(stringify! (unknown_fields_and_types))
 ---
-hello: io.trafficpolice.test pid 4242 on API 36, runtime 0.1.0 (library), protocol 1, capabilities ["okhttp", "okhttp_events", "huc", "rules", "pause", "resume", "prog"]
+hello: io.trafficpolice.test pid 4242 on API 36, runtime 0.4.0 (library), protocol 1, capabilities ["okhttp", "okhttp_events", "huc", "rules", "pause", "resume", "prog"]
 rules_ack 1: version Some("none"), active Some(0), 0 errors
 replay begin: seq Some(1)..Some(1), Some(1) events
 replay end: seq None..None, None events
@@ -15,5 +15,5 @@ txn 15 (call None, hop 0): GET https://api.example.app/future
   response body: Pending 0/0 B
 
 stats: 1 requests, 0 failed, 0 B in, 47 B out, 0 dropped events
-diag info started "traffic-police 0.1.0 (library) started in io.trafficpolice.test (pid 4242)" at +0.000 ms
+diag info started "traffic-police 0.4.0 (library) started in io.trafficpolice.test (pid 4242)" at +0.000 ms
 marker Attach "io.trafficpolice.test pid 4242" at +0.000 ms
