@@ -97,23 +97,17 @@ is made up.
 
 A small runtime goes into your app's debug build; release builds get a no-op stand-in.
 
-**1. Build the library into your local Maven repository** (it is not on a public repository
-yet). You need JDK 17 or newer and the Android SDK (`ANDROID_HOME`, or `sdk.dir` in
-`android/local.properties`):
-
-```sh
-cd android
-./gradlew publishToMavenLocal     # io.trafficpolice:capture, capture-noop and capture-core 0.1.0 into ~/.m2
-```
-
-**2. Add it to the app.** In `settings.gradle.kts`:
+**1. Add the library to the app.** It is in traffic-police's own Maven repository, on GitHub
+Pages. In `settings.gradle.kts`:
 
 ```kotlin
 dependencyResolutionManagement {
     repositories {
-        mavenLocal()   // until traffic-police is published
         google()
         mavenCentral()
+        maven("https://git-krishnabisht.github.io/traffic-police/maven") {
+            content { includeGroup("io.trafficpolice") }   // only traffic-police comes from there
+        }
     }
 }
 ```
@@ -122,12 +116,22 @@ and in the app module's `build.gradle.kts`:
 
 ```kotlin
 dependencies {
-    debugImplementation("io.trafficpolice:capture:0.1.0")
-    releaseImplementation("io.trafficpolice:capture-noop:0.1.0")
+    debugImplementation("io.trafficpolice:capture:0.4.0")
+    releaseImplementation("io.trafficpolice:capture-noop:0.4.0")
 }
 ```
 
-**3. Hook your HTTP clients.** OkHttp (and whatever uses your `OkHttpClient`: Retrofit, Coil,
+Each release publishes the library with its own version number (0.4.0 was the first). To try
+changes that are not released yet, build it into your local Maven repository instead and add
+`mavenLocal()` to the repositories; that needs JDK 17 or newer and the Android SDK
+(`ANDROID_HOME`, or `sdk.dir` in `android/local.properties`):
+
+```sh
+cd android
+./gradlew publishToMavenLocal     # io.trafficpolice:capture, capture-noop and capture-core into ~/.m2
+```
+
+**2. Hook your HTTP clients.** OkHttp (and whatever uses your `OkHttpClient`: Retrofit, Coil,
 Glide's OkHttp integration, ...):
 
 ```kotlin
@@ -171,7 +175,7 @@ reported) and a debuggable build. The library builds for Android 5.0 (API 21) an
 tested on Android 8.0 (API 26) to 17 (API 37). It is plain Java with no dependencies of its own;
 in a release build `capture-noop` adds a few small pass-through classes and nothing starts.
 
-**4. Run traffic-police:**
+**3. Run traffic-police:**
 
 ```sh
 traffic-police                                        # choose the device, then the app process

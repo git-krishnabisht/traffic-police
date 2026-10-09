@@ -2,7 +2,8 @@ name: release
 
 # Binaries for Linux, macOS and Windows with the attach-mode agent built in, so they need nothing
 # else to attach (ARCHITECTURE.md §4.7.6), and the license texts of everything in them. By hand:
-# this run's artifacts. On a v* tag: also a GitHub release, with docs/releases/<tag>.md as notes.
+# this run's artifacts. On a v* tag: also a GitHub release, with docs/releases/<tag>.md as notes,
+# and the Android libraries in the Maven repository on GitHub Pages.
 #
 # Nothing is built for release before every check of the host and Android workflows passes
 # (lint, tests on three systems, fuzzing, the JVM suites, the sample app), and a tag must name the
@@ -146,3 +147,45 @@ jobs:
           body_path: docs/releases/${{ github.ref_name }}.md
           files: dist/*
           fail_on_unmatched_files: true
+
+  # The Android libraries into the Maven repository on GitHub Pages: the gh-pages branch, under
+  # maven/ (https://git-krishnabisht.github.io/traffic-police/maven). A version once published is
+  # never replaced.
+  library:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    defaults:
+      run:
+        working-directory: android
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with:
+          ref: gh-pages
+          path: pages
+      - name: Not published yet
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          if [ -e "../pages/maven/io/trafficpolice/capture/$v" ]; then
+            echo "::error::io.trafficpolice:capture:$v is already in the Maven repository"; exit 1
+          fi
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools ndk;28.2.13676358 cmake;3.22.1
+      - uses: gradle/actions/setup-gradle@v5
+      - run: ./gradlew --stacktrace publishAllPublicationsToPagesRepository "-Ptrafficpolice.pages=$GITHUB_WORKSPACE/pages/maven"
+      - name: Onto the gh-pages branch
+        working-directory: pages
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add maven
+          git commit -m "Maven: the Android libraries ${GITHUB_REF_NAME#v}"
+          git push
