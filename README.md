@@ -22,11 +22,36 @@ Flutter app's own Dart traffic is read from its Dart VM service.
 
 ## Install
 
-**Download** the binary for your system from the
-[releases page](https://github.com/git-krishnabisht/traffic-police/releases): macOS on Apple
-silicon, Linux on x86_64 (glibc 2.34 or newer: RHEL 9, Ubuntu 22.04, Debian 12, Fedora 35 and
-later), or Windows on x86_64. It has the [attach mode](#watch-any-debuggable-app-attach-mode) agent
-built in. The binaries are not code-signed:
+macOS (Apple silicon) and Linux (x86_64):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/git-krishnabisht/traffic-police/master/install.sh | sh
+```
+
+Windows (x86_64), in PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/git-krishnabisht/traffic-police/master/install.ps1 | iex
+```
+
+The installer takes the binary for your system from the latest
+[release](https://github.com/git-krishnabisht/traffic-police/releases), checks it against the
+release's `SHA256SUMS.txt`, puts it in `~/.local/bin` (on Windows
+`%LOCALAPPDATA%\Programs\traffic-police`; no sudo, no administrator) and adds that folder to your
+PATH when it is not there yet: a line in your shell's startup file, marked with a comment (on
+Windows, your user PATH). Open a new terminal afterwards. Run it again to update. `--version v0.4.0` installs a particular release
+(`curl ... | sh -s -- --version v0.4.0`; on Windows set `$env:TRAFFIC_POLICE_VERSION` first),
+`--dir` another folder, and `--no-modify-path` leaves PATH alone. It does not install adb: it says
+where it found yours (Android Studio's SDK, or PATH) or how to get it. To uninstall, delete the
+binary, and the folder from PATH.
+
+The binary has the [attach mode](#watch-any-debuggable-app-attach-mode) agent built in. Linux needs
+glibc 2.34 or newer (RHEL 9, Ubuntu 22.04, Debian 12, Fedora 35 and later). Intel Macs and Linux on
+ARM have no build yet: build from source (below).
+
+**Or download** the binary for your system from the
+[releases page](https://github.com/git-krishnabisht/traffic-police/releases) yourself. The
+binaries are not code-signed:
 
 ```sh
 chmod +x traffic-police-macos-arm64                          # macOS and Linux: make it executable

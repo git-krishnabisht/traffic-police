@@ -1,0 +1,110 @@
+name: install
+
+# The one-line installers (install.sh, install.ps1) against a published release: on changes to
+# them (the latest release), and from release.yml after each release (that release).
+on:
+  push:
+    paths: ["install.sh", "install.ps1", ".github/workflows/install.yml"]
+  pull_request:
+    paths: ["install.sh", "install.ps1", ".github/workflows/install.yml"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: A release, like v0.4.0 (empty for the latest)
+        type: string
+        default: ""
+  workflow_call:
+    inputs:
+      version:
+        description: A release, like v0.4.0 (empty for the latest)
+        type: string
+        default: ""
+
+jobs:
+  unix:
+    strategy:
+      fail-fast: false
+      matrix:
+        # the oldest Linux the binary supports, the newest, and macOS; Ubuntu's sh is dash
+        os: [ubuntu-22.04, ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      TRAFFIC_POLICE_VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: shellcheck
+        if: runner.os == 'Linux'
+        run: shellcheck -s sh install.sh
+      - name: Install into a folder, then again over it (an update)
+        run: |
+          sh install.sh --dir "$RUNNER_TEMP/bin" --no-modify-path
+          sh install.sh --dir "$RUNNER_TEMP/bin" --no-modify-path
+          out=$("$RUNNER_TEMP/bin/traffic-police" --version)
+          echo "$out"
+          if [ -n "$TRAFFIC_POLICE_VERSION" ] && [ "$out" != "traffic-police ${TRAFFIC_POLICE_VERSION#v}" ]; then
+            echo "::error::installed $out, not $TRAFFIC_POLICE_VERSION"; exit 1
+          fi
+      - name: Each shell's startup file gets the folder once, and it works
+        run: |
+          check() {
+            n=$(grep -c "added by the traffic-police installer" "$1" 2>/dev/null || true)
+            if [ "$n" != 1 ]; then echo "::error::$1 has the PATH line ${n:-0} times"; cat "$1" 2>/dev/null; exit 1; fi
+          }
+          for shell in zsh bash fish sh; do
+            home="$RUNNER_TEMP/home-$shell"
+            mkdir -p "$home"
+            HOME="$home" SHELL="/bin/$shell" sh install.sh > /dev/null
+            HOME="$home" SHELL="/bin/$shell" sh install.sh > /dev/null
+            case "$shell" in
+              zsh) check "$home/.zshrc" ;;
+              bash) if [ "$RUNNER_OS" = macOS ]; then check "$home/.bash_profile"; else check "$home/.bashrc"; fi ;;
+              fish) check "$home/.config/fish/conf.d/traffic-police.fish" ;;
+              sh) check "$home/.profile"; HOME="$home" sh -c '. "$HOME/.profile" && traffic-police --version' ;;
+            esac
+          done
+      - name: The one-line command from the README
+        if: inputs.version != ''
+        run: |
+          curl -fsSL "https://raw.githubusercontent.com/${{ github.repository }}/master/install.sh" | sh -s -- --dir "$RUNNER_TEMP/one-line" --no-modify-path
+          "$RUNNER_TEMP/one-line/traffic-police" --version
+
+  windows:
+    strategy:
+      fail-fast: false
+      matrix:
+        # PowerShell 7, and the Windows PowerShell 5.1 that every Windows has
+        shell: [pwsh, powershell]
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
+    env:
+      TRAFFIC_POLICE_VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install as the one-line command does (irm | iex), twice
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $env:TRAFFIC_POLICE_INSTALL_DIR = Join-Path $env:RUNNER_TEMP "bin-${{ matrix.shell }}"
+          Get-Content -Raw install.ps1 | Invoke-Expression
+          Get-Content -Raw install.ps1 | Invoke-Expression
+          $out = (& (Join-Path $env:TRAFFIC_POLICE_INSTALL_DIR 'traffic-police.exe') --version | Out-String).Trim()
+          Write-Host $out
+          if ($env:TRAFFIC_POLICE_VERSION -and $out -ne ('traffic-police ' + $env:TRAFFIC_POLICE_VERSION.TrimStart('v'))) {
+            throw "installed $out, not $env:TRAFFIC_POLICE_VERSION"
+          }
+          # the folder is on the user's PATH once, and the value kept its type
+          $key = Get-Item -LiteralPath 'HKCU:\Environment'
+          $path = [string] $key.GetValue('Path', '', 'DoNotExpandEnvironmentNames')
+          $n = @($path -split ';' | Where-Object { $_ -eq $env:TRAFFIC_POLICE_INSTALL_DIR }).Count
+          if ($n -ne 1) { throw "the folder is on PATH $n times: $path" }
+          Write-Host "PATH is $($key.GetValueKind('Path'))"
+          if ($key.GetValueKind('Path') -ne 'ExpandString') { throw "PATH is now $($key.GetValueKind('Path'))" }
+      - name: The one-line command from the README
+        if: inputs.version != ''
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $env:TRAFFIC_POLICE_INSTALL_DIR = Join-Path $env:RUNNER_TEMP "one-line-${{ matrix.shell }}"
+          $env:TRAFFIC_POLICE_NO_MODIFY_PATH = '1'
+          irm "https://raw.githubusercontent.com/${{ github.repository }}/master/install.ps1" | iex
+          & (Join-Path $env:TRAFFIC_POLICE_INSTALL_DIR 'traffic-police.exe') --version

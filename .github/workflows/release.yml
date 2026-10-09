@@ -3,7 +3,8 @@ name: release
 # Binaries for Linux, macOS and Windows with the attach-mode agent built in, so they need nothing
 # else to attach (ARCHITECTURE.md §4.7.6), and the license texts of everything in them. By hand:
 # this run's artifacts. On a v* tag: also a GitHub release, with docs/releases/<tag>.md as notes,
-# and the Android libraries in the Maven repository on GitHub Pages.
+# the Android libraries in the Maven repository on GitHub Pages, and a check that the one-line
+# installers (install.sh, install.ps1) install it.
 #
 # Nothing is built for release before every check of the host and Android workflows passes
 # (lint, tests on three systems, fuzzing, the JVM suites, the sample app), and a tag must name the
@@ -189,3 +190,11 @@ jobs:
           git add maven
           git commit -m "Maven: the Android libraries ${GITHUB_REF_NAME#v}"
           git push
+
+  # the one-line installers install this release, on Linux, macOS and Windows
+  installers:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: library
+    uses: ./.github/workflows/install.yml
+    with:
+      version: ${{ github.ref_name }}
