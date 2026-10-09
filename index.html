@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>traffic-police Maven repository</title>
+<style>body{font:16px/1.5 system-ui,sans-serif;max-width:46rem;margin:2rem auto;padding:0 1rem}pre{background:#f4f4f4;padding:.75rem;overflow-x:auto}</style>
+<h1>traffic-police</h1>
+<p>The Maven repository of traffic-police's Android libraries: <code>io.trafficpolice:capture</code>,
+<code>capture-noop</code> and <code>capture-core</code>. Add it to <code>settings.gradle.kts</code>:</p>
+<pre>dependencyResolutionManagement {
+    repositories {
+        google()
+        mavenCentral()
+        maven("https://git-krishnabisht.github.io/traffic-police/maven") {
+            content { includeGroup("io.trafficpolice") }
+        }
+    }
+}</pre>
+<p>How to use it: <a href="https://github.com/git-krishnabisht/traffic-police#watch-your-app-library-mode">the README</a>.</p>
+</html>
