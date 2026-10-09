@@ -1,0 +1,87 @@
+{
+  "formatVersion": "1.1",
+  "component": {
+    "group": "io.trafficpolice",
+    "module": "capture",
+    "version": "0.4.0",
+    "attributes": {
+      "org.gradle.status": "release"
+    }
+  },
+  "createdBy": {
+    "gradle": {
+      "version": "9.6.0"
+    }
+  },
+  "variants": [
+    {
+      "name": "releaseVariantReleaseApiPublication",
+      "attributes": {
+        "org.gradle.category": "library",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.libraryelements": "aar",
+        "org.gradle.usage": "java-api"
+      },
+      "files": [
+        {
+          "name": "capture-0.4.0.aar",
+          "url": "capture-0.4.0.aar",
+          "size": 18450,
+          "sha512": "bb8ccb9b6b6f5247aa69cd93f8b930852ff3b892f60052b23b985d751b0ccec957517d6c51a96e709cbc8fd5bc3f5750e1ad32d00d8167fd359f1adfef6c6e6a",
+          "sha256": "da4824736579a5181cc4cdf9b6da0a9e0dd3569515ffe41b07761225d0c3b44c",
+          "sha1": "e5ec9e91065417aa95d2ebf4de24124d0e918c35",
+          "md5": "4936a7ad4989a55ddb46574c6b2e81de"
+        }
+      ]
+    },
+    {
+      "name": "releaseVariantReleaseRuntimePublication",
+      "attributes": {
+        "org.gradle.category": "library",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.libraryelements": "aar",
+        "org.gradle.usage": "java-runtime"
+      },
+      "dependencies": [
+        {
+          "group": "io.trafficpolice",
+          "module": "capture-core",
+          "version": {
+            "requires": "0.4.0"
+          }
+        }
+      ],
+      "files": [
+        {
+          "name": "capture-0.4.0.aar",
+          "url": "capture-0.4.0.aar",
+          "size": 18450,
+          "sha512": "bb8ccb9b6b6f5247aa69cd93f8b930852ff3b892f60052b23b985d751b0ccec957517d6c51a96e709cbc8fd5bc3f5750e1ad32d00d8167fd359f1adfef6c6e6a",
+          "sha256": "da4824736579a5181cc4cdf9b6da0a9e0dd3569515ffe41b07761225d0c3b44c",
+          "sha1": "e5ec9e91065417aa95d2ebf4de24124d0e918c35",
+          "md5": "4936a7ad4989a55ddb46574c6b2e81de"
+        }
+      ]
+    },
+    {
+      "name": "releaseVariantReleaseSourcePublication",
+      "attributes": {
+        "org.gradle.category": "documentation",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.docstype": "sources",
+        "org.gradle.usage": "java-runtime"
+      },
+      "files": [
+        {
+          "name": "capture-0.4.0-sources.jar",
+          "url": "capture-0.4.0-sources.jar",
+          "size": 11429,
+          "sha512": "aaacda6d23fbe9065efa883f38d857774f78043b9863dc43b2ebe1074715637b9121c92b303b5f5851e3dda4a5853538f87b77d8350cfe3ec9d70e0143904430",
+          "sha256": "401da4578dd01cdd77739dca87f9aecc2397dc7359cc3899c55dd7d769d1c581",
+          "sha1": "134edba999942f7f34a78cbb39d29086b242e3a8",
+          "md5": "f6ea6b89e82f5db384bf254d7cfd1290"
+        }
+      ]
+    }
+  ]
+}

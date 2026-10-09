@@ -1,0 +1,78 @@
+{
+  "formatVersion": "1.1",
+  "component": {
+    "group": "io.trafficpolice",
+    "module": "capture-noop",
+    "version": "0.4.0",
+    "attributes": {
+      "org.gradle.status": "release"
+    }
+  },
+  "createdBy": {
+    "gradle": {
+      "version": "9.6.0"
+    }
+  },
+  "variants": [
+    {
+      "name": "releaseVariantReleaseApiPublication",
+      "attributes": {
+        "org.gradle.category": "library",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.libraryelements": "aar",
+        "org.gradle.usage": "java-api"
+      },
+      "files": [
+        {
+          "name": "capture-noop-0.4.0.aar",
+          "url": "capture-noop-0.4.0.aar",
+          "size": 3459,
+          "sha512": "991f8d2ada56d151ebc9f24aa194072c674bbe1b3eb50d1e8b8a5dd06bc4a993ffd6ef154bb5841f4420894b65d0d3ab1200038092e8c00efaef634a7cc5c73b",
+          "sha256": "56af2cb211e6ca1331886311a09a0ced39efd1329f11030a342af6a107005769",
+          "sha1": "d262498af7e7a09a17a71ba145ce9d8d2d5a3e9e",
+          "md5": "4a9c4e3e2a9b343573efec522e6c4555"
+        }
+      ]
+    },
+    {
+      "name": "releaseVariantReleaseRuntimePublication",
+      "attributes": {
+        "org.gradle.category": "library",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.libraryelements": "aar",
+        "org.gradle.usage": "java-runtime"
+      },
+      "files": [
+        {
+          "name": "capture-noop-0.4.0.aar",
+          "url": "capture-noop-0.4.0.aar",
+          "size": 3459,
+          "sha512": "991f8d2ada56d151ebc9f24aa194072c674bbe1b3eb50d1e8b8a5dd06bc4a993ffd6ef154bb5841f4420894b65d0d3ab1200038092e8c00efaef634a7cc5c73b",
+          "sha256": "56af2cb211e6ca1331886311a09a0ced39efd1329f11030a342af6a107005769",
+          "sha1": "d262498af7e7a09a17a71ba145ce9d8d2d5a3e9e",
+          "md5": "4a9c4e3e2a9b343573efec522e6c4555"
+        }
+      ]
+    },
+    {
+      "name": "releaseVariantReleaseSourcePublication",
+      "attributes": {
+        "org.gradle.category": "documentation",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.docstype": "sources",
+        "org.gradle.usage": "java-runtime"
+      },
+      "files": [
+        {
+          "name": "capture-noop-0.4.0-sources.jar",
+          "url": "capture-noop-0.4.0-sources.jar",
+          "size": 1371,
+          "sha512": "2b2ea34815a3f78428c4a9d427b745eeff4ad9ba25a306fc84faf92b0041fc6df3bfec7cddc20fd0ca383433256943df4b29642626c56fbc294ad2bc1557aefd",
+          "sha256": "3d73e948fc5f34b05dc3679b3c00b00b085320055541e313b69973f8a352cebd",
+          "sha1": "36705ca4e88148efd3aaa41cb8efc3a8fc63e624",
+          "md5": "2eb5bc84194331420fbed87c38781881"
+        }
+      ]
+    }
+  ]
+}
