@@ -5,6 +5,8 @@ on:
     paths: ["host/**", "testdata/**", ".github/workflows/host.yml"]
   pull_request:
     paths: ["host/**", "testdata/**", ".github/workflows/host.yml"]
+  # release.yml runs every job here before it builds a release
+  workflow_call:
 
 env:
   CARGO_TERM_COLOR: always
@@ -82,7 +84,7 @@ jobs:
           done
           if [ -n "$crashed" ]; then echo "::error::crashed:$crashed"; exit 1; fi
       - if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: fuzz-crashes
           path: host/fuzz/artifacts

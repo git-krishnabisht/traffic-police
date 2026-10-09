@@ -3,12 +3,44 @@ name: release
 # Binaries for Linux, macOS and Windows with the attach-mode agent built in, so they need nothing
 # else to attach (ARCHITECTURE.md §4.7.6), and the license texts of everything in them. By hand:
 # this run's artifacts. On a v* tag: also a GitHub release, with docs/releases/<tag>.md as notes.
+#
+# Nothing is built for release before every check of the host and Android workflows passes
+# (lint, tests on three systems, fuzzing, the JVM suites, the sample app), and a tag must name the
+# version that the code says (until 2026-10-09 a release ran no tests).
 on:
   workflow_dispatch:
   push:
     tags: ["v*"]
 
 jobs:
+  host-checks:
+    uses: ./.github/workflows/host.yml
+
+  android-checks:
+    uses: ./.github/workflows/android.yml
+
+  # a tag names the version of the host crates and of the Android libraries, and has notes
+  version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: The tag, the code and the notes agree
+        run: |
+          host=$(sed -n 's/^version = "\(.*\)"$/\1/p' host/Cargo.toml | head -1)
+          android=$(sed -n 's/^ *version = "\(.*\)"$/\1/p' android/build.gradle.kts | head -1)
+          echo "host $host, Android libraries $android"
+          case "$GITHUB_REF" in
+            refs/tags/v*)
+              tag="${GITHUB_REF_NAME#v}"
+              if [ "$host" != "$tag" ] || [ "$android" != "$tag" ]; then
+                echo "::error::the tag $GITHUB_REF_NAME does not match the code (host $host, Android $android)"; exit 1
+              fi
+              if [ ! -s "docs/releases/$GITHUB_REF_NAME.md" ]; then
+                echo "::error::docs/releases/$GITHUB_REF_NAME.md is missing"; exit 1
+              fi
+              ;;
+          esac
+
   agent:
     runs-on: ubuntu-latest
     defaults:
@@ -27,14 +59,14 @@ jobs:
           packages: platform-tools ndk;28.2.13676358 cmake;3.22.1
       - uses: gradle/actions/setup-gradle@v5
       - run: ./gradlew --stacktrace :attach-agent:agentArtifacts
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: agent
           path: android/attach-agent/build/outputs/agent
           if-no-files-found: error
 
   host:
-    needs: agent
+    needs: [host-checks, android-checks, version, agent]
     strategy:
       fail-fast: false
       matrix:
@@ -56,7 +88,7 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: agent
           path: android/attach-agent/build/outputs/agent
@@ -74,7 +106,7 @@ jobs:
           ./target/release/${{ matrix.exe }} doctor --mode attach -p io.example 2>&1 | tee doctor.txt || true
           grep -q "agent for attach mode: embedded in this binary" doctor.txt
           mv ./target/release/${{ matrix.exe }} ${{ matrix.name }}
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.name }}
           path: host/${{ matrix.name }}
@@ -84,7 +116,7 @@ jobs:
         if: runner.os == 'Linux'
         working-directory: .
         run: python3 host/scripts/third_party_licenses.py > THIRD-PARTY-LICENSES.txt
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: runner.os == 'Linux'
         with:
           name: traffic-police-licenses
@@ -101,7 +133,7 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: traffic-police-*
           merge-multiple: true
@@ -109,7 +141,7 @@ jobs:
       - name: Checksums
         working-directory: dist
         run: sha256sum traffic-police-* > SHA256SUMS.txt
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           body_path: docs/releases/${{ github.ref_name }}.md
           files: dist/*
