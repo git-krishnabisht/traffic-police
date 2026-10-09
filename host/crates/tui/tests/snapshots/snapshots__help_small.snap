@@ -14,8 +14,8 @@ expression: "frame(12.0, SMALL, \"?\")"
 │   │ List     c collapse · s sort · S reverse · C columns · / filter · m pin · r new rule     │   │
 ╰───│          d diff                                                                          │───╯
 ╭─ R│ Detail   n next match · N previous match · p parsed/source · o original                  │───╮
-│ Na│          b req/resp body · | jq · < scroll left · > scroll right · [ fold all            │   │
-│ no│          ] unfold all                                                                    │   │
+│ Na│          b req/resp body · B body box · | jq · < scroll left · > scroll right            │   │
+│ no│          [ fold all · ] unfold all                                                       │   │
 │ ev│ Rules    K move up · J move down · a add · Del/Backspace remove · Ctrl+s save            │   │
 │ pr│          E $EDITOR                                                                       │   │
 │ re│ Live     Space pause · F freeze · L live · +/= zoom in · - zoom out · 0 reset zoom       │   │

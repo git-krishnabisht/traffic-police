@@ -218,7 +218,10 @@ pub struct Prefs {
     pub follow: bool,
     /// Rows of the traffic graph: `None` sizes it to the screen (8 to 14); 0 hides it.
     pub graph_height: Option<u16>,
-    /// The body box's share of the detail pane, in percent; 0 hides the box.
+    /// The body box above the detail tabs, with the response and request bodies (`[ui]
+    /// body_box`; `B` shows or hides it).
+    pub body_box: bool,
+    /// The body box's share of the detail pane, in percent.
     pub body_height: u16,
     /// From this width on, the detail pane sits beside the list instead of covering it.
     pub side_by_side: u16,
@@ -236,6 +239,7 @@ impl Default for Prefs {
             scroll: 0,
             follow: true,
             graph_height: None,
+            body_box: true,
             body_height: 40,
             side_by_side: crate::ui::SIDE_BY_SIDE_WIDTH,
             hints: true,
@@ -377,7 +381,8 @@ pub struct App {
     pub list_offset: usize,
     pub list_height: usize,
     pub detail_open: bool,
-    /// Whether the last frame had room for the body box above the tabs (`[ui] body_height`).
+    /// Whether the last frame drew the body box above the tabs: it is on (`[ui] body_box`) and
+    /// the pane has room for it.
     pub body_box_shown: bool,
     pub detail: DetailState,
     pub detail_height: usize,
@@ -1297,8 +1302,10 @@ impl App {
             Action::Export => self.open_export_menu(),
             Action::Diff => self.diff_action(),
             Action::Palette => self.open_palette(),
-            Action::BodyTab if self.detail_open => self.toggle_body_tab(),
-            Action::BodyTab => self.flash("open a request (Enter) to see its bodies"),
+            Action::BodyBox => self.toggle_body_box(),
+            Action::BodyTab if !self.detail_open => self.flash("open a request (Enter) to see its bodies"),
+            Action::BodyTab if !self.prefs.body_box => self.flash(self.body_box_hidden()),
+            Action::BodyTab => self.toggle_body_tab(),
             _ => match self.focus {
                 Focus::Graph => self.graph_action(a),
                 Focus::List => match self.view {
@@ -1502,7 +1509,7 @@ impl App {
         // hidden boxes take no focus
         order.retain(|f| match f {
             Focus::Graph => self.prefs.graph_height != Some(0),
-            Focus::Preview => self.prefs.body_height > 0 && self.body_box_shown,
+            Focus::Preview => self.prefs.body_box && self.body_box_shown,
             _ => true,
         });
         let i = order.iter().position(|&f| f == self.focus).unwrap_or(1) as i32;

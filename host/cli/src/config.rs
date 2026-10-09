@@ -20,8 +20,9 @@
 //! divider = 55                # the list's share of the width, in percent (25-80)
 //! side_by_side = 140          # from this width on the detail pane sits beside the list
 //! tab = "overview"            # the detail tab a request opens on: overview, response, request, call-stack
+//! body_box = true             # the body box above the tabs, with the response and request bodies (false hides it; B shows or hides it)
 //! body = "response"           # the body box's tab: response or request (b switches)
-//! body_height = 40            # the body box's share of the detail pane, percent (15-85; 0 hides it)
+//! body_height = 40            # the body box's share of the detail pane, percent (15-85)
 //! wrap = true                 # wrap long lines in every box instead of cutting them off
 //! scroll = 0                  # lines Ctrl+D and Ctrl+U move (0: half the box, like Neovim)
 //! follow = true               # follow new requests while the cursor is on the newest
@@ -75,7 +76,8 @@ use traffic_police_tui::theme::{COLOR_SLOTS, Palette, Theme, parse_borders, pars
 const SCROLL_RANGE: std::ops::RangeInclusive<u16> = 0..=500;
 /// `[ui] graph_height`: rows of the graph; 0 hides it.
 const GRAPH_HEIGHT_RANGE: std::ops::RangeInclusive<u16> = 0..=40;
-/// `[ui] body_height`: the body box's share of the detail pane (0 hides it).
+/// `[ui] body_height`: the body box's share of the detail pane (0 hides the box, as
+/// `body_box = false` does; up to 0.3.1 that was the only way).
 const BODY_HEIGHT_RANGE: std::ops::RangeInclusive<u16> = 15..=85;
 /// `[ui] side_by_side`: the width from which the detail pane sits beside the list.
 const SIDE_BY_SIDE_RANGE: std::ops::RangeInclusive<u16> = 100..=500;
@@ -126,6 +128,7 @@ pub struct Ui {
     pub view: Option<Spanned<String>>,
     pub side_by_side: Option<Spanned<u16>>,
     pub tab: Option<Spanned<String>>,
+    pub body_box: Option<bool>,
     pub body: Option<Spanned<String>>,
     pub body_height: Option<Spanned<u16>>,
     pub wrap: Option<bool>,
@@ -351,7 +354,11 @@ impl Loaded {
                 "body_height",
                 &ui.body_height,
                 |n| n == 0 || BODY_HEIGHT_RANGE.contains(&n),
-                format!("{} to {} (percent), or 0 for no body box", BODY_HEIGHT_RANGE.start(), BODY_HEIGHT_RANGE.end()),
+                format!(
+                    "{} to {} (percent); body_box = false hides the box",
+                    BODY_HEIGHT_RANGE.start(),
+                    BODY_HEIGHT_RANGE.end()
+                ),
             ),
             (
                 "side_by_side",
@@ -542,8 +549,13 @@ impl Loaded {
         if let Some(n) = number(&ui.graph_height).filter(|n| GRAPH_HEIGHT_RANGE.contains(n)) {
             p.graph_height = Some(n);
         }
-        if let Some(n) = number(&ui.body_height).filter(|n| *n == 0 || BODY_HEIGHT_RANGE.contains(n)) {
+        if let Some(n) = number(&ui.body_height).filter(|n| BODY_HEIGHT_RANGE.contains(n)) {
             p.body_height = n;
+        }
+        // `body_box = false` hides the body box, and so does a share of 0 (as up to 0.3.1); `B`
+        // then shows it at the default share
+        if ui.body_box == Some(false) || number(&ui.body_height) == Some(0) {
+            p.body_box = false;
         }
         if let Some(n) = number(&ui.side_by_side).filter(|n| SIDE_BY_SIDE_RANGE.contains(n)) {
             p.side_by_side = n;
@@ -769,7 +781,7 @@ gap = 2
         l.apply_ui(&mut app);
         let p = &app.prefs;
         assert_eq!((p.wrap, p.scroll, p.follow, p.hints, p.gap), (false, 10, false, false, 2));
-        assert_eq!((p.graph_height, p.body_height, p.side_by_side), (Some(0), 0, 200));
+        assert_eq!((p.graph_height, p.body_box, p.body_height, p.side_by_side), (Some(0), false, 40, 200));
         assert_eq!((app.view, app.detail.tab, app.explorer.tab), (View::Threads, Tab::CallStack, BodyTab::Request));
         assert_eq!(app.graph_source, GraphSource::Captured);
         assert_eq!(app.rows.sort, Sort { column: Column::Status, descending: true });
@@ -777,6 +789,23 @@ gap = 2
         let mut theme = Theme::default();
         l.apply_theme(&mut theme);
         assert_eq!(Some(theme.borders), parse_borders("double"));
+    }
+
+    #[test]
+    fn the_body_box_is_on_unless_turned_off() {
+        let body_box = |text: &str| {
+            let l = parse(text);
+            assert!(l.problems.is_empty(), "{:?}", l.problems);
+            let mut app = App::new(traffic_police_core::SessionStore::new(), Theme::default());
+            l.apply_ui(&mut app);
+            (app.prefs.body_box, app.prefs.body_height)
+        };
+        assert_eq!(body_box(""), (true, 40));
+        assert_eq!(body_box("[ui]\nbody_box = false\n"), (false, 40));
+        assert_eq!(body_box("[ui]\nbody_box = false\nbody_height = 60\n"), (false, 60));
+        assert_eq!(body_box("[ui]\nbody_box = true\nbody_height = 60\n"), (true, 60));
+        // a share of 0 hid it up to 0.3.1 and still does; B shows it at the default share
+        assert_eq!(body_box("[ui]\nbody_height = 0\n"), (false, 40));
     }
 
     #[test]
@@ -804,7 +833,7 @@ gap = 2
         let want = [
             "line 2: [ui] borders \"dotted\": use rounded, plain, double or thick",
             "line 3: [ui] scroll 900: use 0 (half the box) to 500",
-            "line 4: [ui] body_height 5: use 15 to 85 (percent), or 0 for no body box",
+            "line 4: [ui] body_height 5: use 15 to 85 (percent); body_box = false hides the box",
             "line 5: [ui] tab \"headers\": use overview, response, request or call-stack",
             "line 6: [ui] gap 9: use 0 to 4 (rows)",
             "line 8: [colors] accent: use a color like \"#61afef\"",

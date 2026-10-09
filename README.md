@@ -304,7 +304,7 @@ traffic-police tail --mode flutter -p com.example.app --json
 | Rules | `r` on a request: a new rule that matches it, in the rule form · in the Rules view: `Space` on or off · `Enter` edit in the form · `r` (or `a`) a new rule · `K` `J` move the rule up or down (rules apply in order) · `E` edit `rules.toml` in `$EDITOR` |
 | Rule form | `↑` `↓` (or `Tab`) between lines · `Enter` types into a field (`Enter` keeps it, `Esc` puts back what was there), turns a yes/no line, or steps a choice · `←` `→` step a choice (`Space` ticks a method) · `a` adds an action · `Delete` or `Backspace` removes the action or query parameter · `K` `J` move an action · `Ctrl+S` saves · `Esc` leaves (asking when something changed) · `E` `$EDITOR` · the last line lists the captured requests the rule's match selects |
 | Detail pane | `Enter` open · `Esc` close · `h` `l` or `←` `→` switch tabs · `p` parsed or source · `o` original or rule-modified response |
-| Body explorer | The box above the tabs shows the response body and, on its second tab, the request body; `Shift+Tab` from the tabs (or `Tab` from the list, or a click) goes there: `h` `l` (or `←` `→`, `b`, a click on a tab) switch between the two bodies, as in the tabs below · `j` `k` move · `Ctrl+D` `Ctrl+U` half a page · `Enter` fold or unfold, or the value menu on a single value · `[` `]` fold or unfold all |
+| Body explorer | The box above the tabs shows the response body and, on its second tab, the request body; `Shift+Tab` from the tabs (or `Tab` from the list, or a click) goes there: `h` `l` (or `←` `→`, `b`, a click on a tab) switch between the two bodies, as in the tabs below · `j` `k` move · `Ctrl+D` `Ctrl+U` half a page · `Enter` fold or unfold, or the value menu on a single value · `[` `]` fold or unfold all · `B` hides the box (the tabs take its room) and shows it again; `[ui] body_box = false` starts without it |
 | Bodies | `Enter` fold or unfold JSON · `[` fold all · `]` unfold all · <code>&#124;</code> jq filter (empty filter clears) · long lines wrap in every box; with `[ui] wrap = false` they are cut and `<` `>` scroll sideways |
 | Call Stack | `Enter` on a framework group expands it · `Enter` on an app frame opens `$EDITOR` there (needs source roots, below) |
 | Live | `Space` pause or resume recording · `F` freeze the view (capture continues) · `L` back to live · `+` `-` zoom · `0` reset zoom · `v` select a time range (`v` or `Enter` again to apply) |
@@ -398,8 +398,9 @@ view = "connections"          # the view at start: connections, threads, rules
 divider = 55                  # the list's share of the width, in percent (25-80)
 side_by_side = 140            # from this width on, the detail pane sits beside the list (100-500)
 tab = "overview"              # the tab a request opens on: overview, response, request, call-stack
+body_box = true               # the body box above the tabs, with the response and request bodies; false hides it (B shows or hides it)
 body = "response"             # the body box's tab at start: response or request (b switches)
-body_height = 40              # the body box's share of the detail pane, percent (15-85), 0 hides it
+body_height = 40              # the body box's share of the detail pane, percent (15-85)
 wrap = true                   # wrap long lines in every box (false: cut them; < > scroll the tabs)
 scroll = 0                    # lines Ctrl+D and Ctrl+U move: 0 is half the box, as in Neovim
 follow = true                 # follow new requests while the cursor is on the newest

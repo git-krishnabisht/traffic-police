@@ -19,8 +19,8 @@ expression: "frame(12.0, MEDIUM, \"?\")"
 │ Name     │          Tab next panel · Shift+Tab previous panel                                                                 │          │
 │ events   │ Views    1 connections · 2 threads · 3 rules                                                                       │          │
 │ user_1024│ List     c collapse · s sort · S reverse · C columns · / filter · m pin · r new rule · d diff                      │          │
-│ notificat│ Detail   n next match · N previous match · p parsed/source · o original · b req/resp body · | jq · < scroll left   │         ▐│
-│ products?│          > scroll right · [ fold all · ] unfold all                                                                │         ▐│
+│ notificat│ Detail   n next match · N previous match · p parsed/source · o original · b req/resp body · B body box · | jq      │         ▐│
+│ products?│          < scroll left · > scroll right · [ fold all · ] unfold all                                                │         ▐│
 │ config   │ Rules    K move up · J move down · a add · Del/Backspace remove · Ctrl+s save · E $EDITOR                          │         ▐│
 │ ↪ config.│ Live     Space pause · F freeze · L live · +/= zoom in · - zoom out · 0 reset zoom · v range                       │         ▐│
 │ items    │ Graph    T source · t clock                                                                                        │██▋      ▐│

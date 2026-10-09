@@ -2,6 +2,7 @@
 //! the request body (`h` and `l` switch, as the tabs below; also `b` or a click on the tab).
 //! With focus `j`/`k` move through it, Ctrl+D and Ctrl+U by half the box, Enter folds or opens
 //! the value menu on a single value, `[` `]` fold and unfold all. Long lines wrap (`[ui] wrap`).
+//! `B` hides the box and shows it again (`[ui] body_box = false` starts without it).
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -94,6 +95,28 @@ impl App {
     pub fn set_body_tab(&mut self, tab: BodyTab) {
         self.explorer.tab = tab;
         self.explorer_sync();
+    }
+
+    /// `B`: hides the body box or shows it again; a hidden box leaves the focus cycle, and its
+    /// focus goes to the tabs below.
+    pub fn toggle_body_box(&mut self) {
+        self.prefs.body_box = !self.prefs.body_box;
+        if self.prefs.body_box {
+            return self.flash("showing the body box");
+        }
+        self.body_box_shown = false;
+        if self.focus == Focus::Preview {
+            self.focus = Focus::Detail;
+        }
+        self.flash(self.body_box_hidden());
+    }
+
+    /// What the footer says while the body box is hidden: how to show it.
+    pub(crate) fn body_box_hidden(&self) -> String {
+        match self.keymap.key_label(Action::BodyBox) {
+            k if k.is_empty() => "body box hidden; :body-box shows it".into(),
+            k => format!("body box hidden; {k} shows it"),
+        }
     }
 
     pub fn explorer_action(&mut self, a: Action) {

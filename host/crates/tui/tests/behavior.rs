@@ -1062,7 +1062,7 @@ fn search_finds_text_across_the_break_of_a_wrapped_row() {
 fn hidden_boxes_take_no_room_and_no_focus() {
     let mut app = app_at(12.0);
     app.prefs.graph_height = Some(0);
-    app.prefs.body_height = 0;
+    app.prefs.body_box = false;
     app.prefs.hints = false;
     let text = press(&mut app, MEDIUM, "<Enter>");
     assert!(!text.contains("Network"), "no graph: {text}");
@@ -1072,6 +1072,45 @@ fn hidden_boxes_take_no_room_and_no_focus() {
     assert_eq!(app.focus, Focus::List, "Tab skips the hidden graph and body box");
     press(&mut app, MEDIUM, "<Tab>");
     assert_eq!(app.focus, Focus::Detail);
+}
+
+/// `B` hides the body box, and the tabs take its room; `B` again brings it back (`[ui] body_box
+/// = false` starts without it).
+#[test]
+fn shift_b_hides_the_body_box_and_shows_it_again() {
+    let tabs_at = |text: &str| text.lines().position(|l| l.contains("╭─ Overview")).expect("the tabs");
+    let mut app = app_at(12.0);
+    let text = press(&mut app, MEDIUM, "<Enter>");
+    assert!(text.contains("Response body") && text.contains("Request body"), "on by default: {text}");
+    let with_box = tabs_at(&text);
+    // from the body box: B hides it, and the focus goes to the tabs, now at the pane's top
+    press(&mut app, MEDIUM, "<S-Tab>");
+    assert_eq!(app.focus, Focus::Preview);
+    let text = press(&mut app, MEDIUM, "B");
+    assert!(!text.contains("Response body") && !text.contains("Request body"), "{text}");
+    assert_eq!(app.focus, Focus::Detail);
+    let top = text.lines().position(|l| l.contains("╭─ Requests")).expect("the list");
+    assert_eq!(tabs_at(&text), top, "{text}");
+    assert!(text.contains("body box hidden; B shows it"), "{text}");
+    // b (the other body) says how to bring the box back, and the focus skips it
+    app.message = None;
+    let text = press(&mut app, MEDIUM, "b");
+    assert!(text.contains("body box hidden; B shows it"), "{text}");
+    press(&mut app, MEDIUM, "<S-Tab>");
+    assert_eq!(app.focus, Focus::List);
+    // B again, also from the list: the box is back where it was
+    let text = press(&mut app, MEDIUM, "B");
+    assert!(text.contains("Response body") && text.contains("showing the body box"), "{text}");
+    assert_eq!(tabs_at(&text), with_box);
+    // off from the start, and B still knows its key after [keymap] moves it
+    let mut app = app_at(12.0);
+    app.prefs.body_box = false;
+    let text = press(&mut app, MEDIUM, "<Enter>");
+    assert!(!text.contains("Response body"), "{text}");
+    assert!(app.keymap.apply(&[("body-box".into(), vec![])]).is_empty());
+    app.message = None;
+    let text = press(&mut app, MEDIUM, "b");
+    assert!(text.contains("body box hidden; :body-box shows it"), "{text}");
 }
 
 #[test]
@@ -1110,12 +1149,14 @@ fn a_short_detail_pane_never_breaks_the_layout() {
         assert!(app.selected.is_some(), "a request is open");
         for graph_height in [None, Some(0), Some(8), Some(14), Some(16), Some(20), Some(26), Some(40)] {
             for gap in 0..=4 {
-                for body_height in [0, 15, 40, 85] {
+                for (body_box, body_height) in [(false, 40), (true, 0), (true, 15), (true, 40), (true, 85)] {
                     app.prefs.graph_height = graph_height;
                     app.prefs.gap = gap;
-                    app.prefs.body_height = body_height;
+                    (app.prefs.body_box, app.prefs.body_height) = (body_box, body_height);
                     let text = render_text(&mut app, size.0, size.1);
-                    let what = format!("{size:?} graph_height {graph_height:?} gap {gap} body_height {body_height}");
+                    let what = format!(
+                        "{size:?} graph_height {graph_height:?} gap {gap} body_box {body_box} body_height {body_height}"
+                    );
                     assert!(text.contains("Overview"), "{what}: the tabs are drawn\n{text}");
                 }
             }

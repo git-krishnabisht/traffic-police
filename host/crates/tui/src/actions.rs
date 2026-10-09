@@ -55,6 +55,7 @@ pub enum Action {
     Parsed,
     Original,
     BodyTab,
+    BodyBox,
     Jq,
     ScrollLeft,
     ScrollRight,
@@ -218,6 +219,14 @@ pub const ACTIONS: &[Info] = &[
     info!(Parsed, "parsed", Detail, "parsed/source", "Parsed or source view of the body", ["p"]),
     info!(Original, "original", Detail, "original", "Original or rule-modified response", ["o"]),
     info!(BodyTab, "body-tab", Detail, "req/resp body", "Body box: the response body or the request body", ["b"]),
+    info!(
+        BodyBox,
+        "body-box",
+        Detail,
+        "body box",
+        "Show or hide the body box above the tabs ([ui] body_box sets it at start)",
+        ["B"]
+    ),
     info!(Jq, "jq", Detail, "jq", "jq filter on the body (empty clears)", ["|"]),
     info!(ScrollLeft, "scroll-left", Detail, "scroll left", "Scroll long lines left ([ui] wrap = false)", ["<"]),
     info!(ScrollRight, "scroll-right", Detail, "scroll right", "Scroll long lines right ([ui] wrap = false)", [">"]),
@@ -467,6 +476,7 @@ mod tests {
         assert_eq!(m.action(&ev(KeyCode::Char('p'), KeyModifiers::CONTROL)), Some(Action::HalfPageUp));
         assert_eq!(m.action(&ev(KeyCode::Char('g'), KeyModifiers::CONTROL)), Some(Action::Bottom));
         assert_eq!(m.action(&ev(KeyCode::Char('b'), KeyModifiers::NONE)), Some(Action::BodyTab));
+        assert_eq!(m.action(&ev(KeyCode::Char('B'), KeyModifiers::SHIFT)), Some(Action::BodyBox));
     }
 
     #[test]

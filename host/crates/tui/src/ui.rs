@@ -1433,13 +1433,13 @@ fn draw_rules(app: &mut App, r: Rect, buf: &mut Buffer) {
     }
 }
 
-/// The request's side: the body explorer on top (`[ui] body_height` of it; none at 0), the
-/// tabs below.
+/// The request's side: the body explorer on top (`[ui] body_height` of it), the tabs below;
+/// only the tabs while the body box is off (`[ui] body_box`, `B`).
 fn draw_detail_pane(app: &mut App, r: Rect, buf: &mut Buffer) {
     // the body box on top (at least 3 rows), `[ui] gap` rows, then the tabs (at least 8 rows);
     // a pane too short for both shows only the tabs
     let gap = gap_rows(app);
-    app.body_box_shown = app.prefs.body_height > 0 && r.height >= 3 + gap + 8;
+    app.body_box_shown = app.prefs.body_box && r.height >= 3 + gap + 8;
     if !app.body_box_shown {
         if app.focus == Focus::Preview {
             app.focus = Focus::Detail;
@@ -1656,6 +1656,7 @@ fn hints(app: &App) -> Vec<(&'static [Action], &'static str)> {
             (&[A::FoldAll, A::UnfoldAll], "fold/unfold all"),
             (&[A::Copy], "copy"),
             (&[A::FocusNext], "tabs"),
+            (&[A::BodyBox], "hide"),
             (&[A::Back], "close"),
             (&[A::Help], "help"),
         ],
