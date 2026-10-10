@@ -352,7 +352,9 @@ impl App {
     pub(crate) fn logdawg_refresh(&mut self) {
         let pids = self.app_pids();
         let now = self.now();
-        self.sync_logdawg(&pids, now, None);
+        // the graph's range (v) holds here too: the lines in it, the requests overlapping it
+        let range = self.graph.selection;
+        self.sync_logdawg(&pids, now, range);
     }
 
     fn with_logdawg_lines<R>(&self, f: impl FnOnce(&mut wrap::Lines) -> R) -> R {

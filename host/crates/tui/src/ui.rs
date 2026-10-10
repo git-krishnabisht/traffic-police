@@ -805,8 +805,11 @@ fn draw_views(app: &mut App, r: Rect, buf: &mut Buffer) {
         }
         let bottom = r.y + r.height.saturating_sub(1);
         let (matched, total) = (app.logdawg.lines(), logs.len());
-        let at =
-            border_labels(buf, r, bottom, true, vec![vec![Span::styled(format!("{matched} of {total}"), t.dim())]]);
+        let count = match app.graph.selection {
+            Some(_) => format!("{matched} of {total} in the range"),
+            None => format!("{matched} of {total}"),
+        };
+        let at = border_labels(buf, r, bottom, true, vec![vec![Span::styled(count, t.dim())]]);
         if let Some(f) = app.logdawg.filter.as_ref().map(|f| f.source.clone()) {
             let room = at.first().map_or(r, |c| Rect { width: c.x.saturating_sub(r.x), ..r });
             let label = vec![

@@ -1786,3 +1786,34 @@ fn requests_show_among_the_lines_and_open_in_the_connection_view() {
     press(&mut app, LARGE, "R");
     assert_eq!(app.logdawg.len(), app.logdawg.lines() + app.view_store().len());
 }
+
+/// The graph's range (`v`) holds in view 4 too: the lines in it and the requests overlapping it;
+/// Esc clears it and everything comes back.
+#[test]
+fn the_graphs_range_filters_the_log() {
+    use traffic_police_tui::logdawg::Row;
+    let mut app = app_at(30.0);
+    press(&mut app, LARGE, "4");
+    let (lines, rows) = (app.logdawg.lines(), app.logdawg.len());
+    // a range of a few seconds back from the live edge, as the keys select it
+    let text = press(&mut app, LARGE, "v<Left><Left><Left><Left><Left><Left><Left><Left>v");
+    let (a, b) = app.graph.selection.expect("a range");
+    assert!(text.contains("in the range"), "{text}");
+    assert!(app.logdawg.lines() > 0 && app.logdawg.lines() < lines, "{} of {lines}", app.logdawg.lines());
+    let store = app.view_store();
+    for i in 0..app.logdawg.len() {
+        match app.logdawg.row(i).unwrap() {
+            Row::Line(id) => {
+                let ts = store.logs().get(id).unwrap().ts;
+                assert!(ts >= a && ts <= b, "a line at {ts} outside {a}..{b}");
+            }
+            Row::Request(t) => {
+                let t = store.txn(t);
+                assert!(t.start <= b && t.end.unwrap_or(t.start) >= a, "a request outside the range");
+            }
+        }
+    }
+    press(&mut app, LARGE, "<Esc><Esc>");
+    assert!(app.graph.selection.is_none());
+    assert!(app.logdawg.lines() >= lines && app.logdawg.len() >= rows, "everything back");
+}
