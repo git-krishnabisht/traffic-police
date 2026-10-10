@@ -44,7 +44,7 @@ pub struct LogdawgView {
     scanned: u64,
     dirty: bool,
     seen_uid: Option<u32>,
-    seen_pids: usize,
+    seen_pids: Vec<u32>,
     seen_second: u64,
     /// The cursor's index among the lines that pass, and the view's top.
     pub cursor: usize,
@@ -64,7 +64,7 @@ impl Default for LogdawgView {
             scanned: 0,
             dirty: true,
             seen_uid: None,
-            seen_pids: 0,
+            seen_pids: Vec::new(),
             seen_second: 0,
             cursor: 0,
             top: Top::default(),
@@ -104,9 +104,11 @@ impl LogdawgView {
     /// everything is tested again after a change that can change the answer.
     pub fn sync(&mut self, logs: &LogStore, app_pids: &HashSet<u32>, now: Ts) {
         let clock = self.filter.as_ref().is_some_and(|f| f.uses_clock());
+        let mut pids: Vec<u32> = app_pids.iter().copied().collect();
+        pids.sort_unstable();
         if self.dirty
             || logs.uid() != self.seen_uid
-            || app_pids.len() != self.seen_pids
+            || pids != self.seen_pids
             || (clock && now / NS_PER_SEC != self.seen_second)
         {
             // again from the start; the cursor stays on its line, or the nearest after it
@@ -115,7 +117,7 @@ impl LogdawgView {
             self.scanned = logs.first_id();
             self.dirty = false;
             self.seen_uid = logs.uid();
-            self.seen_pids = app_pids.len();
+            self.seen_pids = pids;
             self.seen_second = now / NS_PER_SEC;
             self.scan(logs, app_pids, now);
             if let Some(at) = at
@@ -197,9 +199,12 @@ fn message_rows(message: &str, width: usize, wrapping: bool) -> Vec<(usize, usiz
 }
 
 impl App {
-    /// The app's processes from the network side: its capture runtimes' pids.
+    /// The app's processes from the network side: its capture runtimes' pids (the app's now, when
+    /// another was picked in the session).
     fn app_pids(&self) -> HashSet<u32> {
-        self.view_store().sources().map(|s| s.pid).collect()
+        let store = self.view_store();
+        let package = store.logs().package();
+        store.sources().filter(|s| package.is_none_or(|p| s.package == p)).map(|s| s.pid).collect()
     }
 
     /// Keeps the Logdawg view up to the store (each frame while it shows).

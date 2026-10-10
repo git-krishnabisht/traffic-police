@@ -6,6 +6,7 @@ pub mod demo;
 pub mod device;
 pub mod flutter;
 pub mod logdawg;
+pub mod session;
 
 use std::time::{Duration, Instant};
 
@@ -19,6 +20,7 @@ pub use demo::{DemoConfig, DemoSession};
 pub use device::{DeviceTarget, Launch, peek_hello, run_device};
 pub use flutter::run_flutter;
 pub use logdawg::{LogdawgControl, LogdawgTarget, run_logdawg};
+pub use session::run_session;
 
 /// Run the demo device in real time (scaled by `speed`) until the event receiver is dropped or
 /// `Shutdown` arrives.

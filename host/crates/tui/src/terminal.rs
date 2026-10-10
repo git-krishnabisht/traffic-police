@@ -171,6 +171,19 @@ pub struct RunOptions {
     pub detect_images: bool,
     /// Connection status from the backend, shown in the header.
     pub status: Option<tokio::sync::watch::Receiver<ConnectionStatus>>,
+    /// Another app picked in the session (`A`); `None` where that cannot be (the demo, a file).
+    pub switch: Option<Switching>,
+}
+
+/// What picking another app in a session needs: the device and app picker on the session's
+/// screen, and where the choice goes.
+pub struct Switching {
+    pub adb: traffic_police_adb::Adb,
+    /// Whether a process without the capture runtime can be picked (the agent is then attached
+    /// to it), or why not.
+    pub attach: Result<(), String>,
+    /// Takes the choice: the session moves its capture and its log there.
+    pub to: Box<dyn Fn(crate::picker::Picked) + Send>,
 }
 
 /// Run the UI until the user quits. `events` carries batches from the backend; when it closes
@@ -193,8 +206,9 @@ pub async fn run(mut app: App, mut events: mpsc::Receiver<Vec<SessionEvent>>, op
     } else {
         Images::halfblocks()
     };
+    app.switch_apps = opts.switch.is_some();
     // dropping `term` puts the terminal back
-    event_loop(&mut term, &mut app, &mut events, opts.status).await
+    event_loop(&mut term, &mut app, &mut events, opts.status, opts.switch).await
 }
 
 /// An editor started from the Call Stack tab; the loop keeps ingesting events while it runs.
@@ -219,6 +233,7 @@ async fn event_loop(
     app: &mut App,
     events: &mut mpsc::Receiver<Vec<SessionEvent>>,
     mut status: Option<tokio::sync::watch::Receiver<ConnectionStatus>>,
+    switch: Option<Switching>,
 ) -> anyhow::Result<()> {
     if let Some(s) = &status {
         app.connection = Some(s.borrow().clone());
@@ -332,6 +347,30 @@ async fn event_loop(
             watcher.0 = Some(tokio::spawn(crate::rules::watch(path, rules_tx.clone())));
         }
         dispatch_jobs(app, &body_tx, &jq_tx, &search_tx);
+        if std::mem::take(&mut app.switch_request)
+            && let Some(sw) = &switch
+        {
+            // the picker reads the keys meanwhile, with its own stream, on this screen; what the
+            // backends send waits in the channel and goes in after
+            drop(input.take());
+            let serial = app.store.current_source().and_then(|s| s.serial.clone());
+            let (adb, theme, attach) = (sw.adb.clone(), app.theme.clone(), sw.attach.clone());
+            let picked = crate::picker::pick_in_session(term, adb, theme, &app.keymap, attach, serial).await;
+            input = Some(EventStream::new());
+            match picked {
+                Ok(Some(p)) if app.inspecting(&p.serial, &p.process) => {
+                    app.flash(format!("{} is the app inspected now", p.process));
+                }
+                Ok(Some(p)) => {
+                    app.switched_to(&p.package, &p.serial);
+                    (sw.to)(p);
+                }
+                Ok(None) => {}
+                Err(e) => app.flash(format!("the device picker failed: {e:#}")),
+            }
+            dirty = true;
+            pacer.reset();
+        }
         if let Some((path, line)) = app.editor_request.take()
             && editor.is_none()
         {

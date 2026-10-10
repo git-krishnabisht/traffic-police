@@ -1673,3 +1673,48 @@ fn space_pauses_the_log_and_goes_on() {
     press(&mut app, MEDIUM, "1 ");
     assert!(!app.recording && !app.log_paused);
 }
+
+/// `A`: another app to inspect. The demo says why not; a session on a device opens the picker
+/// (the event loop runs it), and a choice leaves a mark on the timeline. Then `package:mine` is
+/// the new app: its uid's lines, and the old app's processes no longer count.
+#[test]
+fn another_app_is_picked_in_the_session_and_the_log_follows_it() {
+    use traffic_police_core::SessionEvent;
+    use traffic_police_core::event::MarkerKind;
+    use traffic_police_core::logdawg::{Level, LogInfo, LogLine};
+    let mut app = app_at(12.0);
+    let text = press(&mut app, MEDIUM, "A");
+    assert!(!app.switch_request && text.contains("not in the demo"), "{text}");
+    app.switch_apps = true;
+    press(&mut app, MEDIUM, "A");
+    assert!(app.switch_request, "the picker is to open");
+    app.switch_request = false;
+    assert!(app.inspecting("demo", "com.example.shop") || !app.inspecting("emulator-5554", "com.example.other"));
+    let marks = app.store.markers().len();
+    app.switched_to("com.example.other", "emulator-5554");
+    let mark = &app.store.markers()[marks];
+    assert_eq!((mark.kind, mark.label.as_str()), (MarkerKind::Note, "switched to com.example.other"));
+    // the reader says the new app and its uid; only its lines are the app's now
+    press(&mut app, MEDIUM, "4");
+    assert!(!app.logdawg.is_empty(), "the shop's lines");
+    let info = LogInfo { package: Some("com.example.other".into()), uid: Some(10_301), ..LogInfo::default() };
+    app.ingest(vec![SessionEvent::LogInfo(Box::new(info))]);
+    press(&mut app, MEDIUM, "");
+    assert!(app.logdawg.is_empty(), "the shop's lines are not the app's any more");
+    let ts = app.now();
+    let line = LogLine {
+        ts,
+        wall_ms: 0,
+        pid: 5100,
+        tid: 5100,
+        uid: Some(10_301),
+        level: Level::Info,
+        buffer: 0,
+        tag: "Other".into(),
+        message: "hello from the other app".into(),
+    };
+    app.ingest(vec![SessionEvent::Logs(vec![line])]);
+    let text = press(&mut app, MEDIUM, "");
+    assert_eq!(app.logdawg.len(), 1);
+    assert!(text.contains("hello from the other app"), "{text}");
+}

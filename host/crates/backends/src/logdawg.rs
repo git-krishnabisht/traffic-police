@@ -22,7 +22,7 @@ use traffic_police_core::logdawg::{Level, LogInfo, LogLine};
 use crate::device::choose_device;
 
 /// What to read.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LogdawgTarget {
     /// The device (the only one online when not given).
     pub serial: Option<String>,
@@ -52,6 +52,9 @@ pub struct LogdawgControl {
     /// From the UI: while true the log is not read. When it turns false the reader goes on after
     /// the last line it read, so what the device logged meanwhile comes too, while it has it.
     pub paused: Option<watch::Receiver<bool>>,
+    /// From the session: another app picked in it (its device and package). On the same device
+    /// the reader goes on after its last line, with the new app's uid.
+    pub target: Option<watch::Receiver<LogdawgTarget>>,
 }
 
 impl LogdawgControl {
@@ -59,9 +62,17 @@ impl LogdawgControl {
         self.paused.as_ref().is_some_and(|p| *p.borrow())
     }
 
-    /// A change the reader acts on; none comes once the UI is gone.
+    /// The app to read for now, when the session says.
+    fn target(&self) -> Option<LogdawgTarget> {
+        self.target.as_ref().map(|t| t.borrow().clone())
+    }
+
+    /// A change the reader acts on; none comes from a side that is gone.
     async fn changed(&mut self) {
-        changed(&mut self.paused).await
+        tokio::select! {
+            _ = changed(&mut self.paused) => {}
+            _ = changed(&mut self.target) => {}
+        }
     }
 }
 
@@ -83,8 +94,8 @@ const RETRY: Duration = Duration::from_secs(1);
 enum Ended {
     /// The UI went: stop.
     Closed,
-    /// The UI paused the log.
-    Paused,
+    /// The UI paused the log, or the session picked another app.
+    Changed,
     /// The device or the stream went: try again.
     Lost(String),
 }
@@ -96,13 +107,19 @@ pub async fn run_logdawg(
     mut control: LogdawgControl,
     events: mpsc::Sender<Vec<SessionEvent>>,
 ) {
+    let mut target = target;
     let mut devices = adb.watch_devices();
-    // the last line read, to start again after it
+    // the last line read, to start again after it, and the device it was read on (another
+    // device's log starts with its own history)
     let mut last: Option<i128> = None;
+    let mut read_on: Option<String> = None;
     let mut said = String::new();
     loop {
         if events.is_closed() {
             return;
+        }
+        if let Some(t) = control.target() {
+            target = t;
         }
         if control.paused() {
             if !status(&events, &mut said, "paused (Space goes on)".into()).await {
@@ -123,9 +140,13 @@ pub async fn run_logdawg(
                 continue;
             }
         };
+        if read_on.as_deref() != Some(device.serial.as_str()) {
+            last = None;
+            read_on = Some(device.serial.clone());
+        }
         match read(&adb, &device, &target, &events, &mut last, &mut said, &mut control).await {
             Ended::Closed => return,
-            Ended::Paused => {}
+            Ended::Changed => {}
             Ended::Lost(why) => {
                 tracing::info!(device = %device.serial, "the log stream ended: {why}");
                 if !status(&events, &mut said, format!("the log stopped ({why}); trying again…")).await {
@@ -324,12 +345,12 @@ async fn read(
                 }
             }
             _ = control.changed() => {
-                if control.paused() {
+                if control.paused() || control.target().is_some_and(|t| t != *target) {
                     // what was read goes to the UI first; the stream closes when it is dropped
                     if !batch.is_empty() && events.send(vec![SessionEvent::Logs(std::mem::take(&mut batch))]).await.is_err() {
                         return Ended::Closed;
                     }
-                    return Ended::Paused;
+                    return Ended::Changed;
                 }
             }
         }

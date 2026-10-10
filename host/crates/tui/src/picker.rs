@@ -69,7 +69,21 @@ pub async fn pick(
     terminal::install_panic_hook();
     let mut term = terminal::setup()?;
     // dropping `term` puts the terminal back
-    run(&mut term, adb, theme, keymap, attach).await
+    run(&mut term, adb, theme, keymap, attach, None).await
+}
+
+/// The pickers inside a session, on its screen (`A`: another app to inspect), opened on the
+/// session's device (`serial`) when it is online; `None` when the user goes back to the session
+/// (`Esc` at the devices, or `:q`).
+pub(crate) async fn pick_in_session(
+    term: &mut terminal::Term,
+    adb: Adb,
+    theme: Theme,
+    keymap: &Keymap,
+    attach: Result<(), String>,
+    serial: Option<String>,
+) -> anyhow::Result<Option<Picked>> {
+    run(term, adb, theme, keymap, attach, Some(serial)).await
 }
 
 /// Which packages are debuggable, asked of `run-as` once each. On userdebug builds (many
@@ -207,27 +221,43 @@ async fn run(
     theme: Theme,
     keymap: &Keymap,
     attach: Result<(), String>,
+    session: Option<Option<String>>,
 ) -> anyhow::Result<Option<Picked>> {
+    // in a session: its device, to open on
+    let in_session = session.is_some();
+    let open_on = session.flatten();
     let mut stop = terminal::StopSignals::new()?;
     let (tx, mut rx) = mpsc::unbounded_channel::<Snapshot>();
     let (want_tx, mut want_rx) = mpsc::unbounded_channel::<Option<TransportId>>();
     // devices as adb reports them (pushed on every change)
     let mut device_watch = adb.watch_devices();
-    // background refresh: each device's Android version once, and the chosen device's processes
-    // every second
+    // background refresh: each device's Android version once, while the devices are listed, and
+    // the chosen device's processes every second (nothing is asked of a device not shown)
     let fetch_adb = adb.clone();
     let mut fetch_watch = device_watch.clone();
+    let fetch_open_on = open_on.clone();
     let fetcher = tokio::spawn(async move {
         let mut device: Option<TransportId> = None;
+        // the session's device was opened on (once; going back lists the devices)
+        let mut opened = false;
         let mut asked = std::collections::HashSet::new();
         // per device: which packages are debuggable, which sockets answered
         let mut known: HashMap<TransportId, Known> = HashMap::new();
         loop {
-            let online: Vec<TransportId> = match &*fetch_watch.borrow_and_update() {
-                Some(Ok(list)) => list.iter().filter(|d| d.is_online()).map(|d| d.transport_id).collect(),
+            let online: Vec<(TransportId, String)> = match &*fetch_watch.borrow_and_update() {
+                Some(Ok(list)) => {
+                    list.iter().filter(|d| d.is_online()).map(|d| (d.transport_id, d.serial.clone())).collect()
+                }
                 _ => Vec::new(),
             };
-            for id in online {
+            if device.is_none()
+                && !opened
+                && let Some((id, _)) = online.iter().find(|(_, s)| fetch_open_on.as_ref() == Some(s))
+            {
+                device = Some(*id);
+                opened = true;
+            }
+            for (id, _) in online.into_iter().filter(|_| device.is_none()) {
                 if asked.insert(id)
                     && let Some(text) = about(&fetch_adb, id).await
                     && tx.send(Snapshot::About(id, text)).is_err()
@@ -277,6 +307,7 @@ async fn run(
                 attach: attach.is_ok(),
                 keymap,
                 command: command.as_deref(),
+                in_session,
             };
             draw(buf, area, &theme, &view);
         })?;
@@ -289,14 +320,18 @@ async fn run(
                 if let Some(d) = latest {
                     loaded = true;
                     devices = d;
-                    // with one online device, go straight to its processes (once)
+                    // with one online device, or the session's, go straight to its processes (once)
                     if chosen.is_none() && !auto_chosen && let Ok(list) = &devices {
                         let online: Vec<&Device> = list.iter().filter(|d| d.is_online()).collect();
-                        if online.len() == 1 {
+                        let start = match &open_on {
+                            Some(serial) => online.iter().find(|d| d.serial == *serial).copied(),
+                            None => (online.len() == 1).then(|| online[0]),
+                        };
+                        if let Some(d) = start {
                             auto_chosen = true;
-                            chosen = Some(online[0].clone());
+                            chosen = Some(d.clone());
                             cursor = 0;
-                            let _ = want_tx.send(Some(online[0].transport_id));
+                            let _ = want_tx.send(Some(d.transport_id));
                         }
                     }
                 }
@@ -344,7 +379,11 @@ async fn run(
                 // as in Neovim, Ctrl+C does not quit (nor `q`, unless `[keymap]` binds it): say what does
                 if ctrl_c || (action.is_none() && k.code == KeyCode::Char('q') && k.modifiers.is_empty()) {
                     command = None;
-                    message = Some(crate::app::QUIT_HINT.to_string());
+                    message = Some(if in_session {
+                        format!("{} (or :q) goes back to the session", keymap.key_label(Action::Back))
+                    } else {
+                        crate::app::QUIT_HINT.to_string()
+                    });
                     continue;
                 }
                 if action == Some(Action::Palette) {
@@ -367,6 +406,11 @@ async fn run(
                     Some(Action::Bottom) => cursor = last,
                     Some(Action::PageUp | Action::HalfPageUp) => cursor = cursor.saturating_sub(page),
                     Some(Action::PageDown | Action::HalfPageDown) => cursor = (cursor + page).min(last),
+                    // in a session the devices' Esc goes back to it
+                    _ if back && chosen.is_none() && in_session => {
+                        fetcher.abort();
+                        return Ok(None);
+                    }
                     _ if back && chosen.is_some() => {
                         chosen = None;
                         processes = None;
@@ -438,18 +482,21 @@ struct View<'a> {
     keymap: &'a Keymap,
     /// A `:` command being typed (`:q` quits, as in Neovim).
     command: Option<&'a str>,
+    /// Inside a session (another app to inspect): `:q` and the devices' Esc go back to it.
+    in_session: bool,
 }
 
 /// The picker's box: its title on the border, the list inside with a margin, the columns spread
 /// over the whole width, and the keys at the bottom.
 fn draw(buf: &mut ratatui::buffer::Buffer, area: Rect, t: &Theme, v: &View) {
-    let View { loaded, devices, abouts, chosen, processes, cursor, message, attach, keymap, command } = *v;
+    let View { loaded, devices, abouts, chosen, processes, cursor, message, attach, keymap, command, in_session } = *v;
     Block::bordered().border_type(t.borders).border_style(t.accent()).render(area, buf);
     // the title after the corner, as on the main screen's boxes (`╭─ Choose … ─`)
     let bold = t.accent().add_modifier(Modifier::BOLD);
-    let title = match chosen {
-        None => vec![Span::styled("Choose a device", bold)],
-        Some(d) => vec![Span::styled("Choose an app process on ", bold), Span::styled(d.label(), t.text())],
+    let title = match (chosen, in_session) {
+        (None, false) => vec![Span::styled("Choose a device", bold)],
+        (None, true) => vec![Span::styled("Another app: choose a device", bold)],
+        (Some(d), _) => vec![Span::styled("Choose an app process on ", bold), Span::styled(d.label(), t.text())],
     };
     if crate::ui::border_labels(buf, area, area.y, false, vec![title]).is_empty() {
         crate::ui::border_labels(buf, area, area.y, false, vec![vec![Span::styled("Choose", bold)]]);
@@ -546,10 +593,17 @@ fn draw(buf: &mut ratatui::buffer::Buffer, area: Rect, t: &Theme, v: &View) {
     if chosen.is_some() {
         help.push_str(&format!(" · {} back to devices", key(Action::Back)));
     }
-    // `quit = []` in `[keymap]` leaves only `:q` (and Ctrl+C)
-    match key(Action::Quit) {
-        k if k.is_empty() => help.push_str(" · :q quit"),
-        k => help.push_str(&format!(" · {k} or :q quit")),
+    if in_session {
+        match chosen {
+            None => help.push_str(&format!(" · {} or :q back to the session", key(Action::Back))),
+            Some(_) => help.push_str(" · :q back to the session"),
+        }
+    } else {
+        // `quit = []` in `[keymap]` leaves only `:q` (and Ctrl+C)
+        match key(Action::Quit) {
+            k if k.is_empty() => help.push_str(" · :q quit"),
+            k => help.push_str(&format!(" · {k} or :q quit")),
+        }
     }
     let help = help.as_str();
     let mut bottom: Vec<Line> = Vec::new();
@@ -642,11 +696,18 @@ mod tests {
             attach: false,
             keymap: &keymap,
             command: None,
+            in_session: false,
         };
         assert!(text(&view).contains("Enter open · :q quit"), "{}", text(&view));
         view.command = Some("q");
         let shown = text(&view);
         assert!(shown.contains(":q▏") && !shown.contains(":q quit"), "{shown}");
+        // in a session the way out goes back to it
+        view.command = None;
+        view.in_session = true;
+        let shown = text(&view);
+        assert!(shown.contains("Another app: choose a device"), "{shown}");
+        assert!(shown.contains("Enter open · Esc or :q back to the session"), "{shown}");
     }
 
     #[test]
@@ -675,6 +736,7 @@ mod tests {
             attach: true,
             keymap: &keymap,
             command: None,
+            in_session: false,
         };
         let area = Rect::new(0, 0, 160, 14);
         let selected = Theme::new(Palette::Dark, Depth::TrueColor).selected().bg.unwrap();
@@ -732,6 +794,7 @@ mod tests {
             attach: true,
             keymap: &keymap,
             command: None,
+            in_session: false,
         };
         let shown = text(&view);
         assert!(shown.contains("● com.library.app") && shown.contains("capture running: ready"), "{shown}");

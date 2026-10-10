@@ -465,6 +465,11 @@ pub struct App {
     pub log_pause: Option<tokio::sync::watch::Sender<bool>>,
     /// The log is paused: no new lines are read.
     pub log_paused: bool,
+    /// Another app can be picked in this session (`A`): a session on a device, not the demo or
+    /// an opened file.
+    pub switch_apps: bool,
+    /// The picker is to open; the event loop runs it on this screen.
+    pub switch_request: bool,
     pub hits: HitMap,
     pub should_quit: bool,
     /// Fixed "now" for tests and single-frame renders.
@@ -554,6 +559,8 @@ impl App {
             recording: true,
             log_pause: None,
             log_paused: false,
+            switch_apps: false,
+            switch_request: false,
             caps: Capabilities::default(),
             commands: None,
             hits: HitMap::default(),
@@ -983,6 +990,22 @@ impl App {
             (false, true) => "the log goes on, with what the device logged meanwhile",
             (false, false) => "the log goes on",
         });
+    }
+
+    /// Whether the session watches this process now.
+    pub fn inspecting(&self, serial: &str, process: &str) -> bool {
+        self.store
+            .current_source()
+            .is_some_and(|s| s.ended.is_none() && s.process == process && s.serial.as_deref() == Some(serial))
+    }
+
+    /// Another app was picked in the session: a mark on the timeline where it happened. The
+    /// session moves the capture and the log; the requests and lines so far stay.
+    pub fn switched_to(&mut self, package: &str, serial: &str) {
+        let now = self.now();
+        let label = format!("switched to {package}");
+        self.store.apply(SessionEvent::Marker { source: None, at: now, kind: MarkerKind::Note, label });
+        self.flash(format!("inspecting {package} on {serial}; what came before stays"));
     }
 
     fn clear_session(&mut self) {
@@ -1423,6 +1446,10 @@ impl App {
                 self.set_sort(s);
             }
             Action::Clear => self.overlay = Overlay::ConfirmClear,
+            Action::SwitchApp if self.switch_apps => self.switch_request = true,
+            Action::SwitchApp => {
+                self.flash("another app can be picked in a session on a device, not in the demo or an opened file");
+            }
             Action::SelectRange if not_detail => {
                 self.focus = Focus::Graph;
                 let (_, right) = self.window();

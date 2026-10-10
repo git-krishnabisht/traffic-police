@@ -19,7 +19,7 @@ use anyhow::{Context, bail};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use tokio::sync::{mpsc, watch};
 use traffic_police_backends::demo::{DemoConfig, DemoSession, demo_rules};
-use traffic_police_backends::{AgentKit, DeviceTarget, Launch, run_device};
+use traffic_police_backends::{AgentKit, DeviceTarget, Launch};
 use traffic_police_core::backend::{Capabilities, ConnectionStatus};
 use traffic_police_core::fmt::{NS_PER_MS, NS_PER_SEC};
 use traffic_police_core::store::SessionStore;
@@ -681,22 +681,85 @@ async fn run_device_mode(
     app.session_log = log.clone();
     let sink = log.map(|l| l as std::sync::Arc<dyn traffic_police_core::session::StreamSink>);
     // Logdawg: the device's log, read beside the app's capture, for the UI only; `Space` in
-    // view 4 pauses it
+    // view 4 pauses it, and it follows the app picked in the session
+    let mut logdawg_apps = None;
     let reader = settings.logdawg(target.serial.clone(), Some(target.package.clone())).map(|t| {
         let (pause, paused) = watch::channel(false);
         app.log_pause = Some(pause);
-        let control = traffic_police_backends::LogdawgControl { paused: Some(paused) };
+        let (to, apps) = watch::channel(t.clone());
+        logdawg_apps = Some(to);
+        let control = traffic_police_backends::LogdawgControl { paused: Some(paused), target: Some(apps) };
         tokio::spawn(traffic_police_backends::run_logdawg(adb.clone(), t, control, event_tx.clone()))
     });
-    let backend = tokio::spawn(run_device(adb, target, ids, event_tx, command_rx, status_tx, sink));
-    let ui = catch_unwind(terminal::run(app, event_rx, RunOptions { detect_images, status: Some(status_rx) })).await;
+    // `A` in the session: another app, picked as at the start; one without the library gets the
+    // agent (Flutter mode takes any debuggable app: it reads the Dart VM service)
+    let agent = match &target.attach {
+        Some(kit) => Ok(kit.clone()),
+        None => agent_for_picking(args.mode, args.agent_dir.as_deref()),
+    };
+    let offer = if target.flutter { Ok(()) } else { agent.as_ref().map(|_| ()).map_err(Clone::clone) };
+    let attach_always = args.mode == Some(Mode::Attach);
+    let (switch_tx, switches) = mpsc::unbounded_channel();
+    let base = target.clone();
+    let to = Box::new(move |p: traffic_police_tui::picker::Picked| {
+        let _ = switch_tx.send(target_for(&base, &p, agent.as_ref().ok(), attach_always));
+    });
+    let switch = terminal::Switching { adb: adb.clone(), attach: offer, to };
+    let session = tokio::spawn(traffic_police_backends::run_session(
+        adb,
+        target,
+        ids,
+        event_tx,
+        command_rx,
+        switches,
+        status_tx,
+        sink,
+        logdawg_apps,
+    ));
+    let options = RunOptions { detect_images, status: Some(status_rx), switch: Some(switch) };
+    let ui = catch_unwind(terminal::run(app, event_rx, options)).await;
     if let Some(r) = reader {
         r.abort();
     }
-    // the UI dropped its command sender (a panic too): the backend says goodbye and removes its
+    // the UI dropped its command sender (a panic too): the capture says goodbye and removes its
     // forward
-    let _ = tokio::time::timeout(Duration::from_secs(3), backend).await;
+    let _ = tokio::time::timeout(Duration::from_secs(3), session).await;
     ui.unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+}
+
+/// The agent for apps without the library (attach mode), or why there is none, for the picker in
+/// a session (`A`); the picker at the start says the same.
+fn agent_for_picking(mode: Option<Mode>, dir: Option<&Path>) -> Result<Arc<AgentKit>, String> {
+    if mode == Some(Mode::Library) {
+        return Err(
+            "Add it to the app's debug build (see the README), or start traffic-police without --mode library to attach the agent instead."
+                .into(),
+        );
+    }
+    load_agent_kit(dir).map_err(|e| match dir {
+        Some(_) => format!("{e:#}"),
+        None => "Add it to the app's debug build (see the README), or build the agent to attach to it: cd android && ./gradlew :attach-agent:agentArtifacts."
+            .into(),
+    })
+}
+
+/// The session's target for an app picked in it (`A`): the same settings, that app, and the
+/// agent when the app does not run the library (or attach mode was asked for).
+fn target_for(
+    base: &DeviceTarget,
+    p: &traffic_police_tui::picker::Picked,
+    agent: Option<&Arc<AgentKit>>,
+    attach_always: bool,
+) -> DeviceTarget {
+    DeviceTarget {
+        serial: Some(p.serial.clone()),
+        package: p.package.clone(),
+        process: Some(p.process.clone()),
+        pid: None,
+        attach: agent.filter(|_| !base.flutter && (!p.capturing || attach_always)).cloned(),
+        launch: None,
+        ..base.clone()
+    }
 }
 
 /// Runs `f` to its end or to a panic, so that what has to follow (the backend's goodbye) still
@@ -734,7 +797,7 @@ async fn run_demo(
     app.session_log = log.clone();
     let sink = log.map(|l| l as std::sync::Arc<dyn traffic_police_core::session::StreamSink>);
     let backend = tokio::spawn(traffic_police_backends::run_demo(cfg, args.speed, ids, event_tx, command_rx, sink));
-    let result = terminal::run(app, event_rx, RunOptions { detect_images, status: None }).await;
+    let result = terminal::run(app, event_rx, RunOptions { detect_images, status: None, switch: None }).await;
     backend.abort();
     result
 }
@@ -772,7 +835,7 @@ async fn run_open(
     // time stands still at the end of the recording
     app.now_override = Some(app.store.latest());
     let (_event_tx, event_rx) = mpsc::channel(1);
-    terminal::run(app, event_rx, RunOptions { detect_images, status: None }).await
+    terminal::run(app, event_rx, RunOptions { detect_images, status: None, switch: None }).await
 }
 
 /// A recording of the captured stream in a private temporary directory, so the session can be

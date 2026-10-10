@@ -65,6 +65,7 @@ pub enum Action {
     Palette,
     Help,
     Clear,
+    SwitchApp,
     FrameRate,
     MoveUp,
     MoveDown,
@@ -237,6 +238,14 @@ pub const ACTIONS: &[Info] = &[
     info!(Palette, "palette", Session, "commands", "Command palette", [":"]),
     info!(Help, "help", Session, "help", "Help: every key", ["?"]),
     info!(Clear, "clear", Session, "clear", "Clear the session (asks first)", ["x"]),
+    info!(
+        SwitchApp,
+        "switch-app",
+        Session,
+        "app",
+        "App: inspect another debuggable app (the device and app picker)",
+        ["A"]
+    ),
     info!(FrameRate, "frame-rate", Session, "fps", "Show or hide the frame rate (fps)", []),
     info!(MoveUp, "move-up", Rules, "move up", "Move the rule up (rules apply in order), or the form's action", ["K"]),
     info!(MoveDown, "move-down", Rules, "move down", "Move the rule down, or the form's action", ["J"]),

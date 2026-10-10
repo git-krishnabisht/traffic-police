@@ -298,8 +298,12 @@ impl LogStore {
         if device.is_some() {
             self.info.device = device;
         }
-        if package.is_some() {
-            self.info.package = package;
+        // another app (picked in the session): the uid that was the app's is not its
+        if let Some(p) = package {
+            if self.info.package.as_deref() != Some(p.as_str()) {
+                self.info.uid = None;
+            }
+            self.info.package = Some(p);
         }
         if uid.is_some() {
             self.info.uid = uid;
@@ -488,6 +492,23 @@ mod tests {
         s.push(line(2, 4312, Level::Info, "a", "two"));
         assert_eq!((s.first_id(), s.get(1).unwrap().message), (1, "two"));
         assert_eq!((s.uid(), s.process(4312)), (Some(10_234), Some("com.example.shop")));
+    }
+
+    #[test]
+    fn another_app_drops_the_uid_of_the_one_before() {
+        let mut s = LogStore::new();
+        let info =
+            |package: &str, uid: Option<u32>| LogInfo { package: Some(package.into()), uid, ..LogInfo::default() };
+        s.apply_info(info("com.example.shop", Some(10_234)));
+        // the reader says the same app again, without the uid (status lines): it stays
+        s.apply_info(LogInfo { status: Some("reading".into()), ..LogInfo::default() });
+        s.apply_info(info("com.example.shop", None));
+        assert_eq!(s.uid(), Some(10_234));
+        // another app whose uid was not found: no uid, not the old one
+        s.apply_info(info("com.example.other", None));
+        assert_eq!((s.package(), s.uid()), (Some("com.example.other"), None));
+        s.apply_info(info("com.example.other", Some(10_301)));
+        assert_eq!(s.uid(), Some(10_301));
     }
 
     #[test]

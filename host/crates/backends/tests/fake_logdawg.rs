@@ -1,6 +1,7 @@
 //! Logdawg's reader against the fake adb (ARCHITECTURE.md §5.17): the app's uid, the lines from
 //! before and after it starts, process names, the clock mapping, a stream cut and resumed
-//! without repeats, a pause, a device that is not there yet, and the UI going.
+//! without repeats, a pause, another app picked in the session, a device that is not there yet,
+//! and the UI going.
 
 use std::time::Duration;
 
@@ -139,7 +140,7 @@ async fn a_pause_reads_nothing_and_going_on_brings_what_came_meanwhile() {
     fake.logcat(SERIAL, record(1_790_000_001, 4312, 10_234, 4, "A", "before"));
     let (pause, paused) = watch::channel(false);
     let (tx, mut rx) = mpsc::channel(64);
-    let control = LogdawgControl { paused: Some(paused) };
+    let control = LogdawgControl { paused: Some(paused), ..LogdawgControl::default() };
     let _task = tokio::spawn(run_logdawg(fake.client(), target(Some(100)), control, tx));
     let mut seen = Seen { lines: Vec::new(), infos: Vec::new() };
     until(&mut rx, &mut seen, |s| !s.lines.is_empty()).await;
@@ -185,4 +186,30 @@ async fn everything_the_device_has_by_default_and_nothing_from_before_with_0() {
     until(&mut rx, &mut seen, |s| !s.lines.is_empty()).await;
     assert_eq!(seen.lines.iter().map(|l| l.message.as_str()).collect::<Vec<_>>(), ["new"]);
     assert!(fake.commands(SERIAL).contains(&"logcat -B -b main,system,crash -T 1790000000.000".to_string()));
+}
+
+#[tokio::test]
+async fn another_app_goes_on_after_the_last_line_with_its_uid() {
+    const OTHER: &str = "com.example.other";
+    let fake = FakeAdb::start().await;
+    fake.add_device(SERIAL, 35);
+    fake.install(SERIAL, PACKAGE, 10_234);
+    fake.install(SERIAL, OTHER, 10_301);
+    fake.logcat(SERIAL, record(1_790_000_001, 4312, 10_234, 4, "A", "shop"));
+    let (switch, to) = watch::channel(target(Some(100)));
+    let (tx, mut rx) = mpsc::channel(64);
+    let control = LogdawgControl { target: Some(to), ..LogdawgControl::default() };
+    let _task = tokio::spawn(run_logdawg(fake.client(), target(Some(100)), control, tx));
+    let mut seen = Seen { lines: Vec::new(), infos: Vec::new() };
+    until(&mut rx, &mut seen, |s| !s.lines.is_empty()).await;
+    switch.send_modify(|t| t.package = Some(OTHER.into()));
+    until(&mut rx, &mut seen, |s| s.infos.iter().any(|i| i.uid == Some(10_301))).await;
+    let info = seen.infos.iter().find(|i| i.uid == Some(10_301)).unwrap();
+    assert_eq!(info.package.as_deref(), Some(OTHER));
+    fake.logcat(SERIAL, record(1_790_000_002, 5100, 10_301, 4, "B", "other"));
+    until(&mut rx, &mut seen, |s| s.lines.len() >= 2).await;
+    assert_eq!(seen.lines.iter().map(|l| l.message.as_str()).collect::<Vec<_>>(), ["shop", "other"], "none twice");
+    let starts: Vec<String> = fake.commands(SERIAL).into_iter().filter(|c| c.starts_with("logcat ")).collect();
+    assert_eq!(starts.len(), 2, "{starts:?}");
+    assert!(starts[1].ends_with("-T 1790000001.250"), "on the same device, after the last line: {starts:?}");
 }
