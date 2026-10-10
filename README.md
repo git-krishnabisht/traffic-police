@@ -345,6 +345,15 @@ more is read until `Space` again, which brings what the device logged meanwhile 
 device still has it (in views 1 to 3 `Space` pauses the network capture). `4` always puts the
 focus on the log, also from a request's tabs.
 
+The requests are in the log too: a `⇄ request` row at each one's start, with its method, status
+and time (live while it runs) and its URL, among the lines in time order. `Enter` on one opens it
+in view 1, `y` copies it as cURL, and `R` hides them and shows them again (`[logdawg] requests`).
+A range selected on the graph (`v`) holds here as in view 1: the lines in it and the requests
+that overlap it, until `Esc`. A request's own **Logs** tab (its fifth) lists the app's lines
+from its start to its end, with `▶` on the lines of the thread that made it. Session files keep
+the log (from `e` in the UI: all of it, or with some requests the lines from the first one's
+start to the last one's end), and `open` shows it in view 4.
+
 To inspect another app without quitting, press `A` (or `:app`): the app picker opens on the
 session's device (`Esc` there lists the devices). Picking a debuggable app moves the network
 capture and `package:mine` to it, the way the picker at the start would watch it (the agent is
@@ -382,7 +391,7 @@ or turns the log off.
 | Views | `1` Connection View · `2` Thread View · `3` Rules · `4` Logdawg, the device's log |
 | Rules | `r` on a request: a new rule that matches it, in the rule form · in the Rules view: `Space` on or off · `Enter` edit in the form · `r` (or `a`) a new rule · `K` `J` move the rule up or down (rules apply in order) · `E` edit `rules.toml` in `$EDITOR` |
 | Rule form | `↑` `↓` (or `Tab`) between lines · `Enter` types into a field (`Enter` keeps it, `Esc` puts back what was there), turns a yes/no line, or steps a choice · `←` `→` step a choice (`Space` ticks a method) · `a` adds an action · `Delete` or `Backspace` removes the action or query parameter · `K` `J` move an action · `Ctrl+S` saves · `Esc` leaves (asking when something changed) · `E` `$EDITOR` · the last line lists the captured requests the rule's match selects |
-| Detail pane | `Enter` open · `Esc` close · `h` `l` or `←` `→` switch tabs · `p` parsed or source · `o` original or rule-modified response |
+| Detail pane | `Enter` open · `Esc` close · `h` `l` or `←` `→` switch tabs (Overview, Response, Request, Call Stack, Logs) · `p` parsed or source · `o` original or rule-modified response |
 | Body explorer | The box above the tabs shows the response body and, on its second tab, the request body; `Shift+Tab` from the tabs (or `Tab` from the list, or a click) goes there: `h` `l` (or `←` `→`, `b`, a click on a tab) switch between the two bodies, as in the tabs below · `j` `k` move · `Ctrl+D` `Ctrl+U` half a page · `Enter` fold or unfold, or the value menu on a single value · `[` `]` fold or unfold all · `B` hides the box (the tabs take its room) and shows it again; `[ui] body_box = false` starts without it |
 | Bodies | `Enter` fold or unfold JSON · `[` fold all · `]` unfold all · <code>&#124;</code> jq filter (empty filter clears) · long lines wrap in every box; with `[ui] wrap = false` they are cut and `<` `>` scroll sideways |
 | Call Stack | `Enter` on a framework group expands it · `Enter` on an app frame opens `$EDITOR` there (needs source roots, below) |
@@ -390,7 +399,7 @@ or turns the log off.
 | Graph | Receiving above the zero line, sending below, each half scaled to its own peak (`:` layout switches to one shared scale; `:` style switches between solid areas, braille curves and step lines) · `T` whole-app traffic or captured requests · `t` time since start or wall clock · `←` `→` move when the graph has focus |
 | List | New requests are followed while the cursor is on the newest; `G` (or `End`, `Ctrl+G`) goes back to it and follows again, also with a request open · `c` collapse repeated calls · `s` sort by the next column · `S` reverse the sort · `C` choose columns |
 | Find | `/` in the list: the filter bar ([language below](#filters)) · `/` in the detail pane: search the tab (`n` `N` next and previous match) · `m` pin a request (`is:pinned` lists pins) |
-| Logdawg | `/` filter ([language](#the-devices-log-logdawg)) · `Enter` a line with all its fields · `y` copy it as logcat prints it · `G` follow new lines · `Space` pause the log or go on · `F` freeze · `x` clear the log (asks first) · `t` time since start or wall clock |
+| Logdawg | `/` filter ([language](#the-devices-log-logdawg)) · `Enter` a line with all its fields, or a request in view 1 · `y` copy it as logcat prints it (a request: as cURL) · `R` requests among the lines or not · `G` follow new lines · `Space` pause the log or go on · `F` freeze · `x` clear the log (asks first) · `t` time since start or wall clock |
 | Copy and save | `y` copy: as cURL, the URL, headers, one header, a body, the JSON value at the cursor · `w` save a body to a file · `e` export: HAR (all, listed or selected requests) or a session file |
 | Compare | `d` marks a request (◆), `d` on another compares them: request and status lines, headers (`s` in order or as sets), bodies (JSON with keys sorted); `n` `N` step through changes, `y` copies the diff |
 | Decode | `Enter` on a header or a JSON value: copy it, decode a JWT, base64 or URL encoding, or filter by it · the Overview lists JWTs with their expiry (`Enter` decodes) |
@@ -445,9 +454,10 @@ adb, the config, the terminal and clipboard, the project's `rules.toml`, each de
 `--package` that the app is installed, debuggable and capturing (with `--mode attach`, what
 attach mode needs); it changes nothing and exits with 1 when a check fails.
 
-Session files keep everything as captured (timings, threads, stacks, bodies, pins), so `open`
-shows a session as it was. HAR files from browsers and other tools open too; their bodies are
-shown decoded, and the transferred (compressed) sizes are not kept.
+Session files keep everything as captured (timings, threads, stacks, bodies, pins, and the
+device's log when the UI saves one), so `open` shows a session as it was. HAR files from browsers
+and other tools open too; their bodies are shown decoded, and the transferred (compressed) sizes
+are not kept.
 
 ## What you see is what was sent
 
@@ -478,7 +488,7 @@ collapse = false              # start with repeated calls collapsed
 view = "connections"          # the view at start: connections, threads, rules or logdawg
 divider = 55                  # the list's share of the width, in percent (25-80)
 side_by_side = 140            # from this width on, the detail pane sits beside the list (100-500)
-tab = "overview"              # the tab a request opens on: overview, response, request, call-stack
+tab = "overview"              # the tab a request opens on: overview, response, request, call-stack, logs
 body_box = true               # the body box above the tabs, with the response and request bodies; false hides it (B shows or hides it)
 body = "response"             # the body box's tab at start: response or request (b switches)
 body_height = 40              # the body box's share of the detail pane, percent (15-85)
@@ -508,6 +518,7 @@ buffers = ["main", "system", "crash"]   # logcat's buffers: main, system, crash,
 history = "all"               # lines from before the session started: "all" the device has (as Android Studio), or 0-100000
 keep = "64mb"                 # memory the lines may use (1mb or more); the oldest go first
 filter = "package:mine"       # the filter at start ("" shows every line)
+requests = true               # the requests among the lines (R shows or hides them)
 
 [keymap]
 pause = "p"                   # an action's name (see : or ?), then a key or a list of keys

@@ -96,7 +96,9 @@ Shared value types:
 "headers": [["Content-Type", "application/json"], ["Set-Cookie", "a=1"], ["Set-Cookie", "b=2"]]
 
 // Thread
-"thread": { "name": "DefaultDispatcher-worker-3", "id": 57, "origin": "call" }
+"thread": { "name": "DefaultDispatcher-worker-3", "id": 57, "tid": 4371, "origin": "call" }
+//   id:     Thread.getId(); tid: the kernel's thread id (android.os.Process.myTid(), the one logcat shows),
+//           absent where the runtime cannot read it (off Android; runtimes up to 0.4.0)
 //   origin: "call"        = captured in EventListener.callStart() on the thread that executed/enqueued the call
 //           "interceptor" = captured in the network interceptor (no listener installed; for enqueue() this is an OkHttp dispatcher thread)
 //           "huc"         = HttpURLConnection, captured on the thread that caused the connection
@@ -179,7 +181,7 @@ Sent when a transaction starts: OkHttp network-interceptor entry, or the first H
   "url": "https://api.example.com/api/v1/orders/status?orderId=ord_4b67",
   "headers": [["Host", "api.example.com"], ["Accept-Encoding", "gzip"], ["User-Agent", "okhttp/4.12.0"]],
   "client": { "kind": "okhttp", "version": "4.12.0" },          // kind: "okhttp" | "huc"
-  "thread": { "name": "DefaultDispatcher-worker-11", "id": 88, "origin": "call" },
+  "thread": { "name": "DefaultDispatcher-worker-11", "id": 88, "tid": 5120, "origin": "call" },
   "stack": [ { "c": "com.example.shop.orders.OrderStatusPoller", "m": "poll", "f": "OrderStatusPoller.kt", "l": 41 } ],
   "stack_truncated": false,
   "body": { "length": -1, "type": null, "one_shot": false, "duplex": false },   // absent when the request has no body
@@ -663,8 +665,10 @@ Frame types inside the gzip stream:
 | 17 | JSON `{"t":"source", "source":N, "device":{"label":…, "serial":…}, "hello":{…the hello as received…}, "resumed":false}` — source N starts: a process the host connected to. `"resumed":true` means the host reconnected to the same process (same `instance`) and kept the source; the frames that follow continue it. The short form `{"t":"source", "source":N}` switches back to a source already started. Device frames belong to the source of the latest type-17 frame |
 | 18 | JSON `{"t":"source_end", "source":N, "ts":…, "reason":"the app exited"}` — `reason` is text for people |
 | 19 | JSON `{"t":"annotations", "pins":[{"source":N,"txn":T}], "markers":[{"at":…,"kind":"pause","label":…}], "notes":{}}` — written when a recording finishes; may repeat, and the last one wins. Marker kinds: `pause`, `resume`, `note` |
+| 20 | JSON `{"t":"log", "info":{"device":…, "package":…, "uid":…, "processes":[[pid, name], …]}, "lines":[[ts, wall_ms, pid, tid, uid, level, buffer, tag, message], …]}` — the device's log (Logdawg, ARCHITECTURE.md 5.17), before the annotations: `info` in the first frame, then lines in batches of up to 2,000. `ts` is the device time of the requests, `uid` may be null, `level` is logcat's letter (`V` … `A`), `buffer` logcat's id. Readers skip a line that is not one; readers before type 20 skip the frames |
 
 - Source numbers are the writing host's; a reader gives sources its own numbers (pins are mapped along).
+- The log (type 20) comes from the UI's `e` menu: all of it, or with some requests the lines from the first one's start to the last one's end.
 - A file saved from the UI's `e` menu, or by `traffic-police record --filter`, may hold only some requests: it keeps every source record and every frame that belongs to no request (clock, traffic, diagnostics), and only the chosen requests' frames.
 - A reader keeps everything before a truncated gzip stream or frame, and says the recording was cut short (a crash, or a full disk).
 - Nothing is redacted: session files hold exactly what was captured (ARCHITECTURE.md 9.2).
