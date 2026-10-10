@@ -1,7 +1,7 @@
 //! Session files (PROTOCOL.md §10): `TPSESS\0` and a format version byte, then a gzip stream of
 //! frames: the device frames exactly as captured, and host records that say which source they
-//! belong to (17), when a source ended (18), and the user's annotations (19). Opening a file
-//! replays it through the same normalizer as a live connection.
+//! belong to (17), when a source ended (18), the user's annotations (19), and the device's log
+//! (20). Opening a file replays it through the same normalizer as a live connection.
 
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
@@ -21,6 +21,7 @@ use traffic_police_proto::{Decoder, msg};
 
 use crate::event::{MarkerKind, SessionEvent};
 use crate::fmt::Ts;
+use crate::logdawg::{Level, LogInfo, LogLine};
 use crate::model::{SourceId, SourceInfo, TxnKey};
 use crate::normalize::{Control, Normalizer};
 use crate::store::{SessionStore, SourceIds};
@@ -29,6 +30,8 @@ pub const MAGIC: &[u8; 7] = b"TPSESS\0";
 pub const VERSION: u8 = 1;
 /// A recording's gzip stream is flushed at least this often.
 const FLUSH_EVERY: Duration = Duration::from_secs(5);
+/// Lines of the device's log in one frame of a session file (type 20).
+const LOG_BATCH: usize = 2000;
 
 /// The device a source ran on, as the file remembers it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -190,8 +193,12 @@ impl SessionLog {
         self.record(kind::SOURCE_END, &json!({ "t": "source_end", "source": source, "ts": at, "reason": reason }));
     }
 
-    /// Ends a recording: the annotations, then the end of the gzip stream.
+    /// Ends a recording: the device's log (when it was read), the annotations, then the end of
+    /// the gzip stream.
     pub fn finish(&self, store: &SessionStore) -> io::Result<()> {
+        for frame in log_records(store, None) {
+            self.record(kind::LOG, &frame);
+        }
         self.record(kind::ANNOTATIONS, &annotations(store));
         let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         match std::mem::replace(&mut inner.sink, Sink::Closed) {
@@ -249,12 +256,73 @@ impl SessionLog {
                 gz.write_all(&buf)?;
             }
         }
+        // the device's log: all of it, or with some requests the lines from the first's start to
+        // the last's end
+        let span = keep.map(|keep| {
+            let kept = store.txns().iter().filter(|t| keep.contains(&t.key));
+            kept.fold((Ts::MAX, 0), |(a, b), t| (a.min(t.start), b.max(t.end.unwrap_or(t.start))))
+        });
+        for record in log_records(store, span) {
+            buf.clear();
+            frame::encode_raw(kind::LOG, &serde_json::to_vec(&record)?, &mut buf);
+            gz.write_all(&buf)?;
+        }
         buf.clear();
         frame::encode_raw(kind::ANNOTATIONS, &serde_json::to_vec(&annotations(store))?, &mut buf);
         gz.write_all(&buf)?;
         gz.finish()?.flush()?;
         Ok(keep.map_or(store.len(), HashSet::len))
     }
+}
+
+/// The device's log as session file records (type 20): what the reader knew in the first, then
+/// the lines (in `span` when given) in batches. None when the log was not read.
+fn log_records(store: &SessionStore, span: Option<(Ts, Ts)>) -> Vec<Value> {
+    let logs = store.logs();
+    let info = logs.info();
+    if logs.is_empty() && info.package.is_none() {
+        return Vec::new();
+    }
+    let mut processes: Vec<(u32, &str)> = logs.processes().collect();
+    processes.sort_unstable();
+    let mut out = vec![json!({
+        "t": "log",
+        "info": { "device": info.device, "package": info.package, "uid": info.uid, "processes": processes },
+        "lines": [],
+    })];
+    let mut lines = Vec::new();
+    for l in logs.iter_from(logs.first_id()) {
+        if span.is_some_and(|(a, b)| l.ts < a || l.ts > b) {
+            continue;
+        }
+        lines.push(json!([l.ts, l.wall_ms, l.pid, l.tid, l.uid, l.level.letter(), l.buffer, l.tag, l.message]));
+        if lines.len() == LOG_BATCH {
+            out.push(json!({ "t": "log", "lines": std::mem::take(&mut lines) }));
+        }
+    }
+    if !lines.is_empty() {
+        out.push(json!({ "t": "log", "lines": lines }));
+    }
+    out
+}
+
+/// A line of a log record, `[ts, wall_ms, pid, tid, uid, level, buffer, tag, message]`; `None`
+/// for one that is not (a file from someone else may hold anything).
+fn log_line(v: &Value) -> Option<LogLine> {
+    let a = v.as_array().filter(|a| a.len() == 9)?;
+    let num = |i: usize| a[i].as_u64();
+    let small = |i: usize| num(i).and_then(|n| u32::try_from(n).ok());
+    Some(LogLine {
+        ts: num(0)?,
+        wall_ms: a[1].as_i64()?,
+        pid: small(2)?,
+        tid: small(3)?,
+        uid: if a[4].is_null() { None } else { Some(small(4)?) },
+        level: Level::parse(a[5].as_str()?)?,
+        buffer: u8::try_from(num(6)?).ok()?,
+        tag: a[7].as_str()?.to_string(),
+        message: a[8].as_str()?.to_string(),
+    })
 }
 
 impl StreamSink for SessionLog {
@@ -466,6 +534,32 @@ pub fn read(mut file: impl Read, ids: &SourceIds) -> io::Result<Opened> {
                     }
                 }
             }
+            Frame::Other { kind: kind::LOG, payload } => {
+                let Ok(v) = serde_json::from_slice::<Value>(&payload) else { continue };
+                if let Some(info) = v.get("info").filter(|i| i.is_object()) {
+                    let text = |k: &str| info[k].as_str().map(str::to_string);
+                    let processes = info["processes"]
+                        .as_array()
+                        .map(|ps| {
+                            ps.iter()
+                                .filter_map(|p| Some((u32::try_from(p[0].as_u64()?).ok()?, p[1].as_str()?.to_string())))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    out.events.push(SessionEvent::LogInfo(Box::new(LogInfo {
+                        device: text("device"),
+                        package: text("package"),
+                        uid: info["uid"].as_u64().and_then(|u| u32::try_from(u).ok()),
+                        processes,
+                        status: None,
+                    })));
+                }
+                let lines: Vec<LogLine> =
+                    v["lines"].as_array().map(|ls| ls.iter().filter_map(log_line).collect()).unwrap_or_default();
+                if !lines.is_empty() {
+                    out.events.push(SessionEvent::Logs(lines));
+                }
+            }
             Frame::Other { .. } => {}
             device => {
                 let Some(n) = current.and_then(|c| normalizers.get_mut(&c)) else { continue };
@@ -607,6 +701,78 @@ mod tests {
         assert!(!opened.events.is_empty());
         assert!(!is_session_file(&dir.join("missing")));
         assert!(is_session_file(&cut));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn the_devices_log_goes_into_the_file_and_comes_back() {
+        let dir = scratch("log");
+        let device = DeviceRecord { label: "demo".into(), serial: None };
+        let log = SessionLog::temporary().unwrap();
+        let mut store = SessionStore::new();
+        let src = store.source_ids().next();
+        log.source(src, &device, &hello(7, 5), false);
+        request(&log, src, 1, 1);
+        let line = |ts: Ts, uid: Option<u32>, level: Level, tag: &str, message: &str| LogLine {
+            ts,
+            wall_ms: 1_790_000_000_000 + ts as i64,
+            pid: 7,
+            tid: 9,
+            uid,
+            level,
+            buffer: 0,
+            tag: tag.into(),
+            message: message.into(),
+        };
+        let lines = vec![
+            line(8, Some(10_234), Level::Debug, "OkHttp", "--> GET https://api.example.app/1"),
+            line(15, None, Level::Error, "AndroidRuntime", "FATAL EXCEPTION: main\n\tat a.B(B.kt:1) \"quoted\" ✓"),
+            line(90, Some(1000), Level::Warn, "ActivityManager", "after the request"),
+        ];
+        store.apply(SessionEvent::LogInfo(Box::new(LogInfo {
+            device: Some("demo".into()),
+            package: Some("com.example".into()),
+            uid: Some(10_234),
+            processes: vec![(7, "com.example".into())],
+            status: Some("reading the log of demo".into()),
+        })));
+        store.apply(SessionEvent::Logs(lines.clone()));
+        let path = dir.join("with-log.trafficpolice");
+        log.export(&store, &path, None).unwrap();
+        let back = store_of(&open(&path, &SourceIds::default()).unwrap());
+        let logs = back.logs();
+        let read: Vec<LogLine> = logs
+            .iter_from(logs.first_id())
+            .map(|l| LogLine {
+                ts: l.ts,
+                wall_ms: l.wall_ms,
+                pid: l.pid,
+                tid: l.tid,
+                uid: l.uid,
+                level: l.level,
+                buffer: l.buffer,
+                tag: l.tag.to_string(),
+                message: l.message.to_string(),
+            })
+            .collect();
+        assert_eq!(read, lines, "every field, the text as it was");
+        assert_eq!(
+            (logs.package(), logs.uid(), logs.process(7)),
+            (Some("com.example"), Some(10_234), Some("com.example"))
+        );
+        assert_eq!(logs.info().status, None, "a file's log is not being read");
+        // only some requests (from a store that has them): the lines from the first one's start
+        // to the last one's end
+        let keep: HashSet<TxnKey> = [TxnKey { source: src, txn: 1 }].into_iter().collect();
+        let path = dir.join("some.trafficpolice");
+        log.export(&back, &path, Some(&keep)).unwrap();
+        let some = store_of(&open(&path, &SourceIds::default()).unwrap());
+        let tags: Vec<String> = some.logs().iter_from(0).map(|l| l.tag.to_string()).collect();
+        assert_eq!(tags, ["AndroidRuntime"], "the line at 15, within the request's 11..31");
+        // a log line that is not one is left out; the rest of its batch stays
+        assert!(log_line(&json!([1, 2, 3])).is_none());
+        assert!(log_line(&json!([1, 2, 3, 4, null, "loud", 0, "t", "m"])).is_none());
+        assert!(log_line(&json!([1, 2, 3, 4, null, "W", 0, "t", "m"])).is_some());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

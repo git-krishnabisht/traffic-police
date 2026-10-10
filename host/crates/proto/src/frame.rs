@@ -28,6 +28,8 @@ pub mod kind {
     pub const SOURCE_END: u8 = 18;
     /// Session file: host annotations (pins, markers).
     pub const ANNOTATIONS: u8 = 19;
+    /// Session file: the device's log (Logdawg), in batches of lines.
+    pub const LOG: u8 = 20;
 }
 
 /// Which body a chunk or `body_end` belongs to.

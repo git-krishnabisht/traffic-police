@@ -265,6 +265,11 @@ impl LogStore {
         self.info.package.as_deref()
     }
 
+    /// Every process name the reader learned, by pid.
+    pub fn processes(&self) -> impl Iterator<Item = (u32, &str)> {
+        self.processes.iter().map(|(pid, name)| (*pid, &**name))
+    }
+
     /// A process's name, once the reader learned it.
     pub fn process(&self, pid: u32) -> Option<&str> {
         self.processes.get(&pid).map(|n| &**n)
