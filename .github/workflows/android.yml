@@ -103,16 +103,32 @@ jobs:
           api-level: ${{ matrix.api }}
           arch: x86_64
           target: google_apis
+          # 4 GB rather than the image's default: on API 36 adb lost the emulator in the middle
+          # of the attach test in about half the runs (2026-10-04 to 10-10), and memory is the
+          # first suspect
+          ram-size: 4096M
           disable-animations: true
           working-directory: host
           # the library's device tests (am instrument exits 0 either way: its report says), then
           # the end-to-end tests one at a time, since both drive the same emulator. A failure in
           # the first does not skip the second (until 2026-10-09 it did): the last line fails the
-          # job for it. Each line runs on its own, so the mark is a file.
+          # job for it. Each line runs on its own, so the marks are files. After a failed
+          # end-to-end test the device's logs are kept (all of logcat's buffers, the kernel's
+          # log, tombstones, the adb server's own log) for the artifact below; the device may be
+          # coming back from a reconnect, so it is waited for first.
           script: |
             adb install -r -t ../android/capture/build/outputs/apk/androidTest/debug/capture-debug-androidTest.apk
             adb shell am instrument -w io.trafficpolice.test/androidx.test.runner.AndroidJUnitRunner > instrumented.txt; cat instrumented.txt; grep -q "^OK (" instrumented.txt || touch instrumented.failed
             adb install -r ../android/sample-app/build/outputs/apk/debug/sample-app-debug.apk
             adb install -r ../android/sample-app/build/outputs/apk/plain/sample-app-plain.apk
-            TP_E2E_SERIAL=emulator-5554 cargo test --locked -p traffic-police-backends --test device_e2e -- --ignored --nocapture --test-threads=1
-            if [ -e instrumented.failed ]; then echo "::error::the library's device tests failed (their report is above)"; exit 1; fi
+            TP_E2E_SERIAL=emulator-5554 cargo test --locked -p traffic-police-backends --test device_e2e -- --ignored --nocapture --test-threads=1 || touch e2e.failed
+            if [ -e e2e.failed ]; then mkdir -p device-logs; adb devices -l > device-logs/devices.txt 2>&1; timeout 120 adb -s emulator-5554 wait-for-device; adb -s emulator-5554 logcat -d -b all -v threadtime > device-logs/logcat.txt 2>&1; adb -s emulator-5554 shell su 0 dmesg > device-logs/dmesg.txt 2>&1; adb -s emulator-5554 shell su 0 sh -c 'ls -l /data/tombstones; for t in /data/tombstones/tombstone_*; do echo "== $t"; head -n 200 "$t"; done' > device-logs/tombstones.txt 2>&1; adb -s emulator-5554 shell getprop > device-logs/getprop.txt 2>&1; cp "/tmp/adb.$(id -u).log" device-logs/adb-server.log 2>/dev/null; true; fi
+            if [ -e instrumented.failed ]; then echo "::error::the library's device tests failed (their report is above)"; fi; if [ -e e2e.failed ]; then echo "::error::the end-to-end tests failed (their report is above; the device's logs are in the device-logs artifact)"; fi; if [ -e instrumented.failed ] || [ -e e2e.failed ]; then exit 1; fi
+      - name: The device's logs, when the end-to-end tests failed
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: device-logs-api${{ matrix.api }}
+          path: host/device-logs/
+          if-no-files-found: ignore
+          retention-days: 14
