@@ -51,4 +51,4 @@ expression: "frame(40.0, LARGE, \"4/<C-u>level:w<Enter>\")"
 │                                                                                                                                                                                                      │
 │                                                                                                                                                                                                      │
 ╰─ filter level:w ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── 9 of 165 ─╯
- ↑↓ move   / filter   G follow   Enter open   y copy   F freeze   x clear   1 requests   ? help                                                                              ⚠ studio inspector present
+ ↑↓ move   / filter   G follow   Enter open   y copy   Space pause   F freeze   x clear   1 requests   ? help                                                                ⚠ studio inspector present

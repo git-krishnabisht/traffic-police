@@ -1628,3 +1628,48 @@ fn four_focuses_the_log_from_any_box() {
         assert!(!app.logdawg.follow, "{keys}: k moved the log's cursor");
     }
 }
+
+/// `Space` in view 4 pauses the log, not the network capture: the border says so, no new lines
+/// are taken (the demo has no reader to stop), and `Space` goes on. With a reader, the reader is
+/// told, and lines it read before the pause still count.
+#[test]
+fn space_pauses_the_log_and_goes_on() {
+    use traffic_police_core::SessionEvent;
+    use traffic_police_core::logdawg::{Level, LogLine};
+    let mut app = app_at(12.0);
+    press(&mut app, MEDIUM, "4");
+    let ts = app.now();
+    let line = |msg: &str| LogLine {
+        ts,
+        wall_ms: 0,
+        pid: 4312,
+        tid: 4312,
+        uid: Some(10_234),
+        level: Level::Info,
+        buffer: 0,
+        tag: "Test".into(),
+        message: msg.into(),
+    };
+    let text = press(&mut app, MEDIUM, " ");
+    assert!(app.log_paused && app.recording, "the log paused, the network capture not");
+    assert!(text.contains("⏸ paused") && text.contains("go on"), "{text}");
+    let before = app.view_store().logs().len();
+    app.ingest(vec![SessionEvent::Logs(vec![line("while paused")])]);
+    assert_eq!(app.view_store().logs().len(), before, "not taken while paused");
+    let text = press(&mut app, MEDIUM, " ");
+    assert!(!app.log_paused && !text.contains("⏸ paused"), "{text}");
+    app.ingest(vec![SessionEvent::Logs(vec![line("after")])]);
+    assert_eq!(app.view_store().logs().len(), before + 1);
+    // a reader is told, and what it read before the pause still comes in
+    let (pause, paused) = tokio::sync::watch::channel(false);
+    app.log_pause = Some(pause);
+    press(&mut app, MEDIUM, " ");
+    assert!(*paused.borrow());
+    app.ingest(vec![SessionEvent::Logs(vec![line("read before the pause")])]);
+    assert_eq!(app.view_store().logs().len(), before + 2);
+    press(&mut app, MEDIUM, " ");
+    assert!(!*paused.borrow());
+    // in the requests' view Space still pauses the network capture
+    press(&mut app, MEDIUM, "1 ");
+    assert!(!app.recording && !app.log_paused);
+}

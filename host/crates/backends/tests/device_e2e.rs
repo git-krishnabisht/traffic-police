@@ -873,7 +873,7 @@ async fn plain_app_attach_end_to_end() {
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "reads the device's log and starts the sample app: set TP_E2E_SERIAL"]
 async fn logdawg_reads_the_devices_log() {
-    use traffic_police_backends::{LogdawgTarget, run_logdawg};
+    use traffic_police_backends::{LogdawgControl, LogdawgTarget, run_logdawg};
     use traffic_police_core::logdawg::Level;
     use traffic_police_core::logdawg::filter::{Context, LogFilter};
 
@@ -898,7 +898,7 @@ async fn logdawg_reads_the_devices_log() {
         history: 100,
         ..LogdawgTarget::default()
     };
-    let task = tokio::spawn(run_logdawg(adb.clone(), target, event_tx));
+    let task = tokio::spawn(run_logdawg(adb.clone(), target, LogdawgControl::default(), event_tx));
     let mut session = Session { store: SessionStore::new(), events };
     session.until("the app's uid", Duration::from_secs(30), |s| s.logs().uid().is_some()).await;
 

@@ -51,4 +51,4 @@ expression: "frame(40.0, LARGE, \"4\")"
 │ 00:39.500      4312-4372   OkHttp                  com.example.shop          D  --> GET http://localhost:8080/api/v1/notifications                                                                   │
 │ 00:39.641      4312-4383   OkHttp                  com.example.shop          D  --> POST https://telemetry.example.com/v1/events                                                                     │
 ╰─ filter package:mine ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── 126 of 165 ─╯
- ↑↓ move   / filter   G follow   Enter open   y copy   F freeze   x clear   1 requests   ? help                                                                              ⚠ studio inspector present
+ ↑↓ move   / filter   G follow   Enter open   y copy   Space pause   F freeze   x clear   1 requests   ? help                                                                ⚠ studio inspector present

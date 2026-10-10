@@ -788,7 +788,9 @@ fn draw_views(app: &mut App, r: Rect, buf: &mut Buffer) {
         if let Some(d) = &logs.info().device {
             right.push(Span::styled(d.clone(), t.dim()));
         }
-        if app.logdawg.follow && !app.logdawg.is_empty() {
+        if app.log_paused {
+            right.push(Span::styled(if right.is_empty() { "⏸ paused" } else { " · ⏸ paused" }, t.warn()));
+        } else if app.logdawg.follow && !app.logdawg.is_empty() {
             right.push(Span::styled(if right.is_empty() { "following" } else { " · following" }, t.dim()));
         }
         let used = at.last().map_or(r.x, |l| l.x + l.width);
@@ -1728,6 +1730,7 @@ fn hints(app: &App) -> Vec<(&'static [Action], &'static str)> {
             (&[A::Bottom], "follow"),
             (&[A::Activate], "open"),
             (&[A::Copy], "copy"),
+            (&[A::Pause], if app.log_paused { "go on" } else { "pause" }),
             (&[A::Freeze], "freeze"),
             (&[A::Clear], "clear"),
             (&[A::ViewConnections], "requests"),

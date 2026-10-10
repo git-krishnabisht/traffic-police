@@ -1,12 +1,12 @@
 //! Logdawg's reader against the fake adb (ARCHITECTURE.md §5.17): the app's uid, the lines from
 //! before and after it starts, process names, the clock mapping, a stream cut and resumed
-//! without repeats, a device that is not there yet, and the UI going.
+//! without repeats, a pause, a device that is not there yet, and the UI going.
 
 use std::time::Duration;
 
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use traffic_police_adb::logcat::Record;
-use traffic_police_backends::{LogdawgTarget, run_logdawg};
+use traffic_police_backends::{LogdawgControl, LogdawgTarget, run_logdawg};
 use traffic_police_core::SessionEvent;
 use traffic_police_core::logdawg::{Level, LogInfo, LogLine};
 use traffic_police_fakeadb::FakeAdb;
@@ -67,7 +67,7 @@ async fn lines_before_and_after_the_start_with_the_apps_uid_and_process_names() 
         fake.logcat(SERIAL, record(1_790_000_001 + i, 4312, 10_234, 3, "OkHttp", &format!("history {i}")));
     }
     let (tx, mut rx) = mpsc::channel(64);
-    let task = tokio::spawn(run_logdawg(fake.client(), target(2), tx));
+    let task = tokio::spawn(run_logdawg(fake.client(), target(2), LogdawgControl::default(), tx));
     let mut seen = Seen { lines: Vec::new(), infos: Vec::new() };
     until(&mut rx, &mut seen, |s| s.lines.len() >= 2).await;
     // the latest two of the history, then what comes
@@ -100,7 +100,7 @@ async fn a_cut_stream_goes_on_from_its_last_line_without_repeats() {
     fake.logcat(SERIAL, record(1_790_000_001, 4312, 10_234, 4, "A", "one"));
     fake.logcat(SERIAL, record(1_790_000_002, 4312, 10_234, 4, "A", "two"));
     let (tx, mut rx) = mpsc::channel(64);
-    let _task = tokio::spawn(run_logdawg(fake.client(), target(100), tx));
+    let _task = tokio::spawn(run_logdawg(fake.client(), target(100), LogdawgControl::default(), tx));
     let mut seen = Seen { lines: Vec::new(), infos: Vec::new() };
     until(&mut rx, &mut seen, |s| s.lines.len() >= 2).await;
     fake.break_logcat(SERIAL);
@@ -119,7 +119,7 @@ async fn a_cut_stream_goes_on_from_its_last_line_without_repeats() {
 async fn it_waits_for_the_device_and_says_so() {
     let fake = FakeAdb::start().await;
     let (tx, mut rx) = mpsc::channel(64);
-    let _task = tokio::spawn(run_logdawg(fake.client(), target(10), tx));
+    let _task = tokio::spawn(run_logdawg(fake.client(), target(10), LogdawgControl::default(), tx));
     let mut seen = Seen { lines: Vec::new(), infos: Vec::new() };
     until(&mut rx, &mut seen, |s| s.infos.iter().any(|i| i.status.as_deref().is_some_and(|t| t.contains("waiting"))))
         .await;
@@ -129,4 +129,33 @@ async fn it_waits_for_the_device_and_says_so() {
     assert_eq!(seen.lines[0].message, "here now");
     // not installed: no uid, and the view falls back to the app's processes
     assert!(seen.infos.iter().all(|i| i.uid.is_none()));
+}
+
+#[tokio::test]
+async fn a_pause_reads_nothing_and_going_on_brings_what_came_meanwhile() {
+    let fake = FakeAdb::start().await;
+    fake.add_device(SERIAL, 35);
+    fake.install(SERIAL, PACKAGE, 10_234);
+    fake.logcat(SERIAL, record(1_790_000_001, 4312, 10_234, 4, "A", "before"));
+    let (pause, paused) = watch::channel(false);
+    let (tx, mut rx) = mpsc::channel(64);
+    let control = LogdawgControl { paused: Some(paused) };
+    let _task = tokio::spawn(run_logdawg(fake.client(), target(100), control, tx));
+    let mut seen = Seen { lines: Vec::new(), infos: Vec::new() };
+    until(&mut rx, &mut seen, |s| !s.lines.is_empty()).await;
+    pause.send(true).unwrap();
+    until(&mut rx, &mut seen, |s| s.infos.iter().any(|i| i.status.as_deref().is_some_and(|t| t.starts_with("paused"))))
+        .await;
+    // logged while paused: nothing is read
+    fake.logcat(SERIAL, record(1_790_000_002, 4312, 10_234, 4, "A", "while paused"));
+    assert!(tokio::time::timeout(Duration::from_millis(500), rx.recv()).await.is_err(), "nothing read while paused");
+    pause.send(false).unwrap();
+    until(&mut rx, &mut seen, |s| s.lines.len() >= 2).await;
+    fake.logcat(SERIAL, record(1_790_000_003, 4312, 10_234, 4, "A", "after"));
+    until(&mut rx, &mut seen, |s| s.lines.len() >= 3).await;
+    let messages: Vec<&str> = seen.lines.iter().map(|l| l.message.as_str()).collect();
+    assert_eq!(messages, ["before", "while paused", "after"], "what came meanwhile, once");
+    let starts: Vec<String> = fake.commands(SERIAL).into_iter().filter(|c| c.starts_with("logcat ")).collect();
+    assert_eq!(starts.len(), 2, "{starts:?}");
+    assert!(starts[1].ends_with("-T 1790000001.250"), "from the last line's time: {starts:?}");
 }

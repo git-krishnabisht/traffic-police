@@ -6,13 +6,14 @@
 //! 30 ms, or 2000 lines) on the session's event channel; each line's wall clock goes onto the
 //! device's boot clock, the network timeline's, through an offset read from `/proc/uptime` and
 //! `date` (and again every minute). After a break (the device gone, adb restarted) the stream
-//! starts again from the last line's time, without repeating it.
+//! starts again from the last line's time, without repeating it; a pause (`Space` in view 4)
+//! closes the stream, and going on is such a break.
 
 use std::collections::HashSet;
 use std::time::Duration;
 
 use tokio::io::AsyncReadExt;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use traffic_police_adb::logcat::{self, Parser, Record, Start};
 use traffic_police_adb::{Adb, Device};
 use traffic_police_core::SessionEvent;
@@ -44,6 +45,33 @@ impl Default for LogdawgTarget {
     }
 }
 
+/// What the reader is told while it runs.
+#[derive(Debug, Default)]
+pub struct LogdawgControl {
+    /// From the UI: while true the log is not read. When it turns false the reader goes on after
+    /// the last line it read, so what the device logged meanwhile comes too, while it has it.
+    pub paused: Option<watch::Receiver<bool>>,
+}
+
+impl LogdawgControl {
+    fn paused(&self) -> bool {
+        self.paused.as_ref().is_some_and(|p| *p.borrow())
+    }
+
+    /// A change the reader acts on; none comes once the UI is gone.
+    async fn changed(&mut self) {
+        changed(&mut self.paused).await
+    }
+}
+
+async fn changed<T>(rx: &mut Option<watch::Receiver<T>>) {
+    let Some(r) = rx.as_mut() else { return std::future::pending().await };
+    if r.changed().await.is_err() {
+        *rx = None;
+        std::future::pending::<()>().await
+    }
+}
+
 const FLUSH: Duration = Duration::from_millis(30);
 const BATCH: usize = 2000;
 const NAMES: Duration = Duration::from_secs(1);
@@ -54,12 +82,19 @@ const RETRY: Duration = Duration::from_secs(1);
 enum Ended {
     /// The UI went: stop.
     Closed,
+    /// The UI paused the log.
+    Paused,
     /// The device or the stream went: try again.
     Lost(String),
 }
 
 /// Reads the device's log until the event receiver goes.
-pub async fn run_logdawg(adb: Adb, target: LogdawgTarget, events: mpsc::Sender<Vec<SessionEvent>>) {
+pub async fn run_logdawg(
+    adb: Adb,
+    target: LogdawgTarget,
+    mut control: LogdawgControl,
+    events: mpsc::Sender<Vec<SessionEvent>>,
+) {
     let mut devices = adb.watch_devices();
     // the last line read, to start again after it
     let mut last: Option<i128> = None;
@@ -67,6 +102,14 @@ pub async fn run_logdawg(adb: Adb, target: LogdawgTarget, events: mpsc::Sender<V
     loop {
         if events.is_closed() {
             return;
+        }
+        if control.paused() {
+            if !status(&events, &mut said, "paused (Space goes on)".into()).await {
+                return;
+            }
+            // the UI may go meanwhile: look now and then
+            let _ = tokio::time::timeout(RETRY * 2, control.changed()).await;
+            continue;
         }
         let snapshot = devices.borrow_and_update().clone();
         let device = match choose_device(&snapshot, target.serial.as_deref()) {
@@ -79,8 +122,9 @@ pub async fn run_logdawg(adb: Adb, target: LogdawgTarget, events: mpsc::Sender<V
                 continue;
             }
         };
-        match read(&adb, &device, &target, &events, &mut last, &mut said).await {
+        match read(&adb, &device, &target, &events, &mut last, &mut said, &mut control).await {
             Ended::Closed => return,
+            Ended::Paused => {}
             Ended::Lost(why) => {
                 tracing::info!(device = %device.serial, "the log stream ended: {why}");
                 if !status(&events, &mut said, format!("the log stopped ({why}); trying again…")).await {
@@ -158,6 +202,7 @@ async fn read(
     events: &mpsc::Sender<Vec<SessionEvent>>,
     last: &mut Option<i128>,
     said: &mut String,
+    control: &mut LogdawgControl,
 ) -> Ended {
     let id = device.transport_id;
     let mut offset = match clock_offset(adb, device).await {
@@ -256,6 +301,15 @@ async fn read(
                 // the wall clock can be set (NTP, the user): the next lines use the new offset
                 if let Ok(o) = clock_offset(adb, device).await {
                     offset = o;
+                }
+            }
+            _ = control.changed() => {
+                if control.paused() {
+                    // what was read goes to the UI first; the stream closes when it is dropped
+                    if !batch.is_empty() && events.send(vec![SessionEvent::Logs(std::mem::take(&mut batch))]).await.is_err() {
+                        return Ended::Closed;
+                    }
+                    return Ended::Paused;
                 }
             }
         }

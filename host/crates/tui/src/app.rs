@@ -460,6 +460,11 @@ pub struct App {
     pub recording: bool,
     pub caps: Capabilities,
     pub commands: Option<mpsc::UnboundedSender<BackendCommand>>,
+    /// Logdawg's reader, which stops while this says so (`Space` in view 4); `None` when no
+    /// reader runs (the demo writes its log itself).
+    pub log_pause: Option<tokio::sync::watch::Sender<bool>>,
+    /// The log is paused: no new lines are read.
+    pub log_paused: bool,
     pub hits: HitMap,
     pub should_quit: bool,
     /// Fixed "now" for tests and single-frame renders.
@@ -547,6 +552,8 @@ impl App {
             bars: Vec::new(),
             bar_cursor: 0,
             recording: true,
+            log_pause: None,
+            log_paused: false,
             caps: Capabilities::default(),
             commands: None,
             hits: HitMap::default(),
@@ -576,7 +583,12 @@ impl App {
     pub fn ingest(&mut self, batch: Vec<SessionEvent>) {
         let before = self.store.latest();
         let n = batch.len() as u64;
+        // a paused log without a reader to stop (the demo writes its own): its lines are not taken
+        let drop_logs = self.log_paused && self.log_pause.is_none();
         for e in batch {
+            if drop_logs && matches!(e, SessionEvent::Logs(_)) {
+                continue;
+            }
             self.store.apply(e);
         }
         if let Some(f) = &mut self.frozen {
@@ -955,6 +967,24 @@ impl App {
         self.flash(label);
     }
 
+    /// `Space` in view 4: the log stops being read, or goes on after its last line, so what the
+    /// device logged meanwhile comes in too (as Android Studio's pause does).
+    pub(crate) fn toggle_log_pause(&mut self) {
+        if !self.caps.live {
+            self.flash("this session is not live: its log does not change");
+            return;
+        }
+        self.log_paused = !self.log_paused;
+        if let Some(tx) = &self.log_pause {
+            let _ = tx.send(self.log_paused);
+        }
+        self.flash(match (self.log_paused, self.log_pause.is_some()) {
+            (true, _) => "log paused: no new lines are read (Space goes on)",
+            (false, true) => "the log goes on, with what the device logged meanwhile",
+            (false, false) => "the log goes on",
+        });
+    }
+
     fn clear_session(&mut self) {
         let ids = self.store.source_ids();
         let sources: Vec<_> = self.store.sources().cloned().collect();
@@ -1298,6 +1328,7 @@ impl App {
                     self.overlay = Overlay::ConfirmClearLogs;
                     return;
                 }
+                Action::Pause => return self.toggle_log_pause(),
                 Action::Copy if list => return self.logdawg_copy(),
                 Action::Collapse
                 | Action::Sort

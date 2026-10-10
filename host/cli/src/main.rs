@@ -680,10 +680,14 @@ async fn run_device_mode(
     let log = session_log();
     app.session_log = log.clone();
     let sink = log.map(|l| l as std::sync::Arc<dyn traffic_police_core::session::StreamSink>);
-    // Logdawg: the device's log, read beside the app's capture, for the UI only
-    let reader = settings
-        .logdawg(target.serial.clone(), Some(target.package.clone()))
-        .map(|t| tokio::spawn(traffic_police_backends::run_logdawg(adb.clone(), t, event_tx.clone())));
+    // Logdawg: the device's log, read beside the app's capture, for the UI only; `Space` in
+    // view 4 pauses it
+    let reader = settings.logdawg(target.serial.clone(), Some(target.package.clone())).map(|t| {
+        let (pause, paused) = watch::channel(false);
+        app.log_pause = Some(pause);
+        let control = traffic_police_backends::LogdawgControl { paused: Some(paused) };
+        tokio::spawn(traffic_police_backends::run_logdawg(adb.clone(), t, control, event_tx.clone()))
+    });
     let backend = tokio::spawn(run_device(adb, target, ids, event_tx, command_rx, status_tx, sink));
     let ui = catch_unwind(terminal::run(app, event_rx, RunOptions { detect_images, status: Some(status_rx) })).await;
     if let Some(r) = reader {

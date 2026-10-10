@@ -180,7 +180,7 @@ pub const ACTIONS: &[Info] = &[
     info!(ViewThreads, "view-threads", Views, "threads", "Thread View", ["2"]),
     info!(ViewRules, "view-rules", Views, "rules", "Rules", ["3"]),
     info!(ViewLogdawg, "view-logdawg", Views, "logdawg", "Logdawg: the device's log (logcat)", ["4"]),
-    info!(Pause, "pause", Live, "pause", "Pause or resume recording on the device", ["space"]),
+    info!(Pause, "pause", Live, "pause", "Pause or resume recording on the device (in Logdawg, the log)", ["space"]),
     info!(Freeze, "freeze", Live, "freeze", "Freeze the view (capture continues)", ["F"]),
     info!(Live, "live", Live, "live", "Back to live", ["L"]),
     info!(ZoomIn, "zoom-in", Live, "zoom in", "Zoom in (shorter time window)", ["+", "="]),
