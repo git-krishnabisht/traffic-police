@@ -1610,3 +1610,21 @@ fn logdawg_follows_new_lines_freezes_and_takes_the_mouse() {
     app.handle_mouse(mouse(MouseEventKind::ScrollUp, r.x + 3, r.y));
     assert!(app.logdawg.top < top, "the wheel moved the view up");
 }
+
+/// `4` puts the focus on the log, also from a request's tabs, its body box or the graph, so the
+/// keys move the log and not a box that is not shown.
+#[test]
+fn four_focuses_the_log_from_any_box() {
+    use traffic_police_tui::app::View;
+    for (keys, from) in [("<Enter>", Focus::Detail), ("<Enter><S-Tab>", Focus::Preview), ("<Enter><Tab>", Focus::Graph)]
+    {
+        let mut app = app_at(40.0);
+        press(&mut app, MEDIUM, keys);
+        assert_eq!(app.focus, from, "{keys}");
+        let text = press(&mut app, MEDIUM, "4");
+        assert_eq!((app.view, app.focus), (View::Logdawg, Focus::List), "{keys}");
+        assert!(text.contains("/ filter   G follow"), "{keys}: the log's keys in the footer\n{text}");
+        press(&mut app, MEDIUM, "k");
+        assert!(!app.logdawg.follow, "{keys}: k moved the log's cursor");
+    }
+}

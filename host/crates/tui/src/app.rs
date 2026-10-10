@@ -1626,7 +1626,8 @@ impl App {
 
     pub(crate) fn set_view(&mut self, v: View) {
         self.view = v;
-        if self.focus == Focus::Graph {
+        // the log takes the whole width, so the request's boxes (and their focus) are not shown
+        if self.focus == Focus::Graph || v == View::Logdawg {
             self.focus = Focus::List;
         }
     }
