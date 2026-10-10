@@ -13,6 +13,7 @@ pub mod filter;
 pub mod fmt;
 pub mod import;
 pub mod jq;
+pub mod logdawg;
 pub mod model;
 pub mod normalize;
 pub mod phases;

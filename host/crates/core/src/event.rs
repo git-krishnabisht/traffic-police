@@ -97,6 +97,10 @@ pub enum SessionEvent {
         source: SourceId,
         ack: msg::RulesAck,
     },
+    /// Lines of the device's log (Logdawg), in the order the device wrote them.
+    Logs(Vec<crate::logdawg::LogLine>),
+    /// What the log's reader learned: the app's uid, process names, what it is doing.
+    LogInfo(Box<crate::logdawg::LogInfo>),
     /// Host-side markers (pause, resume, notes).
     Marker {
         source: Option<SourceId>,

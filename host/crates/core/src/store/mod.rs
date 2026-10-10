@@ -87,6 +87,9 @@ pub struct SessionStore {
     rules_acks: HashMap<SourceId, traffic_police_proto::msg::RulesAck>,
     stats: Stats,
     generation: u64,
+    /// The device's log (Logdawg): its own change count, so log lines do not make the request
+    /// list look again.
+    logs: crate::logdawg::LogStore,
 }
 
 /// Approximate size of a header block on the wire (for the captured-traffic series).
@@ -262,9 +265,39 @@ impl SessionStore {
         }
     }
 
+    /// The device's log.
+    pub fn logs(&self) -> &crate::logdawg::LogStore {
+        &self.logs
+    }
+
+    pub fn logs_mut(&mut self) -> &mut crate::logdawg::LogStore {
+        &mut self.logs
+    }
+
+    pub fn set_logs(&mut self, logs: crate::logdawg::LogStore) {
+        self.logs = logs;
+    }
+
     pub fn apply(&mut self, event: SessionEvent) {
+        match event {
+            // the log's lines move the clock (they are device time that has passed) but not the
+            // session's start, and leave the requests' change count alone
+            SessionEvent::Logs(lines) => {
+                for l in lines {
+                    self.latest = self.latest.max(l.ts);
+                    self.logs.push(l);
+                }
+            }
+            SessionEvent::LogInfo(info) => self.logs.apply_info(*info),
+            other => self.apply_network(other),
+        }
+    }
+
+    fn apply_network(&mut self, event: SessionEvent) {
         self.generation += 1;
         match event {
+            // `apply` gives these to the log
+            SessionEvent::Logs(_) | SessionEvent::LogInfo(_) => {}
             SessionEvent::SourceUp(info) => {
                 self.see(info.started);
                 // the device's clock at the handshake is device time that has certainly passed
