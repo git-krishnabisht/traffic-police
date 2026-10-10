@@ -895,7 +895,7 @@ async fn logdawg_reads_the_devices_log() {
     let target = LogdawgTarget {
         serial: Some(serial.clone()),
         package: Some(PACKAGE.into()),
-        history: 100,
+        history: Some(100),
         ..LogdawgTarget::default()
     };
     let task = tokio::spawn(run_logdawg(adb.clone(), target, LogdawgControl::default(), event_tx));

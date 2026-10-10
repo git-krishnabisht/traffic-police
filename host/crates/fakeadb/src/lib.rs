@@ -547,21 +547,23 @@ async fn device_service(inner: &Arc<Inner>, mut s: TcpStream, serial: &str, serv
     }
 }
 
-/// `exec:logcat -B … -T <count | sssss.mmm>`: the lines of the device's log from there, then each
-/// new one, until the device goes offline, its streams are cut, or the client closes.
+/// `exec:logcat -B … [-T <count | sssss.mmm>]`: the lines of the device's log from there (all it
+/// has without `-T`), then each new one, until the device goes offline, its streams are cut, or
+/// the client closes.
 async fn serve_logcat(inner: &Arc<Inner>, mut s: TcpStream, serial: &str, command: &str) {
-    let start = command.split_whitespace().skip_while(|w| *w != "-T").nth(1).unwrap_or("1").to_string();
+    let start = command.split_whitespace().skip_while(|w| *w != "-T").nth(1).map(str::to_string);
     let found = {
         let mut st = inner.state.lock().unwrap();
         st.devices.iter_mut().find(|d| d.serial == serial).map(|d| {
             d.commands.push(command.to_string());
-            let from = match start.split_once('.') {
-                Some((sec, ms)) => {
+            let from = match start.as_deref().map(|t| (t, t.split_once('.'))) {
+                None => 0,
+                Some((_, Some((sec, ms)))) => {
                     let at =
                         sec.parse::<i128>().unwrap_or(0) * 1_000_000_000 + ms.parse::<i128>().unwrap_or(0) * 1_000_000;
                     d.records.iter().position(|r| r.wall_ns() >= at).unwrap_or(d.records.len())
                 }
-                None => d.records.len().saturating_sub(start.parse().unwrap_or(1)),
+                Some((count, None)) => d.records.len().saturating_sub(count.parse().unwrap_or(1)),
             };
             (from, d.log_epoch)
         })

@@ -138,8 +138,9 @@ pub fn encode(r: &Record) -> Vec<u8> {
 }
 
 /// The `logcat` arguments for buffers by name (`main`, `system`, `crash`, `radio`), reading from
-/// `start` on: a count of the latest entries, or a wall-clock time (`seconds.millis`) to resume
-/// after a gap without repeating what was read.
+/// `start` on: everything the device still has (as Android Studio reads it), a count of the
+/// latest entries, or a wall-clock time (`seconds.millis`) to resume after a gap without
+/// repeating what was read.
 pub fn command(buffers: &[String], start: Start) -> String {
     let buffers: Vec<&str> = buffers
         .iter()
@@ -147,16 +148,18 @@ pub fn command(buffers: &[String], start: Start) -> String {
         .filter(|b| matches!(*b, "main" | "system" | "crash" | "radio" | "kernel"))
         .collect();
     let buffers = if buffers.is_empty() { "main,system,crash".to_string() } else { buffers.join(",") };
-    let start = match start {
-        Start::Latest(n) => n.max(1).to_string(),
-        Start::Since { sec, millis } => format!("{sec}.{millis:03}"),
-    };
-    format!("logcat -B -b {buffers} -T {start}")
+    match start {
+        Start::All => format!("logcat -B -b {buffers}"),
+        Start::Latest(n) => format!("logcat -B -b {buffers} -T {}", n.max(1)),
+        Start::Since { sec, millis } => format!("logcat -B -b {buffers} -T {sec}.{millis:03}"),
+    }
 }
 
 /// Where a stream of the log starts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Start {
+    /// Everything the device still has, then what comes.
+    All,
     /// The latest `n` entries, then what comes.
     Latest(u32),
     /// From this wall-clock time on (logcat's `-T sssss.mmm`).
@@ -262,6 +265,7 @@ mod tests {
     fn the_command_names_buffers_and_where_to_start() {
         let b = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
         assert_eq!(command(&b(&["main", "crash"]), Start::Latest(5000)), "logcat -B -b main,crash -T 5000");
+        assert_eq!(command(&b(&[]), Start::All), "logcat -B -b main,system,crash");
         assert_eq!(
             command(&b(&["events", "nonsense"]), Start::Since { sec: 1_790_000_000, millis: 7 }),
             "logcat -B -b main,system,crash -T 1790000000.007"

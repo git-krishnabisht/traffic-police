@@ -30,8 +30,9 @@ pub struct LogdawgTarget {
     pub package: Option<String>,
     /// logcat's buffers: main, system, crash, radio, kernel.
     pub buffers: Vec<String>,
-    /// Lines from before the session started.
-    pub history: u32,
+    /// Lines from before the session started: everything the device still has (`None`, as
+    /// Android Studio reads it), or at most this many (0: none).
+    pub history: Option<u32>,
 }
 
 impl Default for LogdawgTarget {
@@ -40,7 +41,7 @@ impl Default for LogdawgTarget {
             serial: None,
             package: None,
             buffers: vec!["main".into(), "system".into(), "crash".into()],
-            history: 5000,
+            history: None,
         }
     }
 }
@@ -151,22 +152,31 @@ async fn status(events: &mpsc::Sender<Vec<SessionEvent>>, said: &mut String, tex
 /// a literal N): then the shell waits for the next second to begin and reads the uptime right
 /// away, which puts the wall clock on that second exactly (Android 8 lines were up to a second
 /// off on the timeline before; found on an API 26 emulator).
-async fn clock_offset(adb: &Adb, device: &Device) -> Result<i128, String> {
+async fn clock_offset(adb: &Adb, device: &Device) -> Result<DeviceClock, String> {
     let shell = |cmd: &'static str| async move {
         adb.shell(device.transport_id, cmd).await.map(|o| o.stdout_text()).map_err(|e| e.to_string())
     };
     match offset_from(&shell("cat /proc/uptime; date +%s%N").await?)? {
-        Some(offset) => Ok(offset),
+        Some(clock) => Ok(clock),
         None => offset_from(&shell(TICK).await?)?.ok_or_else(|| "no wall clock".to_string()),
     }
+}
+
+/// The device's clocks, read at one moment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct DeviceClock {
+    /// Wall clock minus boot clock, in nanoseconds.
+    offset: i128,
+    /// The wall clock then.
+    wall: i128,
 }
 
 /// Waits for the device's second to change, then the uptime and that second.
 const TICK: &str = "a=$(date +%s); while [ \"$(date +%s)\" = \"$a\" ]; do :; done; cat /proc/uptime; date +%s";
 
-/// The offset from `/proc/uptime` and a `date` line: `None` when the date has no nanoseconds
+/// The clocks from `/proc/uptime` and a `date` line: `None` when the date has no nanoseconds
 /// (`1791639342N`). A line of whole seconds (from [`TICK`]) is taken as the second's start.
-fn offset_from(text: &str) -> Result<Option<i128>, String> {
+fn offset_from(text: &str) -> Result<Option<DeviceClock>, String> {
     let mut lines = text.lines().map(str::trim).filter(|l| !l.is_empty());
     let uptime: f64 =
         lines.next().and_then(|l| l.split_whitespace().next()).and_then(|s| s.parse().ok()).ok_or("no /proc/uptime")?;
@@ -177,7 +187,12 @@ fn offset_from(text: &str) -> Result<Option<i128>, String> {
     let n: i128 = date.parse().map_err(|_| format!("no date: {date:?}"))?;
     let wall_ns = if date.len() >= 18 { n } else { n * 1_000_000_000 };
     let boot_ns = (uptime * 1e9) as i128 + 5_000_000;
-    Ok(Some(wall_ns - boot_ns))
+    Ok(Some(DeviceClock { offset: wall_ns - boot_ns, wall: wall_ns }))
+}
+
+/// logcat's start at a wall-clock time.
+fn since(wall_ns: i128) -> Start {
+    Start::Since { sec: (wall_ns / 1_000_000_000) as u32, millis: ((wall_ns / 1_000_000) % 1000) as u32 }
 }
 
 fn line_of(r: Record, offset: i128) -> LogLine {
@@ -205,17 +220,22 @@ async fn read(
     control: &mut LogdawgControl,
 ) -> Ended {
     let id = device.transport_id;
-    let mut offset = match clock_offset(adb, device).await {
-        Ok(o) => o,
+    let now = match clock_offset(adb, device).await {
+        Ok(c) => c,
         Err(e) => return Ended::Lost(format!("the device's clock: {e}")),
     };
+    let mut offset = now.offset;
     let uid = match &target.package {
         Some(p) => adb.package_uid(id, p).await.ok().flatten(),
         None => None,
     };
-    let start = match *last {
-        Some(ns) => Start::Since { sec: (ns / 1_000_000_000) as u32, millis: ((ns / 1_000_000) % 1000) as u32 },
-        None => Start::Latest(target.history),
+    let start = match (*last, target.history) {
+        // after a break or a pause: from the last line read
+        (Some(ns), _) => since(ns),
+        (None, None) => Start::All,
+        // nothing from before: from the device's time now
+        (None, Some(0)) => since(now.wall),
+        (None, Some(n)) => Start::Latest(n),
     };
     let mut stream = match adb.logcat(id, &logcat::command(&target.buffers, start)).await {
         Ok(s) => s,
@@ -299,8 +319,8 @@ async fn read(
             }
             _ = clock.tick() => {
                 // the wall clock can be set (NTP, the user): the next lines use the new offset
-                if let Ok(o) = clock_offset(adb, device).await {
-                    offset = o;
+                if let Ok(c) = clock_offset(adb, device).await {
+                    offset = c.offset;
                 }
             }
             _ = control.changed() => {
@@ -322,13 +342,14 @@ mod tests {
 
     #[test]
     fn clock_offsets_with_nanoseconds_whole_seconds_and_none() {
-        let o = offset_from("8283.09 18565.22\n1790000000123456789\n").unwrap().unwrap();
-        assert_eq!(o, 1_790_000_000_123_456_789 - 8_283_095_000_000);
+        let c = offset_from("8283.09 18565.22\n1790000000123456789\n").unwrap().unwrap();
+        assert_eq!(c.offset, 1_790_000_000_123_456_789 - 8_283_095_000_000);
+        assert_eq!(c.wall, 1_790_000_000_123_456_789);
         // Android 8: no %N, so the tick-over command is needed
         assert_eq!(offset_from("1197.99 4771.40\n1791639342N\n").unwrap(), None);
         // the tick-over command's answer: the uptime at the start of second 1791639343
-        let o = offset_from("1198.40 4771.80\n1791639343\n").unwrap().unwrap();
-        assert_eq!(o, 1_791_639_343_000_000_000 - 1_198_405_000_000);
+        let c = offset_from("1198.40 4771.80\n1791639343\n").unwrap().unwrap();
+        assert_eq!(c.offset, 1_791_639_343_000_000_000 - 1_198_405_000_000);
         assert!(offset_from("").is_err());
     }
 }

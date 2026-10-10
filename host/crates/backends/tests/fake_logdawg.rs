@@ -51,7 +51,7 @@ async fn until(rx: &mut mpsc::Receiver<Vec<SessionEvent>>, seen: &mut Seen, done
     }
 }
 
-fn target(history: u32) -> LogdawgTarget {
+fn target(history: Option<u32>) -> LogdawgTarget {
     LogdawgTarget { serial: Some(SERIAL.into()), package: Some(PACKAGE.into()), history, ..LogdawgTarget::default() }
 }
 
@@ -67,7 +67,7 @@ async fn lines_before_and_after_the_start_with_the_apps_uid_and_process_names() 
         fake.logcat(SERIAL, record(1_790_000_001 + i, 4312, 10_234, 3, "OkHttp", &format!("history {i}")));
     }
     let (tx, mut rx) = mpsc::channel(64);
-    let task = tokio::spawn(run_logdawg(fake.client(), target(2), LogdawgControl::default(), tx));
+    let task = tokio::spawn(run_logdawg(fake.client(), target(Some(2)), LogdawgControl::default(), tx));
     let mut seen = Seen { lines: Vec::new(), infos: Vec::new() };
     until(&mut rx, &mut seen, |s| s.lines.len() >= 2).await;
     // the latest two of the history, then what comes
@@ -100,7 +100,7 @@ async fn a_cut_stream_goes_on_from_its_last_line_without_repeats() {
     fake.logcat(SERIAL, record(1_790_000_001, 4312, 10_234, 4, "A", "one"));
     fake.logcat(SERIAL, record(1_790_000_002, 4312, 10_234, 4, "A", "two"));
     let (tx, mut rx) = mpsc::channel(64);
-    let _task = tokio::spawn(run_logdawg(fake.client(), target(100), LogdawgControl::default(), tx));
+    let _task = tokio::spawn(run_logdawg(fake.client(), target(Some(100)), LogdawgControl::default(), tx));
     let mut seen = Seen { lines: Vec::new(), infos: Vec::new() };
     until(&mut rx, &mut seen, |s| s.lines.len() >= 2).await;
     fake.break_logcat(SERIAL);
@@ -119,7 +119,7 @@ async fn a_cut_stream_goes_on_from_its_last_line_without_repeats() {
 async fn it_waits_for_the_device_and_says_so() {
     let fake = FakeAdb::start().await;
     let (tx, mut rx) = mpsc::channel(64);
-    let _task = tokio::spawn(run_logdawg(fake.client(), target(10), LogdawgControl::default(), tx));
+    let _task = tokio::spawn(run_logdawg(fake.client(), target(Some(10)), LogdawgControl::default(), tx));
     let mut seen = Seen { lines: Vec::new(), infos: Vec::new() };
     until(&mut rx, &mut seen, |s| s.infos.iter().any(|i| i.status.as_deref().is_some_and(|t| t.contains("waiting"))))
         .await;
@@ -140,7 +140,7 @@ async fn a_pause_reads_nothing_and_going_on_brings_what_came_meanwhile() {
     let (pause, paused) = watch::channel(false);
     let (tx, mut rx) = mpsc::channel(64);
     let control = LogdawgControl { paused: Some(paused) };
-    let _task = tokio::spawn(run_logdawg(fake.client(), target(100), control, tx));
+    let _task = tokio::spawn(run_logdawg(fake.client(), target(Some(100)), control, tx));
     let mut seen = Seen { lines: Vec::new(), infos: Vec::new() };
     until(&mut rx, &mut seen, |s| !s.lines.is_empty()).await;
     pause.send(true).unwrap();
@@ -158,4 +158,31 @@ async fn a_pause_reads_nothing_and_going_on_brings_what_came_meanwhile() {
     let starts: Vec<String> = fake.commands(SERIAL).into_iter().filter(|c| c.starts_with("logcat ")).collect();
     assert_eq!(starts.len(), 2, "{starts:?}");
     assert!(starts[1].ends_with("-T 1790000001.250"), "from the last line's time: {starts:?}");
+}
+
+#[tokio::test]
+async fn everything_the_device_has_by_default_and_nothing_from_before_with_0() {
+    let fake = FakeAdb::start().await;
+    fake.add_device(SERIAL, 35);
+    fake.install(SERIAL, PACKAGE, 10_234);
+    // the fake device's clock reads 1790000000 s: two lines from before that
+    fake.logcat(SERIAL, record(1_789_999_990, 4312, 10_234, 4, "A", "old"));
+    fake.logcat(SERIAL, record(1_789_999_995, 4312, 10_234, 4, "A", "older still kept"));
+    let (tx, mut rx) = mpsc::channel(64);
+    let task = tokio::spawn(run_logdawg(fake.client(), target(None), LogdawgControl::default(), tx));
+    let mut seen = Seen { lines: Vec::new(), infos: Vec::new() };
+    until(&mut rx, &mut seen, |s| s.lines.len() >= 2).await;
+    assert_eq!(seen.lines.iter().map(|l| l.message.as_str()).collect::<Vec<_>>(), ["old", "older still kept"]);
+    assert!(fake.commands(SERIAL).contains(&"logcat -B -b main,system,crash".to_string()), "no -T: all of it");
+    drop(rx);
+    tokio::time::timeout(Duration::from_secs(5), task).await.expect("the reader stops").unwrap();
+    // history = 0: from the device's time now on
+    let (tx, mut rx) = mpsc::channel(64);
+    let _task = tokio::spawn(run_logdawg(fake.client(), target(Some(0)), LogdawgControl::default(), tx));
+    let mut seen = Seen { lines: Vec::new(), infos: Vec::new() };
+    until(&mut rx, &mut seen, |s| s.infos.iter().any(|i| i.uid.is_some())).await;
+    fake.logcat(SERIAL, record(1_790_000_005, 4312, 10_234, 4, "A", "new"));
+    until(&mut rx, &mut seen, |s| !s.lines.is_empty()).await;
+    assert_eq!(seen.lines.iter().map(|l| l.message.as_str()).collect::<Vec<_>>(), ["new"]);
+    assert!(fake.commands(SERIAL).contains(&"logcat -B -b main,system,crash -T 1790000000.000".to_string()));
 }

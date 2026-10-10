@@ -46,7 +46,7 @@
 //! [logdawg]                   # the device's log, in view 4 (ARCHITECTURE.md §5.17)
 //! enabled = true              # false: the log is not read
 //! buffers = ["main", "system", "crash"]  # logcat's buffers: main, system, crash, radio, kernel
-//! history = 5000              # lines from before the session started
+//! history = "all"             # lines from before the session started: all the device has, or a number (0-100000)
 //! keep = "64mb"               # memory the lines may use; the oldest go first
 //! filter = "package:mine"     # the view's filter at start ("" for every line)
 //!
@@ -168,14 +168,14 @@ pub struct AdbSection {
 pub struct LogdawgSection {
     pub enabled: Option<bool>,
     pub buffers: Option<Spanned<Vec<String>>>,
-    pub history: Option<Spanned<u32>>,
+    pub history: Option<Spanned<History>>,
     pub keep: Option<Spanned<Size>>,
     pub filter: Option<Spanned<String>>,
 }
 
 /// `[logdawg] buffers`: the ones logcat writes as text.
 const LOG_BUFFERS: [&str; 5] = ["main", "system", "crash", "radio", "kernel"];
-/// `[logdawg] history`: lines from before the start.
+/// `[logdawg] history`: lines from before the start, when not `"all"`.
 const LOG_HISTORY_MAX: u32 = 100_000;
 /// `[logdawg] keep`: at least a megabyte (the store keeps whole chunks).
 const LOG_KEEP_MIN: u64 = 1 << 20;
@@ -185,6 +185,26 @@ const LOG_KEEP_MIN: u64 = 1 << 20;
 pub struct Storage {
     pub memory: Option<Spanned<Size>>,
     pub spill_dir: Option<PathBuf>,
+}
+
+/// `[logdawg] history`: `"all"`, or a number of lines.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+pub enum History {
+    Lines(u32),
+    Word(String),
+}
+
+impl History {
+    /// What the reader is to read: `None` for everything; `Err` for a value to report.
+    fn lines(&self) -> Result<Option<u32>, String> {
+        match self {
+            History::Lines(n) if *n <= LOG_HISTORY_MAX => Ok(Some(*n)),
+            History::Lines(n) => Err(n.to_string()),
+            History::Word(w) if w.eq_ignore_ascii_case("all") => Ok(None),
+            History::Word(w) => Err(format!("{w:?}")),
+        }
+    }
 }
 
 /// A byte count: a number, or text like `10mb`.
@@ -423,11 +443,11 @@ impl Loaded {
             }
         }
         if let Some(h) = &log.history
-            && *h.get_ref() > LOG_HISTORY_MAX
+            && let Err(shown) = h.get_ref().lines()
         {
             found.push((
                 h.span().start,
-                format!("[logdawg] history {}: use 0 to {LOG_HISTORY_MAX} (lines)", h.get_ref()),
+                format!("[logdawg] history {shown}: use \"all\" or 0 to {LOG_HISTORY_MAX} (lines)"),
             ));
         }
         if let Some(k) = &log.keep {
@@ -683,7 +703,7 @@ impl Loaded {
                 target.buffers = valid;
             }
         }
-        if let Some(h) = log.history.as_ref().map(|h| *h.get_ref()).filter(|h| *h <= LOG_HISTORY_MAX) {
+        if let Some(Ok(h)) = log.history.as_ref().map(|h| h.get_ref().lines()) {
             target.history = h;
         }
         Some(target)
@@ -954,7 +974,7 @@ gap = 2
         assert!(l.problems.is_empty(), "{:?}", l.problems);
         let t = l.logdawg(Some("emulator-5554".into()), Some("io.example".into())).unwrap();
         assert_eq!((t.serial.as_deref(), t.package.as_deref()), (Some("emulator-5554"), Some("io.example")));
-        assert_eq!((t.buffers, t.history), (vec!["main".to_string(), "crash".into(), "radio".into()], 200));
+        assert_eq!((t.buffers, t.history), (vec!["main".to_string(), "crash".into(), "radio".into()], Some(200)));
         let mut app = fresh();
         l.apply_ui(&mut app);
         assert_eq!((app.view, app.log_filter_input.value()), (View::Logdawg, "level:w tag:OkHttp"));
@@ -962,19 +982,24 @@ gap = 2
         // the defaults, and off
         let l = parse("");
         let t = l.logdawg(None, None).unwrap();
-        assert_eq!((t.buffers.join(","), t.history), ("main,system,crash".to_string(), 5000));
+        assert_eq!((t.buffers.join(","), t.history), ("main,system,crash".to_string(), None), "all the device has");
         let mut app = fresh();
         l.apply_ui(&mut app);
         assert_eq!(app.log_filter_input.value(), "package:mine");
         assert_eq!(app.store.logs().keep(), traffic_police_core::logdawg::DEFAULT_KEEP);
         assert!(parse("[logdawg]\nenabled = false\n").logdawg(None, None).is_none());
+        for (text, want) in [("history = \"all\"", None), ("history = \"ALL\"", None), ("history = 0", Some(0))] {
+            let l = parse(&format!("[logdawg]\n{text}\n"));
+            assert!(l.problems.is_empty(), "{text}: {:?}", l.problems);
+            assert_eq!(l.logdawg(None, None).unwrap().history, want, "{text}");
+        }
         // bad values name their line, and the defaults (or the valid part) apply instead
         let text =
             "[logdawg]\nbuffers = [\"main\", \"events\"]\nhistory = 200000\nkeep = \"10kb\"\nfilter = \"level:loud\"\n";
         let l = parse(text);
         let want = [
             "line 2: [logdawg] buffers: \"events\" is not one of main, system, crash, radio, kernel",
-            "line 3: [logdawg] history 200000: use 0 to 100000 (lines)",
+            "line 3: [logdawg] history 200000: use \"all\" or 0 to 100000 (lines)",
             "line 4: [logdawg] keep: use 1mb or more",
             "line 5: [logdawg] filter \"level:loud\": \"loud\" is not a level",
         ];
@@ -983,7 +1008,9 @@ gap = 2
             assert!(got.starts_with(want), "{got:?} should start with {want:?}");
         }
         let t = l.logdawg(None, None).unwrap();
-        assert_eq!((t.buffers.join(","), t.history), ("main".to_string(), 5000));
+        assert_eq!((t.buffers.join(","), t.history), ("main".to_string(), None));
+        let l = parse("[logdawg]\nhistory = \"most\"\n");
+        assert_eq!(l.problems, ["line 2: [logdawg] history \"most\": use \"all\" or 0 to 100000 (lines)"]);
         let mut app = fresh();
         l.apply_ui(&mut app);
         assert_eq!(app.log_filter_input.value(), "package:mine");
