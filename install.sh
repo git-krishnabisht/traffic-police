@@ -226,6 +226,76 @@ download() {
     fi
 }
 
+# A large file comes in parts, each over its own connection: at times GitHub's release servers
+# give each connection from a network about 100 KB/s while the same network takes 20 MB/s from
+# elsewhere, and then eight parts at once arrive about six times as fast (measured on 2026-10-11:
+# 116 KB/s over one connection, 682 KB/s over eight; when one connection is fast, parts cost
+# nothing). Each part's size is checked, and the checksum after checks the whole; when a part
+# fails, or the server does not send parts, the file comes over one connection instead.
+PARTS=8
+download_parts() {
+    url=$1 out=$2 size=$3
+    chunk=$(((size + PARTS - 1) / PARTS))
+    part_pids=""
+    k=0
+    while [ "$k" -lt "$PARTS" ]; do
+        from=$((k * chunk))
+        to=$((from + chunk - 1))
+        if [ "$to" -ge "$size" ]; then to=$((size - 1)); fi
+        curl --proto '=https' --tlsv1.2 -fsSL --connect-timeout 10 --retry 3 \
+            --speed-limit 1024 --speed-time 120 -r "$from-$to" -o "$out.part$k" "$url" &
+        part_pids="$part_pids $!"
+        k=$((k + 1))
+    done
+    whole=1
+    for p in $part_pids; do
+        wait "$p" || whole=0
+    done
+    part_pids=""
+    k=0
+    while [ "$k" -lt "$PARTS" ]; do
+        from=$((k * chunk))
+        to=$((from + chunk - 1))
+        if [ "$to" -ge "$size" ]; then to=$((size - 1)); fi
+        have=0
+        if [ -f "$out.part$k" ]; then have=$(wc -c <"$out.part$k" | tr -d ' '); fi
+        if [ "$have" != $((to - from + 1)) ]; then whole=0; fi
+        k=$((k + 1))
+    done
+    if [ "$whole" = 1 ]; then
+        : >"$out.joined"
+        k=0
+        while [ "$k" -lt "$PARTS" ]; do
+            cat "$out.part$k" >>"$out.joined"
+            k=$((k + 1))
+        done
+        rm -f "$out".part*
+        mv "$out.joined" "$out"
+        : >"$out.in-parts"
+        return 0
+    fi
+    rm -f "$out".part* "$out.joined"
+    download "$url" "$out"
+}
+
+# the binary: in parts when the server sends them and the file is large enough to gain from it
+fetch() {
+    if [ "$in_parts" = 1 ]; then
+        download_parts "$base/$asset" "$tmp/$asset" "$total"
+    else
+        download "$base/$asset" "$tmp/$asset"
+    fi
+}
+
+# bytes of the binary so far: its parts, or the file
+got_bytes() {
+    n=0
+    for f in "$tmp/$asset" "$tmp/$asset".part*; do
+        if [ -f "$f" ]; then n=$((n + $(wc -c <"$f" | tr -d ' '))); fi
+    done
+    say "$n"
+}
+
 sha256() {
     if command -v sha256sum >/dev/null 2>&1; then
         sha256sum "$1" | cut -d ' ' -f 1
@@ -238,13 +308,20 @@ sha256() {
 
 tmp=$(mktemp -d 2>/dev/null || mktemp -d -t traffic-police)
 # on any exit: a step still running stops (a background job ignores Ctrl+C, and its curl is a
-# child of it), the scratch folder goes, and the cursor comes back
+# child of it; without a terminal, the parts' curls are the script's own background jobs), the
+# scratch folder goes, and the cursor comes back
+part_pids=""
 stop_bg() {
     if [ -n "$bg" ]; then
         pkill -P "$bg" 2>/dev/null || true
         kill "$bg" 2>/dev/null || true
         wait "$bg" 2>/dev/null || true
         bg=""
+    fi
+    if [ -n "$part_pids" ]; then
+        # shellcheck disable=SC2086 # one word per process
+        kill $part_pids 2>/dev/null || true
+        part_pids=""
     fi
 }
 # (the folder first: after a closed terminal, writing the cursor's code fails)
@@ -265,6 +342,7 @@ else
     base="https://github.com/$REPO/releases/download/$version"
 fi
 total=""
+in_parts=0
 if [ "$downloader" = curl ]; then
     if ! spin Release "looking up ${version}" curl --proto '=https' --tlsv1.2 -sSIL --connect-timeout 10 \
         --retry 3 -o "$tmp/headers" "$base/$asset"; then
@@ -277,6 +355,8 @@ if [ "$downloader" = curl ]; then
     fi
     found=$(sed -n 's#^[Ll]ocation: .*/releases/download/\([^/]*\)/.*#\1#p' "$tmp/headers.txt" | head -n 1)
     total=$(awk 'tolower($1) == "content-length:" { n = $2 } END { print n }' "$tmp/headers.txt")
+    ranges=$(awk 'tolower($1) == "accept-ranges:" { r = tolower($2) } END { print r }' "$tmp/headers.txt")
+    if [ "$ranges" = bytes ] && [ -n "$total" ] && [ "$total" -ge 1048576 ]; then in_parts=1; fi
     if [ "$version" = latest ] && [ -n "$found" ]; then
         version="$found"
         ok Release "$version (the latest)"
@@ -291,7 +371,7 @@ fi
 # the binary, with a progress bar in a terminal: its size so far against the total, polled
 start=$(date +%s)
 if [ "$fancy" = 1 ]; then
-    download "$base/$asset" "$tmp/$asset" >"$tmp/step.log" 2>&1 &
+    fetch >"$tmp/step.log" 2>&1 &
     bg=$!
     cursor l
     # shellcheck disable=SC2086 # the frames are words on purpose
@@ -301,8 +381,7 @@ if [ "$fancy" = 1 ]; then
     while kill -0 "$bg" 2>/dev/null; do
         i=$((i % n + 1))
         eval "f=\${$i}"
-        got=0
-        if [ -f "$tmp/$asset" ]; then got=$(wc -c <"$tmp/$asset" | tr -d ' '); fi
+        got=$(got_bytes)
         secs=$(($(date +%s) - start))
         if [ -n "$total" ] && [ "$total" -gt 0 ]; then
             pct=$((got * 100 / total))
@@ -329,13 +408,15 @@ if [ "$fancy" = 1 ]; then
     cursor h
 else
     status=0
-    download "$base/$asset" "$tmp/$asset" >"$tmp/step.log" 2>&1 || status=$?
+    fetch >"$tmp/step.log" 2>&1 || status=$?
 fi
 if [ "$status" != 0 ]; then
     fail "could not download $base/$asset ($(tail -n 1 "$tmp/step.log" 2>/dev/null))"
 fi
 size=$(wc -c <"$tmp/$asset" | tr -d ' ')
-ok Download "$asset · $(mb "$size") MB in $(took $(($(date +%s) - start)))"
+over=""
+if [ -f "$tmp/$asset.in-parts" ]; then over=" over $PARTS connections"; fi
+ok Download "$asset · $(mb "$size") MB in $(took $(($(date +%s) - start)))$over"
 
 spin Checksum "comparing with SHA256SUMS.txt" download "$base/SHA256SUMS.txt" "$tmp/SHA256SUMS.txt" ||
     fail "could not download $base/SHA256SUMS.txt"
