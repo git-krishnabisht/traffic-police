@@ -12,33 +12,33 @@ expression: "press(&mut app, MEDIUM, \"4/<C-u>is:crash<Enter><Enter>\")"
 │              🮂▀🮄🮆██████🮆🮅🮅🮅🮆████🮆🮅🮅🮆███🮆🮅🮄🮆██████████████🮆🮄▀▀🮅🮆🮆🮅🮄🮄🮆████🮅🮄🮄🮄🮄🮅🮅🮅🮅🮆█████████████████████🮆▀🮃🮂🮃▀🮄🮆█████🮆🮄🮄🮅🮆█🮆🮅▀🮃🮂🮃▀🮅██████ │
 │ 4.0 KB/s     ┊    ▔▔▔▔      ▔🮃🮃▔    ▔🮂▔    ▀████🮆🮂  🮂🮃▀▀🮂           ▔🮂🮂▔           ▔▔      🮂▀🮆🮆🮄🮄🮆███🮆🮂   ┊       ▔                🮂🮃🮃🮂  │
 │              ┊                              ▀██🮄                                   ┊              ▔▀🮃     ┊                              │
-│ 8.0 KB/s     ┊               ╭ AndroidRuntime · error ───────────────────────────────────────────────────╮┊                              │
-│              00:00.000       │ time    2026-09-29T05:10:20.000Z                                          │0            00:25.000         │
-╰──────────────────────────────│ level   error                                                             │───────────────────────────────╯
-╭─ Log 1 ─ Connection ─ Thread │ tag     AndroidRuntime                                                    │── Pixel 8 [demo] · following ─╮
-│ 00:20.000      4312-4312   An│ process com.example.shop                                                  │                               │
-│                              │ pid     4312                                                              │                               │
-│                              │ tid     4312                                                              │ices                           │
-│                              │ uid     10234                                                             │artRepository.kt:58)           │
-│                              │ buffer  crash                                                             │CartViewModel.kt:31)           │
-│                              │                                                                           │ctivity.kt:88)                 │
-│                              │ FATAL EXCEPTION: main                                                     │                               │
-│                              │ Process: com.example.shop, PID: 4312                                      │                               │
-│                              │ java.lang.IllegalStateException: the cart has no prices                   │                               │
-│                              │     at com.example.shop.cart.CartRepository.total(CartRepository.kt:58)   │                               │
-│                              │     at com.example.shop.cart.CartViewModel.refresh(CartViewModel.kt:31)   │                               │
-│                              │     at com.example.shop.MainActivity.onResume(MainActivity.kt:88)         │                               │
-│                              │                                                                           │                               │
-│                              │ y copies · any other key closes                                           │                               │
-│                              ╰───────────────────────────────────────────────────────────────────────────╯                               │
-│                                                                                                                                          │
-│                                                                                                                                          │
-│                                                                                                                                          │
-│                                                                                                                                          │
-│                                                                                                                                          │
-│                                                                                                                                          │
-│                                                                                                                                          │
-│                                                                                                                                          │
-│                                                                                                                                          │
-╰─ filter is:crash ───────────────────────────────────────────────────────────────────────────────────────────────────────────── 1 of 137 ─╯
- ↑↓ scroll   y copy   Esc close                                                                                  ⚠ studio inspector present
+│ 8.0 KB/s     ┊                               ▔▔                                    ┊              ┊       ┊                              │
+│              00:00.000            00:05.000            00:10.000            00:15.000             00:20.000            00:25.000         │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Requests 50 ─ Connection ─ Thread ─ Rules ─ Logdawg ─────────────────────╮ ╭─ notifications ─ Response body ─ Request body ─────────────╮
+│ Name                  Size  Type      Status         Time   Timeline      │ │ waiting for the response…                                  │
+│ status?orderId=…     146 B  json      200          282 ms        ▕        │ │                                                            │
+│ ! events              17 B  json      200          1.04 s        🮇▎       │ │                                                            │
+│ notifications        306 B  json      200          1.77 s        ▕▋       │ │                                                            │
+│ status?orderId=…     146 B  json      200          134 ms         ▏       │ │                                                            │
+│ notifications        306 B  json      200          1.44 s         🮇▍      │ │                                                            │
+│ status?orderId=…     146 B  json      200          129 ms          ▏      │ │                                                            │
+│ events                17 B  json      200          1.30 s          ▋      │ │                                                            │
+│ notifications        306 B  json      200          1.45 s          🮈▎     │ ╰────────────────────────────────────────────────────────────╯
+│ status?orderId=…     146 B  json      200          162 ms          ▕      │ ╭─ Overview ─ Response ─ Request ─ Call Stack ─ Logs ────────╮
+│ status?orderId=…     146 B  json      200          359 ms           ▏     │ │ Request           notifications                            │
+│ notifications                         detached     500 ms           🮇     │ │ Method            GET                                      │
+│ events                                detached     164 ms           ▕     │ │ Status            ···                                      │
+│ token                364 B  json      200          370 ms            ▕   ▐│ │ URL               http://localhost:8080/api/v1/            │
+│ sessions             290 B  json      200          1.78 s             ▊  ▐│ │                   notifications                            │
+│ notifications        306 B  json      200          1.38 s             ▋  ▐│ │ Request type      —                                        │
+│ events                17 B  json      200          1.60 s             ▐▎ ▐│ │ Response type     —                                        │
+│ products?catego…    1.0 KB  json      200          400 ms              ▏ ▐│ │ Response size     —                                        │
+│ notifications        306 B  json      200          1.58 s              ▋ ▐│ │ Token             JWT HS256 ·                              │
+│ items                149 B  json      200          2.54 s              🮊▍▐│ │                   expires 06:10:22.000 (in 59 min) ·       │
+│ notifications        306 B  json      200          1.64 s              ▕▋▐│ │                   sub user_1024 ·                          │
+│ events                17 B  json      200          1.31 s               🮉▐│ │                   iss https://auth.example.com  in request │
+│ checkout                              ···          1.26 s               ▐▐│ │                   header Authorization · Enter decodes     │
+│ notifications                         ···          500 ms               🮇 │ │ Initiating thread DefaultDispatcher-worker-1  id 58 ·      │
+╰───────────────────────────────────────────────────────────────────────────╯ ╰────────────────────────────────────────────────────────────╯
+ ←→ tabs   ↑↓ move   / search   nN next/previous   y copy   w save   Enter fold   p parsed/source   ? help       ⚠ studio inspector present

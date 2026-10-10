@@ -1512,6 +1512,8 @@ fn logdawg_lists_the_apps_log_filters_opens_copies_and_clears() {
     use traffic_police_core::logdawg::Level;
     use traffic_police_tui::app::View;
     let mut app = app_at(40.0);
+    // the lines alone (the requests among them have a test of their own)
+    app.logdawg.set_requests(false);
     let text = press(&mut app, MEDIUM, "4");
     assert_eq!(app.view, View::Logdawg);
     assert!(text.contains("╭─ Log ") && text.contains("OkHttp"), "{text}");
@@ -1696,11 +1698,11 @@ fn another_app_is_picked_in_the_session_and_the_log_follows_it() {
     assert_eq!((mark.kind, mark.label.as_str()), (MarkerKind::Note, "switched to com.example.other"));
     // the reader says the new app and its uid; only its lines are the app's now
     press(&mut app, MEDIUM, "4");
-    assert!(!app.logdawg.is_empty(), "the shop's lines");
+    assert!(app.logdawg.lines() > 0, "the shop's lines");
     let info = LogInfo { package: Some("com.example.other".into()), uid: Some(10_301), ..LogInfo::default() };
     app.ingest(vec![SessionEvent::LogInfo(Box::new(info))]);
     press(&mut app, MEDIUM, "");
-    assert!(app.logdawg.is_empty(), "the shop's lines are not the app's any more");
+    assert_eq!(app.logdawg.lines(), 0, "the shop's lines are not the app's any more");
     let ts = app.now();
     let line = LogLine {
         ts,
@@ -1715,7 +1717,7 @@ fn another_app_is_picked_in_the_session_and_the_log_follows_it() {
     };
     app.ingest(vec![SessionEvent::Logs(vec![line])]);
     let text = press(&mut app, MEDIUM, "");
-    assert_eq!(app.logdawg.len(), 1);
+    assert_eq!(app.logdawg.lines(), 1);
     assert!(text.contains("hello from the other app"), "{text}");
 }
 
@@ -1746,4 +1748,41 @@ fn the_logs_tab_lists_the_apps_lines_while_the_request_ran() {
     let to = goto(&mut app, LARGE, |t| t.url.path == "/api/v1/sessions");
     let text = press(&mut app, LARGE, &format!("{to}<Enter>llll"));
     assert!(text.contains("No log: Logdawg reads the device's log"), "{text}");
+}
+
+/// Requests among the lines (view 4): a row at each request's start, in time order with the
+/// lines; `y` copies one as cURL, Enter opens it in the Connection View, `R` hides them.
+#[test]
+fn requests_show_among_the_lines_and_open_in_the_connection_view() {
+    use traffic_police_tui::app::View;
+    use traffic_police_tui::logdawg::Row;
+    let mut app = app_at(12.0);
+    let text = press(&mut app, LARGE, "4");
+    assert!(text.contains("⇄ request"), "{text}");
+    let rows: Vec<Row> = (0..app.logdawg.len()).filter_map(|i| app.logdawg.row(i)).collect();
+    let store = app.view_store();
+    let requests = rows.iter().filter(|r| matches!(r, Row::Request(_))).count();
+    assert_eq!(requests, store.len(), "every request");
+    assert_eq!(rows.len() - requests, app.logdawg.lines());
+    let time = |r: &Row| match r {
+        Row::Line(id) => store.logs().get(*id).unwrap().ts,
+        Row::Request(i) => store.txn(*i).start,
+    };
+    assert!(rows.windows(2).all(|w| time(&w[0]) <= time(&w[1])), "in time order");
+    let at = rows
+        .iter()
+        .position(|r| matches!(r, Row::Request(i) if store.txn(*i).url.path == "/api/v1/sessions"))
+        .expect("the sessions request");
+    press(&mut app, LARGE, &format!("g{}y", "j".repeat(at)));
+    let copied = app.copied.clone().unwrap_or_default();
+    assert!(copied.starts_with("curl") && copied.contains("/api/v1/sessions"), "{copied}");
+    press(&mut app, LARGE, "<Enter>");
+    assert_eq!(app.view, View::Connections);
+    let open = app.selected.map(|i| app.view_store().txn(i).url.path.clone());
+    assert_eq!((app.detail_open, open.as_deref()), (true, Some("/api/v1/sessions")));
+    // R: the lines alone
+    press(&mut app, LARGE, "4R");
+    assert!(!app.logdawg.requests && app.logdawg.len() == app.logdawg.lines());
+    press(&mut app, LARGE, "R");
+    assert_eq!(app.logdawg.len(), app.logdawg.lines() + app.view_store().len());
 }

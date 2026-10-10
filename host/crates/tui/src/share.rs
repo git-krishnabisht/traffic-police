@@ -561,7 +561,7 @@ impl App {
     }
 
     /// The cURL command; a binary request body is saved next to it and referenced with `@`.
-    fn curl_text(&mut self, txn: TxnIdx) -> Result<String, String> {
+    pub(crate) fn curl_text(&mut self, txn: TxnIdx) -> Result<String, String> {
         let t = self.view_store().txn(txn).clone();
         if t.req_body.id.is_none() {
             return Ok(curl(&t, CurlBody::None));

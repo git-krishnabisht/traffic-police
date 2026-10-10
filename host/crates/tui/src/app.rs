@@ -618,6 +618,12 @@ impl App {
         self.frozen.as_ref().map(|f| f.events_since)
     }
 
+    /// The Logdawg view brought up to the store the UI shows.
+    pub(crate) fn sync_logdawg(&mut self, pids: &HashSet<u32>, now: Ts, range: Option<(Ts, Ts)>) {
+        let store = self.frozen.as_ref().map_or(&self.store, |f| &f.store);
+        self.logdawg.sync(store, pids, now, range);
+    }
+
     /// The store the UI shows (a snapshot while frozen).
     pub fn view_store(&self) -> &SessionStore {
         self.frozen.as_ref().map_or(&self.store, |f| &f.store)
@@ -850,7 +856,7 @@ impl App {
         }
     }
 
-    fn open_detail(&mut self) {
+    pub(crate) fn open_detail(&mut self) {
         if self.selected.is_some() {
             self.detail_open = true;
             self.follow_open = false;
@@ -1356,6 +1362,7 @@ impl App {
                     return;
                 }
                 Action::Pause => return self.toggle_log_pause(),
+                Action::LogRequests => return self.toggle_logged_requests(),
                 Action::Copy if list => return self.logdawg_copy(),
                 Action::Collapse
                 | Action::Sort
@@ -1450,6 +1457,9 @@ impl App {
                 self.set_sort(s);
             }
             Action::Clear => self.overlay = Overlay::ConfirmClear,
+            Action::LogRequests => {
+                self.flash("in view 4 (Logdawg) R shows or hides the requests among the log's lines")
+            }
             Action::SwitchApp if self.switch_apps => self.switch_request = true,
             Action::SwitchApp => {
                 self.flash("another app can be picked in a session on a device, not in the demo or an opened file");

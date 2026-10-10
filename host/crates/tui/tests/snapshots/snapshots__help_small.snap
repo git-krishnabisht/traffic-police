@@ -9,7 +9,7 @@ expression: "frame(12.0, SMALL, \"?\")"
 │   │ Move     ↑/k up · ↓/j down · ←/h left · →/l right · g/Home top · G/End/Ctrl+g bottom     │██ │
 │   │          PgUp page up · PgDn page down · Ctrl+u/Ctrl+p ½ page up · Ctrl+d ½ page down    │┄┄ │
 │   │          Enter open/decode · Esc back · Tab next panel · Shift+Tab previous panel        │█🮄 │
-│   │ Views    1 connections · 2 threads · 3 rules · 4 logdawg                                 │   │
+│   │ Views    1 connections · 2 threads · 3 rules · 4 logdawg · R requests in the log         │   │
 │ 8.│ List     c collapse · s sort · S reverse · C columns · / filter · m pin · r new rule     │   │
 │   │          d diff                                                                          │   │
 ╰───│ Detail   n next match · N previous match · p parsed/source · o original                  │───╯

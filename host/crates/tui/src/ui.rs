@@ -707,7 +707,7 @@ fn draw_views(app: &mut App, r: Rect, buf: &mut Buffer) {
     let title_style =
         if focused { t.accent().add_modifier(Modifier::BOLD) } else { t.title().add_modifier(Modifier::BOLD) };
     let mut labels = if app.view == View::Logdawg {
-        vec![vec![Span::styled("Log", title_style), Span::styled(format!(" {}", app.logdawg.len()), t.dim())]]
+        vec![vec![Span::styled("Log", title_style), Span::styled(format!(" {}", app.logdawg.lines()), t.dim())]]
     } else {
         vec![vec![Span::styled("Requests", title_style), Span::styled(format!(" {count}"), t.dim())]]
     };
@@ -804,7 +804,7 @@ fn draw_views(app: &mut App, r: Rect, buf: &mut Buffer) {
             );
         }
         let bottom = r.y + r.height.saturating_sub(1);
-        let (matched, total) = (app.logdawg.len(), logs.len());
+        let (matched, total) = (app.logdawg.lines(), logs.len());
         let at =
             border_labels(buf, r, bottom, true, vec![vec![Span::styled(format!("{matched} of {total}"), t.dim())]]);
         if let Some(f) = app.logdawg.filter.as_ref().map(|f| f.source.clone()) {
@@ -1988,7 +1988,7 @@ fn draw_filter(f: &mut Frame, app: &mut App, r: Rect) {
 
 /// Logdawg's filter, typed in the bottom line.
 fn draw_log_filter(f: &mut Frame, app: &mut App, r: Rect) {
-    let (matched, total) = (app.logdawg.len(), app.view_store().logs().len());
+    let (matched, total) = (app.logdawg.lines(), app.view_store().logs().len());
     let note = format!("{matched} of {total} lines · Enter keep · Esc cancel");
     let (input, error) = (app.log_filter_input.clone(), app.log_filter_error.clone());
     filter_bar(f, &app.theme.clone(), r, " log filter ▸ ", &input, error.as_ref(), note);

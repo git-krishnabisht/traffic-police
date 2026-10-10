@@ -18,7 +18,9 @@ use traffic_police_core::decode::Tok;
 use traffic_police_core::decode::doc::StyledLine;
 use traffic_police_core::fmt::{self, NS_PER_SEC, Ts};
 use traffic_police_core::logdawg::filter::{Context, LogFilter};
-use traffic_police_core::logdawg::{BUFFER_CRASH, Line as LogLine, LogStore};
+use traffic_police_core::logdawg::{BUFFER_CRASH, Line as LogLine};
+use traffic_police_core::model::{Transaction, TxnIdx};
+use traffic_police_core::store::SessionStore;
 use unicode_width::UnicodeWidthStr;
 
 use crate::actions::Action;
@@ -35,21 +37,35 @@ const PROCESS_W: usize = 24;
 /// From this width on the process column shows.
 const PROCESS_FROM: u16 = 150;
 
+/// A row of the view: a line of the log, or a request at its start (`R` shows or hides them).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Row {
+    Line(u64),
+    Request(TxnIdx),
+}
+
 /// Where the view is, and which lines pass its filter.
 #[derive(Debug, Clone)]
 pub struct LogdawgView {
     pub filter: Option<Arc<LogFilter>>,
-    matched: VecDeque<u64>,
-    /// The next id to test.
+    /// The lines that pass and the requests, in time order.
+    rows: VecDeque<Row>,
+    /// How many rows are lines.
+    lines: usize,
+    /// The next line id to test, and how many of the store's requests are placed.
     scanned: u64,
+    placed: usize,
+    /// Requests among the lines (`R`, `[logdawg] requests`).
+    pub requests: bool,
     dirty: bool,
     seen_uid: Option<u32>,
     seen_pids: Vec<u32>,
     seen_second: u64,
-    /// The cursor's index among the lines that pass, and the view's top.
+    seen_range: Option<(Ts, Ts)>,
+    /// The cursor's row, and the view's top.
     pub cursor: usize,
     pub top: Top,
-    /// At the newest line: new lines move the cursor along.
+    /// At the newest row: new rows move the cursor along.
     pub follow: bool,
     /// The message column's width and the box's rows last time.
     pub width: usize,
@@ -60,12 +76,16 @@ impl Default for LogdawgView {
     fn default() -> Self {
         LogdawgView {
             filter: LogFilter::parse(DEFAULT_FILTER).ok().flatten().map(Arc::new),
-            matched: VecDeque::new(),
+            rows: VecDeque::new(),
+            lines: 0,
             scanned: 0,
+            placed: 0,
+            requests: true,
             dirty: true,
             seen_uid: None,
             seen_pids: Vec::new(),
             seen_second: 0,
+            seen_range: None,
             cursor: 0,
             top: Top::default(),
             follow: true,
@@ -75,10 +95,23 @@ impl Default for LogdawgView {
     }
 }
 
+/// When a row happened: a line's time, a request's start.
+fn time_of(row: Row, store: &SessionStore) -> Ts {
+    match row {
+        Row::Line(id) => store.logs().get(id).map_or(0, |l| l.ts),
+        Row::Request(i) => store.txns().get(i as usize).map_or(0, |t| t.start),
+    }
+}
+
+/// Whether a request overlaps the graph's range (as the request list has it).
+fn in_range(t: &Transaction, range: Option<(Ts, Ts)>, now: Ts) -> bool {
+    range.is_none_or(|(a, b)| t.start <= b && t.end.unwrap_or(if t.state.is_open() { now } else { t.start }) >= a)
+}
+
 impl LogdawgView {
-    /// Starts over (the log was cleared), keeping the filter.
+    /// Starts over (the log was cleared), keeping the filter and whether requests show.
     pub fn reset(&mut self) {
-        *self = LogdawgView { filter: self.filter.take(), ..LogdawgView::default() };
+        *self = LogdawgView { filter: self.filter.take(), requests: self.requests, ..LogdawgView::default() };
     }
 
     pub fn set_filter(&mut self, filter: Option<LogFilter>) {
@@ -86,74 +119,171 @@ impl LogdawgView {
         self.dirty = true;
     }
 
-    /// Lines that pass the filter.
+    /// Requests among the lines, or not.
+    pub fn set_requests(&mut self, on: bool) {
+        if self.requests != on {
+            self.requests = on;
+            self.dirty = true;
+        }
+    }
+
+    /// Rows: the lines that pass the filter, and the requests.
     pub fn len(&self) -> usize {
-        self.matched.len()
+        self.rows.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.matched.is_empty()
+        self.rows.is_empty()
     }
 
-    /// The id of the `i`th line that passes.
+    /// The lines that pass the filter.
+    pub fn lines(&self) -> usize {
+        self.lines
+    }
+
+    pub fn row(&self, i: usize) -> Option<Row> {
+        self.rows.get(i).copied()
+    }
+
+    /// The id of the line at row `i` (`None` for a request's row).
     pub fn id(&self, i: usize) -> Option<u64> {
-        self.matched.get(i).copied()
+        match self.rows.get(i)? {
+            Row::Line(id) => Some(*id),
+            Row::Request(_) => None,
+        }
     }
 
-    /// Brings the list up to the store: the lines that went leave it, new ones are tested, and
-    /// everything is tested again after a change that can change the answer.
-    pub fn sync(&mut self, logs: &LogStore, app_pids: &HashSet<u32>, now: Ts) {
+    /// Brings the list up to the store: new lines are tested and new requests placed, and
+    /// everything is done again after a change that can change the answer (the filter, the app's
+    /// uid or processes, the graph's range, lines that went to make room).
+    pub fn sync(&mut self, store: &SessionStore, app_pids: &HashSet<u32>, now: Ts, range: Option<(Ts, Ts)>) {
+        let logs = store.logs();
         let clock = self.filter.as_ref().is_some_and(|f| f.uses_clock());
         let mut pids: Vec<u32> = app_pids.iter().copied().collect();
         pids.sort_unstable();
+        let first_line = self.rows.iter().find_map(|r| match r {
+            Row::Line(id) => Some(*id),
+            Row::Request(_) => None,
+        });
         if self.dirty
             || logs.uid() != self.seen_uid
             || pids != self.seen_pids
+            || range != self.seen_range
             || (clock && now / NS_PER_SEC != self.seen_second)
+            || first_line.is_some_and(|id| id < logs.first_id())
+            || self.placed > store.len()
         {
-            // again from the start; the cursor stays on its line, or the nearest after it
-            let at = self.id(self.cursor);
-            self.matched.clear();
-            self.scanned = logs.first_id();
+            // again from the start; the cursor stays at its row's time
+            let at = self.row(self.cursor).map(|r| time_of(r, store));
             self.dirty = false;
             self.seen_uid = logs.uid();
             self.seen_pids = pids;
             self.seen_second = now / NS_PER_SEC;
-            self.scan(logs, app_pids, now);
+            self.seen_range = range;
+            self.rebuild(store, app_pids, now, range);
             if let Some(at) = at
                 && !self.follow
             {
-                self.cursor = self.matched.partition_point(|&id| id < at).min(self.matched.len().saturating_sub(1));
+                self.cursor =
+                    self.rows.partition_point(|r| time_of(*r, store) < at).min(self.rows.len().saturating_sub(1));
                 self.top = Top { line: self.cursor, part: 0 };
             }
             return;
         }
-        // lines that went to make room (or were cleared)
-        let mut gone = 0;
-        while self.matched.front().is_some_and(|&id| id < logs.first_id()) {
-            self.matched.pop_front();
-            gone += 1;
-        }
-        if gone > 0 {
-            self.cursor = self.cursor.saturating_sub(gone);
-            self.top.line = self.top.line.saturating_sub(gone);
-        }
-        self.scan(logs, app_pids, now);
+        self.scan(store, app_pids, now, range);
     }
 
-    fn scan(&mut self, logs: &LogStore, app_pids: &HashSet<u32>, now: Ts) {
+    /// Every line tested and every request placed, merged in time order.
+    fn rebuild(&mut self, store: &SessionStore, app_pids: &HashSet<u32>, now: Ts, range: Option<(Ts, Ts)>) {
+        let logs = store.logs();
+        let cx = Context { app_pids, now };
+        let lines: Vec<(Ts, u64)> = logs
+            .iter_from(logs.first_id())
+            .filter(|l| range.is_none_or(|(a, b)| l.ts >= a && l.ts <= b))
+            .filter(|l| self.filter.as_ref().is_none_or(|f| f.matches(l, logs, &cx)))
+            .map(|l| (l.ts, l.id))
+            .collect();
+        let mut requests: Vec<(Ts, TxnIdx)> = if self.requests {
+            store
+                .txns()
+                .iter()
+                .enumerate()
+                .filter(|(_, t)| in_range(t, range, now))
+                .map(|(i, t)| (t.start, i as TxnIdx))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        requests.sort_unstable();
+        self.rows.clear();
+        self.lines = lines.len();
+        let mut r = requests.into_iter().peekable();
+        for (ts, id) in lines {
+            while let Some((_, i)) = r.next_if(|(start, _)| *start <= ts) {
+                self.rows.push_back(Row::Request(i));
+            }
+            self.rows.push_back(Row::Line(id));
+        }
+        self.rows.extend(r.map(|(_, i)| Row::Request(i)));
+        self.scanned = logs.end_id();
+        self.placed = store.len();
+        self.settle();
+    }
+
+    /// The lines and requests that came since: each goes in by its time, near the end.
+    fn scan(&mut self, store: &SessionStore, app_pids: &HashSet<u32>, now: Ts, range: Option<(Ts, Ts)>) {
+        let logs = store.logs();
         let from = self.scanned.max(logs.first_id());
         let cx = Context { app_pids, now };
         for line in logs.iter_from(from) {
-            if self.filter.as_ref().is_none_or(|f| f.matches(&line, logs, &cx)) {
-                self.matched.push_back(line.id);
+            if range.is_none_or(|(a, b)| line.ts >= a && line.ts <= b)
+                && self.filter.as_ref().is_none_or(|f| f.matches(&line, logs, &cx))
+            {
+                // before requests that start later (their start came in first)
+                let mut at = self.rows.len();
+                while at > 0
+                    && matches!(self.rows[at - 1], Row::Request(i) if time_of(Row::Request(i), store) > line.ts)
+                {
+                    at -= 1;
+                }
+                self.insert(at, Row::Line(line.id));
+                self.lines += 1;
             }
         }
         self.scanned = logs.end_id();
-        if self.follow {
-            self.cursor = self.matched.len().saturating_sub(1);
+        if self.requests {
+            for (i, t) in store.txns().iter().enumerate().skip(self.placed) {
+                if !in_range(t, range, now) {
+                    continue;
+                }
+                let mut at = self.rows.len();
+                while at > 0 && time_of(self.rows[at - 1], store) > t.start {
+                    at -= 1;
+                }
+                self.insert(at, Row::Request(i as TxnIdx));
+            }
         }
-        self.cursor = self.cursor.min(self.matched.len().saturating_sub(1));
+        self.placed = store.len();
+        self.settle();
+    }
+
+    /// A row in at `at`: the cursor and the view's top stay on theirs.
+    fn insert(&mut self, at: usize, row: Row) {
+        let before_cursor = !self.rows.is_empty() && at <= self.cursor;
+        self.rows.insert(at, row);
+        if !self.follow && before_cursor {
+            self.cursor += 1;
+        }
+        if at < self.top.line {
+            self.top.line += 1;
+        }
+    }
+
+    fn settle(&mut self) {
+        if self.follow {
+            self.cursor = self.rows.len().saturating_sub(1);
+        }
+        self.cursor = self.cursor.min(self.rows.len().saturating_sub(1));
     }
 }
 
@@ -222,15 +352,14 @@ impl App {
     pub(crate) fn logdawg_refresh(&mut self) {
         let pids = self.app_pids();
         let now = self.now();
-        // a copy that shares the lines (an `Arc` per chunk), so the view can change meanwhile
-        let logs = self.view_store().logs().clone();
-        self.logdawg.sync(&logs, &pids, now);
+        self.sync_logdawg(&pids, now, None);
     }
 
     fn with_logdawg_lines<R>(&self, f: impl FnOnce(&mut wrap::Lines) -> R) -> R {
         let logs = self.view_store().logs();
         let (width, wrapping) = (self.logdawg.width.max(1), self.prefs.wrap);
         let view = &self.logdawg;
+        // a request takes one row
         let mut rows = |i: usize| {
             view.id(i).and_then(|id| logs.get(id)).map_or(1, |l| message_rows(&shown(l.message), width, wrapping).len())
         };
@@ -292,8 +421,15 @@ impl App {
             .join("\n")
     }
 
-    /// `y`: the line under the cursor, as logcat prints it.
+    /// `y`: the line under the cursor, as logcat prints it; a request, as cURL.
     pub(crate) fn logdawg_copy(&mut self) {
+        if let Some(Row::Request(i)) = self.logdawg.row(self.logdawg.cursor) {
+            match self.curl_text(i) {
+                Ok(text) => self.copy_text(text),
+                Err(e) => self.flash(e),
+            }
+            return;
+        }
         let Some(text) = self.logdawg_line().map(|l| self.threadtime(&l)) else {
             self.flash("no line to copy");
             return;
@@ -301,8 +437,34 @@ impl App {
         self.copy_text(text);
     }
 
-    /// Enter: the whole line in a box, its fields above the message.
+    /// Enter on a request's row: the request, open in the Connection View.
+    fn open_logged_request(&mut self, i: TxnIdx) {
+        self.set_view(crate::app::View::Connections);
+        self.refresh();
+        if self.view_rows().position(i).is_none() {
+            self.flash("this request is not in the list: its filter or range hides it (/ and Esc change them)");
+            return;
+        }
+        self.select_txn(i);
+        self.open_detail();
+    }
+
+    /// `R`: requests among the lines, or not.
+    pub(crate) fn toggle_logged_requests(&mut self) {
+        let on = !self.logdawg.requests;
+        self.logdawg.set_requests(on);
+        self.flash(if on {
+            "requests among the lines (R hides them)"
+        } else {
+            "only the log's lines (R shows the requests)"
+        });
+    }
+
+    /// Enter: the whole line in a box, its fields above the message; a request opens in view 1.
     fn logdawg_open(&mut self) {
+        if let Some(Row::Request(i)) = self.logdawg.row(self.logdawg.cursor) {
+            return self.open_logged_request(i);
+        }
         let Some((title, lines)) = self.logdawg_line().map(|l| {
             let logs = self.view_store().logs();
             let process = logs.process_of(l.pid, l.uid).unwrap_or("?");
@@ -389,16 +551,52 @@ fn pad_left_cut(s: &str, w: usize) -> String {
     format!("…{}", out.into_iter().collect::<String>())
 }
 
-/// The list: the lines that pass the filter, from the view's top.
+/// A request among the lines: at its start, the method, the status (live) and how long it took
+/// over the tag's columns, and the URL in the message's (`left` on).
+#[allow(clippy::too_many_arguments)]
+fn request_row(
+    app: &App,
+    t: &Transaction,
+    row: Rect,
+    buf: &mut Buffer,
+    selected: bool,
+    origin: Ts,
+    wall: bool,
+    left: usize,
+) {
+    let th = &app.theme;
+    let base = if selected { th.selected() } else { Style::default() };
+    if selected {
+        crate::ui::fill(buf, row, th.selected());
+    }
+    let time = if wall {
+        app.view_store().wall_ms(t.start).map_or_else(String::new, fmt::wall_clock)
+    } else if t.start >= origin {
+        fmt::offset(t.start - origin)
+    } else {
+        format!("-{}", fmt::offset(origin - t.start))
+    };
+    let took = fmt::duration(t.duration(app.now()));
+    let (method, status) = (format!("{:<7}", t.method), format!("{:<9}", t.status_text()));
+    let took = format!("{took:>8}");
+    let rest = left.saturating_sub(TIME_W + 1 + IDS_W + 1 + method.width() + status.width() + took.width());
+    let spans = vec![
+        Span::styled(format!("{time:<TIME_W$} "), th.dim().patch(base)),
+        Span::styled(format!("{:<w$}", "⇄ request", w = IDS_W + 1), th.accent().patch(base)),
+        Span::styled(method, th.title().patch(base)),
+        Span::styled(status, th.status(t.status_class()).patch(base)),
+        Span::styled(took, th.dim().patch(base)),
+        Span::styled(" ".repeat(rest), base),
+        Span::styled(t.url.raw.clone(), th.text().patch(base)),
+    ];
+    crate::detail::draw_line(buf, row.x, row.y, row.width, &Line::from(spans), 0, base);
+}
+
+/// The list: the lines that pass the filter and the requests, from the view's top.
 pub fn draw(app: &mut App, r: Rect, buf: &mut Buffer) {
     let t = app.theme.clone();
-    let show_process = r.width >= PROCESS_FROM;
-    let left = TIME_W + 1 + IDS_W + 1 + TAG_W + 1 + if show_process { PROCESS_W + 1 } else { 0 } + 3 + 1;
-    let width = usize::from(r.width).saturating_sub(left).max(10);
-    app.logdawg.width = width;
-    app.logdawg.height = usize::from(r.height);
-    let focused = app.focus == Focus::List;
-    if app.logdawg.is_empty() {
+    // no line shows: why, on the first row (the requests, if any, below it)
+    if app.logdawg.lines() == 0 {
         let logs = app.view_store().logs();
         let note = if logs.is_empty() {
             match &logs.info().status {
@@ -411,6 +609,15 @@ pub fn draw(app: &mut App, r: Rect, buf: &mut Buffer) {
             format!("{} lines, none passes {filter} · / changes the filter", logs.len())
         };
         crate::ui::text(buf, r.x, r.y, r.width, vec![Span::styled(note, t.dim())]);
+    }
+    let r = if app.logdawg.lines() == 0 { Rect { y: r.y + 1, height: r.height.saturating_sub(1), ..r } } else { r };
+    let show_process = r.width >= PROCESS_FROM;
+    let left = TIME_W + 1 + IDS_W + 1 + TAG_W + 1 + if show_process { PROCESS_W + 1 } else { 0 } + 3 + 1;
+    let width = usize::from(r.width).saturating_sub(left).max(10);
+    app.logdawg.width = width;
+    app.logdawg.height = usize::from(r.height);
+    let focused = app.focus == Focus::List;
+    if app.logdawg.is_empty() || r.height == 0 {
         return;
     }
     // the view: following, the newest line at the bottom; else the cursor's line on it
@@ -433,7 +640,23 @@ pub fn draw(app: &mut App, r: Rect, buf: &mut Buffer) {
     let mut i = top.line;
     let mut skip = top.part;
     while y < bottom {
-        let Some(line) = app.logdawg.id(i).and_then(|id| logs.get(id)) else { break };
+        let line = match app.logdawg.row(i) {
+            None => break,
+            Some(Row::Request(idx)) => {
+                let selected = focused && i == cursor;
+                let row = Rect { x: r.x, y, width: r.width, height: 1 };
+                if let Some(t) = app.view_store().txns().get(idx as usize).cloned() {
+                    request_row(app, &t, row, buf, selected, origin, wall, left);
+                }
+                app.hits.add(row, Target::LogLine(i));
+                (y, skip, i) = (y + 1, 0, i + 1);
+                continue;
+            }
+            Some(Row::Line(id)) => match logs.get(id) {
+                Some(l) => l,
+                None => break,
+            },
+        };
         let (badge, text_style) = t.log_level(line.level);
         let selected = focused && i == cursor;
         let base = if selected { t.selected() } else { Style::default() };

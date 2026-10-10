@@ -16,29 +16,29 @@ expression: "frame(40.0, MEDIUM, \"4\")"
 │              00:10.000            00:15.000             00:20.000            00:25.000            00:30.000            00:35.000         │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ Log 126 ─ Connection ─ Thread ─ Rules ─ Logdawg ─────────────────────────────────────────────────────────── Pixel 8 [demo] · following ─╮
-│ 00:30.866      4312-4369   OkHttp                   D  <-- 200 OK http://localhost:8080/api/v1/notifications (1365ms)                    │
-│ 00:31.473      4312-4369   OkHttp                   D  <-- 200 OK https://telemetry.example.com/v1/events (1383ms)                       │
-│ 00:31.500      4312-4373   OkHttp                   D  --> GET http://localhost:8080/api/v1/notifications                                │
-│ 00:31.826      4312-4312   Choreographer            I  Skipped 55 frames!  The application may be doing too much work on its main thread.│
-│ 00:33.025      4312-4369   OkHttp                   D  <-- 200 OK http://localhost:8080/api/v1/notifications (1524ms)                    │
-│ 00:33.346      4312-4383   OkHttp                   D  --> POST https://telemetry.example.com/v1/events                                  │
-│ 00:33.500      4312-4370   OkHttp                   D  --> GET http://localhost:8080/api/v1/notifications                                │
 │ 00:34.400      4312-4371   OkHttp                   D  --> POST http://localhost:8080/api/v1/sessions                                    │
 │ 00:34.802      4312-4369   OkHttp                   D  <-- 200 OK https://telemetry.example.com/v1/events (1455ms)                       │
 │ 00:35.126      4312-4369   OkHttp                   D  <-- 200 OK http://localhost:8080/api/v1/notifications (1625ms)                    │
+│ 00:35.500    ⇄ request     GET    200        1.70 s    http://localhost:8080/api/v1/notifications                                        │
 │ 00:35.500      4312-4372   OkHttp                   D  --> GET http://localhost:8080/api/v1/notifications                                │
 │ 00:36.132      4312-4369   OkHttp                   D  <-- 200 OK http://localhost:8080/api/v1/sessions (1731ms)                         │
+│ 00:36.385    ⇄ request     GET    200        272 ms    http://localhost:8080/api/v1/products?category=headphones&page=1                  │
 │ 00:36.386      4312-4373   OkHttp                   D  --> GET http://localhost:8080/api/v1/products?category=headphones&page=1          │
+│ 00:36.432    ⇄ request     POST   200        1.47 s    https://telemetry.example.com/v1/events                                           │
 │ 00:36.432      4312-4383   OkHttp                   D  --> POST https://telemetry.example.com/v1/events                                  │
 │ 00:36.645      4312-4369   OkHttp                   D  <-- 200 OK http://localhost:8080/api/v1/products?category=headphones&page=1       │
 │                                                        (259ms)                                                                           │
+│ 00:36.907    ⇄ request     POST   ···        3.09 s    http://localhost:8080/api/v1/cart/items                                           │
 │ 00:36.908      4312-4370   OkHttp                   D  --> POST http://localhost:8080/api/v1/cart/items                                  │
 │ 00:37.179      4312-4369   OkHttp                   D  <-- 200 OK http://localhost:8080/api/v1/notifications (1678ms)                    │
+│ 00:37.500    ⇄ request     GET    200        1.31 s    http://localhost:8080/api/v1/notifications                                        │
 │ 00:37.500      4312-4371   OkHttp                   D  --> GET http://localhost:8080/api/v1/notifications                                │
 │ 00:37.891      4312-4369   OkHttp                   D  <-- 200 OK https://telemetry.example.com/v1/events (1458ms)                       │
 │ 00:38.805      4312-4369   OkHttp                   D  <-- 200 OK http://localhost:8080/api/v1/notifications (1304ms)                    │
 │ 00:38.844      4312-4312   Choreographer            I  Skipped 31 frames!  The application may be doing too much work on its main thread.│
+│ 00:39.500    ⇄ request     GET    ···        500 ms    http://localhost:8080/api/v1/notifications                                        │
 │ 00:39.500      4312-4372   OkHttp                   D  --> GET http://localhost:8080/api/v1/notifications                                │
+│ 00:39.641    ⇄ request     POST   ···        359 ms    https://telemetry.example.com/v1/events                                           │
 │ 00:39.641      4312-4383   OkHttp                   D  --> POST https://telemetry.example.com/v1/events                                  │
 ╰─ filter package:mine ─────────────────────────────────────────────────────────────────────────────────────────────────────── 126 of 165 ─╯
  ↑↓ move   / filter   G follow   Enter open   y copy   Space pause   F freeze   x clear   1 requests   ? help    ⚠ studio inspector present

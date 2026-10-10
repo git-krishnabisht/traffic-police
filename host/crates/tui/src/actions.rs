@@ -29,6 +29,7 @@ pub enum Action {
     ViewThreads,
     ViewRules,
     ViewLogdawg,
+    LogRequests,
     Pause,
     Freeze,
     Live,
@@ -181,6 +182,14 @@ pub const ACTIONS: &[Info] = &[
     info!(ViewThreads, "view-threads", Views, "threads", "Thread View", ["2"]),
     info!(ViewRules, "view-rules", Views, "rules", "Rules", ["3"]),
     info!(ViewLogdawg, "view-logdawg", Views, "logdawg", "Logdawg: the device's log (logcat)", ["4"]),
+    info!(
+        LogRequests,
+        "log-requests",
+        Views,
+        "requests in the log",
+        "Logdawg: show or hide the requests among the lines",
+        ["R"]
+    ),
     info!(Pause, "pause", Live, "pause", "Pause or resume recording on the device (in Logdawg, the log)", ["space"]),
     info!(Freeze, "freeze", Live, "freeze", "Freeze the view (capture continues)", ["F"]),
     info!(Live, "live", Live, "live", "Back to live", ["L"]),

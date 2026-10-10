@@ -49,6 +49,7 @@
 //! history = "all"             # lines from before the session started: all the device has, or a number (0-100000)
 //! keep = "64mb"               # memory the lines may use; the oldest go first
 //! filter = "package:mine"     # the view's filter at start ("" for every line)
+//! requests = true             # the requests among the lines (R shows or hides them)
 //!
 //! [keymap]
 //! pause = "p"                 # an action's name, then one key or a list of keys
@@ -167,6 +168,7 @@ pub struct AdbSection {
 #[serde(deny_unknown_fields)]
 pub struct LogdawgSection {
     pub enabled: Option<bool>,
+    pub requests: Option<bool>,
     pub buffers: Option<Spanned<Vec<String>>>,
     pub history: Option<Spanned<History>>,
     pub keep: Option<Spanned<Size>>,
@@ -668,6 +670,9 @@ impl Loaded {
             && traffic_police_core::logdawg::filter::LogFilter::parse(&f).is_ok()
         {
             app.set_log_filter_text(&f);
+        }
+        if let Some(on) = log.requests {
+            app.logdawg.set_requests(on);
         }
         if let Some(n) = log.keep.as_ref().and_then(|k| size(k.get_ref()).ok()).filter(|n| *n >= LOG_KEEP_MIN) {
             app.store.logs_mut().set_keep(n as usize);

@@ -15,30 +15,30 @@ expression: "frame(40.0, MEDIUM, \"4/<C-u>tag:ok level:loud\")"
 │ 8.0 KB/s                                 ┊            ▔▔▔                                                                                │
 │              00:10.000            00:15.000             00:20.000            00:25.000            00:30.000            00:35.000         │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-╭─ Log 0 ─ Connection ─ Thread ─ Rules ─ Logdawg ───────────────────────────────────────────────────────────────────────── Pixel 8 [demo] ─╮
+╭─ Log 0 ─ Connection ─ Thread ─ Rules ─ Logdawg ───────────────────────────────────────────────────────────── Pixel 8 [demo] · following ─╮
 │ 165 lines, none passes tag:ok level · / changes the filter                                                                               │
-│                                                                                                                                          │
-│                                                                                                                                          │
-│                                                                                                                                          │
-│                                                                                                                                          │
-│                                                                                                                                          │
-│                                                                                                                                          │
-│                                                                                                                                          │
-│                                                                                                                                          │
-│                                                                                                                                          │
-│                                                                                                                                          │
-│                                                                                                                                          │
-│                                                                                                                                          │
-│                                                                                                                                          │
-│                                                                                                                                          │
-│                                                                                                                                          │
-│                                                                                                                                          │
-│                                                                                                                                          │
-│                                                                                                                                          │
-│                                                                                                                                          │
-│                                                                                                                                          │
-│                                                                                                                                          │
-│                                                                                                                                          │
-│                                                                                                                                          │
+│ 00:19.500    ⇄ request     GET    200        1.70 s    http://localhost:8080/api/v1/notifications                                        │
+│ 00:19.836    ⇄ request     POST   200        1.22 s    https://telemetry.example.com/v1/events                                           │
+│ 00:20.586    ⇄ request     GET    200        253 ms    http://localhost:8080/api/v1/orders/status?orderId=ord_15bce3a5a963c9fd           │
+│ 00:21.500    ⇄ request     GET    200        1.32 s    http://localhost:8080/api/v1/notifications                                        │
+│ 00:22.086    ⇄ request     GET    200        313 ms    http://localhost:8080/api/v1/orders/status?orderId=ord_15bce3a5a963c9fd           │
+│ 00:23.433    ⇄ request     POST   200        954 ms    https://telemetry.example.com/v1/events                                           │
+│ 00:23.500    ⇄ request     GET    200        1.39 s    http://localhost:8080/api/v1/notifications                                        │
+│ 00:25.500    ⇄ request     GET    200        1.50 s    http://localhost:8080/api/v1/notifications                                        │
+│ 00:26.849    ⇄ request     POST   200        1.21 s    https://telemetry.example.com/v1/events                                           │
+│ 00:27.500    ⇄ request     GET    200        1.66 s    http://localhost:8080/api/v1/notifications                                        │
+│ 00:29.500    ⇄ request     GET    200        1.39 s    http://localhost:8080/api/v1/notifications                                        │
+│ 00:30.089    ⇄ request     POST   200        1.39 s    https://telemetry.example.com/v1/events                                           │
+│ 00:31.500    ⇄ request     GET    200        1.54 s    http://localhost:8080/api/v1/notifications                                        │
+│ 00:33.346    ⇄ request     POST   200        1.46 s    https://telemetry.example.com/v1/events                                           │
+│ 00:33.500    ⇄ request     GET    200        1.63 s    http://localhost:8080/api/v1/notifications                                        │
+│ 00:34.399    ⇄ request     POST   200        1.74 s    http://localhost:8080/api/v1/sessions                                             │
+│ 00:35.500    ⇄ request     GET    200        1.70 s    http://localhost:8080/api/v1/notifications                                        │
+│ 00:36.385    ⇄ request     GET    200        272 ms    http://localhost:8080/api/v1/products?category=headphones&page=1                  │
+│ 00:36.432    ⇄ request     POST   200        1.47 s    https://telemetry.example.com/v1/events                                           │
+│ 00:36.907    ⇄ request     POST   ···        3.09 s    http://localhost:8080/api/v1/cart/items                                           │
+│ 00:37.500    ⇄ request     GET    200        1.31 s    http://localhost:8080/api/v1/notifications                                        │
+│ 00:39.500    ⇄ request     GET    ···        500 ms    http://localhost:8080/api/v1/notifications                                        │
+│ 00:39.641    ⇄ request     POST   ···        359 ms    https://telemetry.example.com/v1/events                                           │
 ╰─ filter tag:ok level ───────────────────────────────────────────────────────────────────────────────────────────────────────── 0 of 165 ─╯
  log filter ▸ tag:ok level:loud                                          "loud" is not a level: verbose, debug, info, warn, error or assert
