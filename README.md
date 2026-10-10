@@ -331,14 +331,25 @@ Press `4` for Logdawg: the device's log, as Android Studio's Logcat shows it, on
 timeline as the requests. It is read over adb, the way `logcat` reads it, whenever you watch an
 app (library, attach or flutter mode), so the app needs nothing for it. It starts with your
 app's lines, `package:mine`: every line written under the app's user id, from all its processes
-and across restarts. The last 5,000 lines from before the session started come first.
+and across restarts. Everything the device still keeps from before the session started comes
+first, as in Android Studio, so after `:q` a new run shows the app's earlier lines again, as far
+back as the device's log goes (Developer options → Logger buffer sizes sets how much it keeps).
 
 Each line shows its time (`t` switches between the time since the start and the wall clock), the
 process and thread ids, the tag, the process's name (on a wide screen), the level and the
 message; a message of several lines, a stack trace say, takes the rows it needs. New lines are
 followed while the cursor is on the newest, and `G` follows again. `Enter` opens a line with all
 its fields, `y` copies it as `logcat -v threadtime` prints it, `F` freezes the view, `x` clears
-the log (the requests stay) and `1` goes back to the requests.
+the log (the requests stay) and `1` goes back to the requests. `Space` pauses the log: nothing
+more is read until `Space` again, which brings what the device logged meanwhile too, while the
+device still has it (in views 1 to 3 `Space` pauses the network capture). `4` always puts the
+focus on the log, also from a request's tabs.
+
+To inspect another app without quitting, press `A` (or `:app`): the app picker opens on the
+session's device (`Esc` there lists the devices). Picking a debuggable app moves the network
+capture and `package:mine` to it, the way the picker at the start would watch it (the agent is
+attached to an app without the library); the requests and lines so far stay, and the timeline
+marks the switch. `:q` in the picker goes back to the session.
 
 | Filter (`/`) | Matches |
 |---|---|
@@ -379,11 +390,11 @@ or turns the log off.
 | Graph | Receiving above the zero line, sending below, each half scaled to its own peak (`:` layout switches to one shared scale; `:` style switches between solid areas, braille curves and step lines) · `T` whole-app traffic or captured requests · `t` time since start or wall clock · `←` `→` move when the graph has focus |
 | List | New requests are followed while the cursor is on the newest; `G` (or `End`, `Ctrl+G`) goes back to it and follows again, also with a request open · `c` collapse repeated calls · `s` sort by the next column · `S` reverse the sort · `C` choose columns |
 | Find | `/` in the list: the filter bar ([language below](#filters)) · `/` in the detail pane: search the tab (`n` `N` next and previous match) · `m` pin a request (`is:pinned` lists pins) |
-| Logdawg | `/` filter ([language](#the-devices-log-logdawg)) · `Enter` a line with all its fields · `y` copy it as logcat prints it · `G` follow new lines · `F` freeze · `x` clear the log (asks first) · `t` time since start or wall clock |
+| Logdawg | `/` filter ([language](#the-devices-log-logdawg)) · `Enter` a line with all its fields · `y` copy it as logcat prints it · `G` follow new lines · `Space` pause the log or go on · `F` freeze · `x` clear the log (asks first) · `t` time since start or wall clock |
 | Copy and save | `y` copy: as cURL, the URL, headers, one header, a body, the JSON value at the cursor · `w` save a body to a file · `e` export: HAR (all, listed or selected requests) or a session file |
 | Compare | `d` marks a request (◆), `d` on another compares them: request and status lines, headers (`s` in order or as sets), bodies (JSON with keys sorted); `n` `N` step through changes, `y` copies the diff |
 | Decode | `Enter` on a header or a JSON value: copy it, decode a JWT, base64 or URL encoding, or filter by it · the Overview lists JWTs with their expiry (`Enter` decodes) |
-| Session | `:` command palette (every command by name, and the graph styles and layouts) · `x` clear (asks first) · `?` help · `:q` Enter quits, as in Neovim (`:q!`, `:qa`, `:wq` and `:x` too, also in the device and app pickers); `q` and Ctrl+C do not quit, they say how (`quit = ["q"]` under `[keymap]` brings `q` back) |
+| Session | `:` command palette (every command by name, and the graph styles and layouts) · `A` (or `:app`) another debuggable app, without quitting · `x` clear (asks first) · `?` help · `:q` Enter quits, as in Neovim (`:q!`, `:qa`, `:wq` and `:x` too, also in the device and app pickers); `q` and Ctrl+C do not quit, they say how (`quit = ["q"]` under `[keymap]` brings `q` back) |
 
 Mouse: click rows and tabs, double-click a row to open it, wheel to scroll (on the graph the
 wheel zooms and Shift+wheel moves in time), drag on the graph to select a range, drag the divider
@@ -494,7 +505,7 @@ response_bodies = true
 [logdawg]                     # the device's log, in view 4
 enabled = true                # false: the log is not read
 buffers = ["main", "system", "crash"]   # logcat's buffers: main, system, crash, radio, kernel
-history = 5000                # lines from before the session started (0-100000)
+history = "all"               # lines from before the session started: "all" the device has (as Android Studio), or 0-100000
 keep = "64mb"                 # memory the lines may use (1mb or more); the oldest go first
 filter = "package:mine"       # the filter at start ("" shows every line)
 
