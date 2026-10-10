@@ -867,3 +867,75 @@ async fn plain_app_attach_end_to_end() {
     assert!(report.problems.is_empty(), "{} problems:\n  {}", report.problems.len(), report.problems.join("\n  "));
     let _ = adb.shell(id, &format!("am force-stop {PLAIN}")).await;
 }
+
+/// Logdawg on a device: the sample app's uid, a line written now arriving with the device's
+/// boot clock, and the app's own lines (and only those) passing `package:mine`.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "reads the device's log and starts the sample app: set TP_E2E_SERIAL"]
+async fn logdawg_reads_the_devices_log() {
+    use traffic_police_backends::{LogdawgTarget, run_logdawg};
+    use traffic_police_core::logdawg::Level;
+    use traffic_police_core::logdawg::filter::{Context, LogFilter};
+
+    let serial = std::env::var("TP_E2E_SERIAL").expect("set TP_E2E_SERIAL to the device's serial");
+    let adb = Adb::from_env();
+    let device = adb
+        .devices()
+        .await
+        .expect("adb server")
+        .into_iter()
+        .find(|d| d.serial == serial && d.is_online())
+        .unwrap_or_else(|| panic!("{serial} is not online"));
+    let id = device.transport_id;
+    let installed = adb.shell(id, &format!("pm path {PACKAGE}")).await.unwrap();
+    assert!(installed.stdout_text().contains("base.apk"), "install the sample's debug build on {serial} first");
+    adb.shell(id, &format!("am force-stop {PACKAGE}")).await.unwrap();
+
+    let (event_tx, events) = mpsc::channel(1024);
+    let target = LogdawgTarget {
+        serial: Some(serial.clone()),
+        package: Some(PACKAGE.into()),
+        history: 100,
+        ..LogdawgTarget::default()
+    };
+    let task = tokio::spawn(run_logdawg(adb.clone(), target, event_tx));
+    let mut session = Session { store: SessionStore::new(), events };
+    session.until("the app's uid", Duration::from_secs(30), |s| s.logs().uid().is_some()).await;
+
+    // a line written now, from the shell
+    let marker = format!("marker {}", std::process::id());
+    adb.shell(id, &format!("log -t LogdawgE2E -p w '{marker}'")).await.unwrap();
+    session
+        .until("the shell's line", Duration::from_secs(30), |s| {
+            s.logs().iter_from(0).any(|l| l.tag == "LogdawgE2E" && l.message == marker)
+        })
+        .await;
+    let uptime = adb.shell(id, "cat /proc/uptime").await.unwrap().stdout_text();
+    let boot_ns = (uptime.split_whitespace().next().unwrap().parse::<f64>().unwrap() * 1e9) as u64;
+    let marker_id = {
+        let line = session.store.logs().iter_from(0).find(|l| l.tag == "LogdawgE2E" && l.message == marker).unwrap();
+        assert_eq!((line.level, line.uid), (Level::Warn, Some(2000)), "the shell's uid");
+        // written just before the uptime was read: the clock mapping is good to a few hundredths
+        assert!(line.ts <= boot_ns + 100_000_000 && boot_ns - line.ts < 5_000_000_000, "{} vs {boot_ns}", line.ts);
+        line.id
+    };
+
+    // the app's lines, and only those, are its own
+    adb.shell(id, &format!("am start -n {PACKAGE}/.MainActivity")).await.unwrap();
+    let uid = session.store.logs().uid().unwrap();
+    session
+        .until("the app's lines", Duration::from_secs(60), |s| s.logs().iter_from(0).any(|l| l.uid == Some(uid)))
+        .await;
+    let mine = LogFilter::parse("package:mine").unwrap().unwrap();
+    let pids = std::collections::HashSet::new();
+    let cx = Context { app_pids: &pids, now: boot_ns };
+    let logs = session.store.logs();
+    assert!(logs.iter_from(0).filter(|l| l.uid == Some(uid)).all(|l| mine.matches(&l, logs, &cx)));
+    assert!(!mine.matches(&logs.get(marker_id).unwrap(), logs, &cx), "the shell's line is not the app's");
+    let theirs = logs.iter_from(0).filter(|l| l.uid == Some(uid)).count();
+    eprintln!("logdawg: {} lines, {theirs} of the app (uid {uid}), {} tags", logs.len(), logs.tag_count());
+
+    drop(session);
+    tokio::time::timeout(Duration::from_secs(5), task).await.expect("the reader stops").unwrap();
+    let _ = adb.shell(id, &format!("am force-stop {PACKAGE}")).await;
+}

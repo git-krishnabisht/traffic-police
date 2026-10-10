@@ -5,6 +5,7 @@
 
 pub mod apps;
 pub mod devices;
+pub mod logcat;
 pub mod pb;
 pub mod sockets;
 mod sync;
@@ -425,6 +426,20 @@ impl Adb {
             .collect())
     }
 
+    /// The device's log as a stream of binary records (`exec:` has no terminal in between, so
+    /// nothing changes the bytes): `command` is from [`logcat::command`]; read it with
+    /// [`logcat::Parser`].
+    pub async fn logcat(&self, id: TransportId, command: &str) -> Result<TcpStream> {
+        self.open_service(id, &format!("exec:{command}")).await
+    }
+
+    /// The uid an installed app's processes run as (`pm list packages -U`, Android 8 and
+    /// newer), which marks all of its lines in the log; `None` when the package is not installed.
+    pub async fn package_uid(&self, id: TransportId, package: &str) -> Result<Option<u32>> {
+        let out = self.shell(id, &format!("pm list packages -U {}", quote(package))).await?;
+        Ok(parse_package_uid(&out.stdout_text(), package))
+    }
+
     /// Pushes a file to the device using the sync protocol. `mode` is the Unix permission
     /// (e.g. `0o644` for read-only, `0o755` for executable); the regular-file flag is added.
     pub async fn push(&self, id: TransportId, data: &[u8], remote_path: &str, mode: u32) -> Result<()> {
@@ -477,6 +492,17 @@ pub fn find_adb_binary() -> Option<std::path::PathBuf> {
         candidates.extend(std::env::split_paths(&path).map(|d| d.join(exe)));
     }
     candidates.into_iter().find(|p| p.is_file())
+}
+
+/// The uid on the line of exactly `package` in `pm list packages -U` output (it lists every
+/// package whose name contains the text, e.g. an overlay `<package>.auto_generated_rro_…`).
+fn parse_package_uid(text: &str, package: &str) -> Option<u32> {
+    text.lines().find_map(|l| {
+        let rest = l.trim().strip_prefix("package:")?;
+        let (name, uid) = rest.split_once(" uid:")?;
+        // a user's other uids follow after commas
+        (name == package).then(|| uid.split(',').next()?.trim().parse().ok())?
+    })
 }
 
 /// Streams the device list: the full list on every change, identical repeats skipped.
@@ -585,6 +611,18 @@ async fn read_shell_packets(s: &mut TcpStream) -> Result<ShellOutput> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_uid_of_exactly_the_package() {
+        let out = "package:com.android.settings uid:1000\npackage:com.android.settings.auto_generated_rro_product__ uid:10029\n";
+        assert_eq!(super::parse_package_uid(out, "com.android.settings"), Some(1000));
+        assert_eq!(super::parse_package_uid(out, "com.android.settings.auto_generated_rro_product__"), Some(10029));
+        assert_eq!(
+            super::parse_package_uid("package:com.example.app uid:10123,1010123\n", "com.example.app"),
+            Some(10123)
+        );
+        assert_eq!(super::parse_package_uid("", "com.example.app"), None);
+    }
+
     use super::*;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;

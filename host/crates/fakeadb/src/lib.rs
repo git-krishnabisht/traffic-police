@@ -30,6 +30,8 @@ struct Inner {
     state: Mutex<State>,
     /// Bumped on every change of the device list (`track-devices` sends the list again).
     devices_changed: watch::Sender<u64>,
+    /// Bumped when a device's log gets a line or its streams are cut (`exec:logcat`).
+    log_changed: watch::Sender<u64>,
     running: Mutex<Option<Running>>,
 }
 
@@ -65,6 +67,12 @@ struct Dev {
     commands: Vec<String>,
     /// Logcat lines by pid (`logcat -d --pid=`).
     logs: Vec<(u32, String)>,
+    /// The device's log in binary records (`exec:logcat -B`).
+    records: Vec<traffic_police_adb::logcat::Record>,
+    /// Bumped to end the log streams open now (as when logd restarts).
+    log_epoch: u64,
+    /// Installed packages' uids (`pm list packages -U`).
+    uids: HashMap<String, u32>,
     /// Device TCP ports and the host address that serves each (`forward tcp:0 tcp:<port>`).
     tcp: HashMap<u16, std::net::SocketAddr>,
 }
@@ -81,11 +89,13 @@ impl FakeAdb {
         let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind a port for the fake adb server");
         let port = listener.local_addr().expect("local address").port();
         let (devices_changed, _) = watch::channel(0);
+        let (log_changed, _) = watch::channel(0);
         let fake = FakeAdb {
             inner: Arc::new(Inner {
                 port,
                 state: Mutex::new(State { next_transport: 1, ..State::default() }),
                 devices_changed,
+                log_changed,
                 running: Mutex::new(None),
             }),
         };
@@ -123,6 +133,9 @@ impl FakeAdb {
                 unix_readable: true,
                 commands: Vec::new(),
                 logs: Vec::new(),
+                records: Vec::new(),
+                log_epoch: 0,
+                uids: HashMap::new(),
                 tcp: HashMap::new(),
             });
             id
@@ -143,6 +156,8 @@ impl FakeAdb {
             }
         }
         self.devices_changed();
+        // an offline device's log streams end
+        self.inner.log_changed.send_modify(|n| *n += 1);
     }
 
     /// Whether the device's shell may read `/proc/net/unix` (some devices hide it).
@@ -158,6 +173,25 @@ impl FakeAdb {
     /// A line the process logs (what `logcat -d --pid=<pid>` shows).
     pub fn log(&self, serial: &str, pid: u32, line: &str) {
         self.with_device(serial, |d| d.logs.push((pid, line.to_string())));
+    }
+
+    /// A line of the device's log, as `logcat -B` writes it; open streams get it at once.
+    pub fn logcat(&self, serial: &str, record: traffic_police_adb::logcat::Record) {
+        self.with_device(serial, |d| d.records.push(record));
+        self.inner.log_changed.send_modify(|n| *n += 1);
+    }
+
+    /// Ends the device's open log streams (the reader starts again where it was).
+    pub fn break_logcat(&self, serial: &str) {
+        self.with_device(serial, |d| d.log_epoch += 1);
+        self.inner.log_changed.send_modify(|n| *n += 1);
+    }
+
+    /// An installed package and the uid its processes run as.
+    pub fn install(&self, serial: &str, package: &str, uid: u32) {
+        self.with_device(serial, |d| {
+            d.uids.insert(package.to_string(), uid);
+        });
     }
 
     /// A TCP port on the device, served by `to` on this computer (a Flutter app's VM service).
@@ -491,6 +525,10 @@ async fn device_service(inner: &Arc<Inner>, mut s: TcpStream, serial: &str, serv
         let _ = s.write_all(&packets).await;
         let mut rest = Vec::new();
         let _ = tokio::time::timeout(Duration::from_secs(1), s.read_to_end(&mut rest)).await;
+    } else if let Some(command) = service.strip_prefix("exec:")
+        && command.starts_with("logcat ")
+    {
+        serve_logcat(inner, s, serial, command).await;
     } else if service == "track-jdwp" {
         let pids: String = {
             let st = inner.state.lock().unwrap();
@@ -506,6 +544,55 @@ async fn device_service(inner: &Arc<Inner>, mut s: TcpStream, serial: &str, serv
         }
     } else {
         fail(&mut s, &format!("unknown service {service}")).await;
+    }
+}
+
+/// `exec:logcat -B … -T <count | sssss.mmm>`: the lines of the device's log from there, then each
+/// new one, until the device goes offline, its streams are cut, or the client closes.
+async fn serve_logcat(inner: &Arc<Inner>, mut s: TcpStream, serial: &str, command: &str) {
+    let start = command.split_whitespace().skip_while(|w| *w != "-T").nth(1).unwrap_or("1").to_string();
+    let found = {
+        let mut st = inner.state.lock().unwrap();
+        st.devices.iter_mut().find(|d| d.serial == serial).map(|d| {
+            d.commands.push(command.to_string());
+            let from = match start.split_once('.') {
+                Some((sec, ms)) => {
+                    let at =
+                        sec.parse::<i128>().unwrap_or(0) * 1_000_000_000 + ms.parse::<i128>().unwrap_or(0) * 1_000_000;
+                    d.records.iter().position(|r| r.wall_ns() >= at).unwrap_or(d.records.len())
+                }
+                None => d.records.len().saturating_sub(start.parse().unwrap_or(1)),
+            };
+            (from, d.log_epoch)
+        })
+    };
+    let Some((mut sent, epoch)) = found else {
+        fail(&mut s, "device gone").await;
+        return;
+    };
+    let mut changed = inner.log_changed.subscribe();
+    if !okay(&mut s).await {
+        return;
+    }
+    loop {
+        let (bytes, open) = {
+            let st = inner.state.lock().unwrap();
+            match st.devices.iter().find(|d| d.serial == serial) {
+                Some(d) if d.state == "device" && d.log_epoch == epoch => {
+                    let bytes: Vec<u8> =
+                        d.records[sent..].iter().flat_map(traffic_police_adb::logcat::encode).collect();
+                    sent = d.records.len();
+                    (bytes, true)
+                }
+                _ => (Vec::new(), false),
+            }
+        };
+        if !bytes.is_empty() && s.write_all(&bytes).await.is_err() {
+            return;
+        }
+        if !open || changed.changed().await.is_err() {
+            return;
+        }
     }
 }
 
@@ -578,6 +665,19 @@ fn run_shell(d: &mut Dev, command: &str) -> (String, String, u8) {
             out.push_str(&value);
             out.push('\n');
         }
+        return (out, String::new(), 0);
+    }
+    if command == "cat /proc/uptime; date +%s%N" {
+        // the clocks Logdawg's reader maps the log's wall-clock times with
+        return ("8283.09 18565.22\n1790000000000000000\n".into(), String::new(), 0);
+    }
+    if let Some(name) = command.strip_prefix("pm list packages -U ") {
+        // every package whose name contains the text, as pm lists them
+        let name = name.trim();
+        let name = name.strip_prefix('\'').and_then(|n| n.strip_suffix('\'')).unwrap_or(name);
+        let mut found: Vec<(&String, &u32)> = d.uids.iter().filter(|(p, _)| p.contains(name)).collect();
+        found.sort();
+        let out: String = found.into_iter().map(|(p, uid)| format!("package:{p} uid:{uid}\n")).collect();
         return (out, String::new(), 0);
     }
     if let Some(name) = command.strip_prefix("pidof ") {

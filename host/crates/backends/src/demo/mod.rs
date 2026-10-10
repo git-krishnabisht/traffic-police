@@ -5,6 +5,7 @@
 //! With a fixed seed the timeline is identical on every run, which the snapshot tests rely on.
 
 pub mod content;
+mod logs;
 
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap};
@@ -1621,6 +1622,8 @@ pub struct DemoSession {
     buf: BytesMut,
     /// Keeps the generated stream, so a demo session can be saved like a real one.
     pub log: Option<std::sync::Arc<dyn traffic_police_core::session::StreamSink>>,
+    /// The device's log (Logdawg), made from the events.
+    logs: logs::DemoLog,
 }
 
 impl DemoSession {
@@ -1632,6 +1635,7 @@ impl DemoSession {
             ids,
             current: None,
             log: None,
+            logs: logs::DemoLog::new(),
             buf: BytesMut::new(),
         }
     }
@@ -1705,6 +1709,11 @@ impl DemoSession {
                 Err(e) => tracing::warn!("demo produced an undecodable message: {e}"),
             }
         }
+        // the device's log for what happened, and the system's chatter up to now
+        let wall0 = self.device.cfg.wall_start_ms;
+        let now = BASE_TS + elapsed_ns;
+        let lines = self.logs.step(&out, now, |ts| wall0 + (ts.saturating_sub(BASE_TS) / MS) as i64);
+        out.extend(lines);
         out
     }
 }

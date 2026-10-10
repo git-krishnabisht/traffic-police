@@ -2628,6 +2628,7 @@ dependencies = [
 name = "traffic-police-adb"
 version = "0.4.0"
 dependencies = [
+ "bytes",
  "thiserror 2.0.21",
  "tokio",
  "tracing",
