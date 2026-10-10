@@ -1,6 +1,6 @@
 # traffic-police architecture
 
-Status: describes what is built: Phases 0 to 4 (released as 0.1.0 to 0.3.1), the fixes and additions of 2026-10-07 (the rule form, the socket-name fallback, fuzzing, the device tests; §9.2), and Phase 5: WebSocket messages (§4.2), gRPC (§4.9) and the Flutter backend (§5.16), released with the one-line installers and the Android libraries' Maven repository (§8) as 0.4.0. After 0.4.0: Logdawg, the device's log as Android Studio's Logcat shows it (§5.17). It began as the Phase 0 design; where the building changed it, the text says what was built and why. PROTOCOL.md defines the wire format; this document defines everything else. Statements about Android, ART, OkHttp, adb and Android Studio were checked against their sources; §11 lists where.
+Status: describes what is built: Phases 0 to 4 (released as 0.1.0 to 0.3.1), the fixes and additions of 2026-10-07 (the rule form, the socket-name fallback, fuzzing, the device tests; §9.2), and Phase 5: WebSocket messages (§4.2), gRPC (§4.9) and the Flutter backend (§5.16), released with the one-line installers and the Android libraries' Maven repository (§8) as 0.4.0. Then Logdawg, the device's log as Android Studio's Logcat shows it (§5.17), and another app without quitting (§5.5), released as 0.5.0. It began as the Phase 0 design; where the building changed it, the text says what was built and why. PROTOCOL.md defines the wire format; this document defines everything else. Statements about Android, ART, OkHttp, adb and Android Studio were checked against their sources; §11 lists where.
 
 Contents
 
@@ -882,7 +882,7 @@ Decided at the user's request (2026-10-08):
 | 4 | Attach mode | An unmodified debuggable app shows traffic, including clients created before attach; `--launch` captures start-up requests; release binaries embed the agent and dex |
 | Fixes | Everything the plan left (2026-10-07) | The rule form (5.11.1) and rule reordering; the socket-name fallback (5.4); the nightly attach failure (4.7.2); the bugs of 0.3.1; the checks, tests and measurements the design promised (4.1, 8, 6); API 27–29 tried on devices |
 | 5 | Optional | WebSocket frames (§4.2) and gRPC (§4.9) in both modes, built and verified on devices 2026-10-07; Flutter (Dart VM service) backend (§5.16) |
-| After 0.4.0 | Logdawg (§5.17), at the user's request | The device's log in view 4 with Studio's filter language, live on emulators (API 26, 31, 37); then its pause, everything the device still has at start, `4` focusing the log, and another app without quitting (§5.5), live on an API 31 emulator. then a request's lines in its detail pane (with the runtime sending each thread's kernel id), requests among the lines, the graph's range in view 4, and the log in session files |
+| 0.5.0 | Logdawg (§5.17), at the user's request | The device's log in view 4 with Studio's filter language, live on emulators (API 26, 31, 37); then its pause, everything the device still has at start, `4` focusing the log, and another app without quitting (§5.5), live on an API 31 emulator. then a request's lines in its detail pane (with the runtime sending each thread's kernel id), requests among the lines, the graph's range in view 4, and the log in session files |
 
 ## 11. Sources checked
 
