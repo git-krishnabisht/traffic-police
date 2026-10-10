@@ -25,7 +25,7 @@ expression: "detail(12.0, MEDIUM, init(), \"l|.config\")"
 │ notifications        306 B  json      200          1.33 s            🮉   ▐│ │     "maxPolls": 20,                                        │
 │ products?catego…    1.0 KB  json      200          431 ms            ▏   ▐│ │     "features": {                                          │
 │ config                 0 B            302           61 ms            ▕   ▐│ ╰────────────────────────────────────────────────────────────╯
-│ ↪ config.json        103 B  json      200          315 ms            ▕   ▐│ ╭─ Overview ─ Response ─ Request ─ Call Stack ───────────────╮
+│ ↪ config.json        103 B  json      200          315 ms            ▕   ▐│ ╭─ Overview ─ Response ─ Request ─ Call Stack ─ Logs ────────╮
 │ items                149 B  json      200          2.79 s            🮇█  ▐│ │ HTTP/1.1 200 OK                                            │
 │ metrics                6 B  protobuf  200          338 ms             ▏  ▐│ │                                                            │
 │ notifications        306 B  json      200          1.65 s             ▊  ▐│ │ Headers (8)                                                │

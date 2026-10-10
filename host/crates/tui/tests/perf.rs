@@ -52,7 +52,12 @@ fn synth(source: u32, first_txn: u64, count: u64, end: u64, gap: u64) -> Vec<Ses
             url: format!("https://api.example.app{}?page={}", paths[(i % 6) as usize], i % 17),
             headers: vec![("Accept".into(), "application/json".into()), ("Authorization".into(), "Bearer abc".into())],
             client: Some(ClientInfo { kind: "okhttp".into(), version: Some("4.12.0".into()) }),
-            thread: Some(ThreadInfo { id: 50 + th as i64, name: threads[th].into(), origin: Some("call".into()) }),
+            thread: Some(ThreadInfo {
+                id: 50 + th as i64,
+                name: threads[th].into(),
+                tid: None,
+                origin: Some("call".into()),
+            }),
             stack: vec![StackFrame {
                 c: "com.example.App".into(),
                 m: "load".into(),

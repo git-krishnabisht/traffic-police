@@ -345,8 +345,13 @@ impl SessionStore {
                 let r = *r;
                 let idx = self.idx_or_placeholder(r.key, r.at);
                 let lane = r.thread.as_ref().map(|t| {
-                    let info =
-                        ThreadInfo { source: r.key.source, id: t.id, name: t.name.clone(), origin: t.origin.clone() };
+                    let info = ThreadInfo {
+                        source: r.key.source,
+                        id: t.id,
+                        name: t.name.clone(),
+                        tid: t.tid,
+                        origin: t.origin.clone(),
+                    };
                     (self.lane_for(&info), info)
                 });
                 let req_hdr = header_bytes(&r.headers) + (r.method.len() + r.url.len() + 12) as u64;

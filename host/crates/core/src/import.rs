@@ -264,6 +264,7 @@ fn entry_events(e: &Value, key: TxnKey, start: Ts, out: &mut Vec<SessionEvent>) 
     let thread = tp["thread"]["name"].as_str().map(|name| msg::ThreadInfo {
         name: name.to_string(),
         id: tp["thread"]["id"].as_i64().unwrap_or(0),
+        tid: tp["thread"]["tid"].as_u64().and_then(|t| u32::try_from(t).ok()),
         origin: tp["thread"]["origin"].as_str().map(str::to_string),
     });
     let stack: Vec<StackFrame> = tp["stack"]

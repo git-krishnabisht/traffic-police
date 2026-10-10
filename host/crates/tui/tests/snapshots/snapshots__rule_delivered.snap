@@ -25,7 +25,7 @@ expression: "detail(40.0, MEDIUM, modified(), \"l\")"
 │ notifications        306 B  json      200          1.50 s   🮈▎            │ │   "eta": null,                                             │
 │ status?orderId=…     146 B  json      200          421 ms   ▕             │ │   "updatedAt": "2026-09-29T05:04:51.000Z"                  │
 │ catalog-offline…    5.0 MB  binary    200          6.38 s    ▏█▊         ▐│ ╰────────────────────────────────────────────────────────────╯
-│ status?orderId=…     146 B  json      200          282 ms    ▏           ▐│ ╭─ Overview ─ Response ─ Request ─ Call Stack ───────────────╮
+│ status?orderId=…     146 B  json      200          282 ms    ▏           ▐│ ╭─ Overview ─ Response ─ Request ─ Call Stack ─ Logs ────────╮
 │ ! events              17 B  json      200          1.04 s    ▐           ▐│ │ HTTP/1.1 200 OK                                            │
 │ notifications        306 B  json      200          1.77 s    ▐▎          ▐│ │ ✎ changed by rule "Force payment captured" · o: original   │
 │ status?orderId=…     146 B  json      200          134 ms     ▏          ▐│ │                                                            │

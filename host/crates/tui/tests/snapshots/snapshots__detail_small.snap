@@ -20,7 +20,7 @@ expression: "detail(12.0, SMALL, path_is(\"/api/v1/sessions\"), \"l\")"
 │   "userId": "user_1024",                                                                         │
 │   "config": {                                                                                    │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
-╭─ Overview ─ Response ─ Request ─ Call Stack ─────────────────────────────────────────────────────╮
+╭─ Overview ─ Response ─ Request ─ Call Stack ─ Logs ──────────────────────────────────────────────╮
 │ HTTP/1.1 200 OK                                                                                  │
 │                                                                                                  │
 │ Headers (8)                                                                                      │

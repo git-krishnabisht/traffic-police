@@ -137,7 +137,7 @@ impl DemoLog {
                 }
                 SessionEvent::Request(r) => {
                     let pid = self.pids.get(&r.key.source).copied().unwrap_or(4312);
-                    let tid = r.thread.as_ref().map_or(pid, |t| pid + t.id.clamp(0, 9999) as u32);
+                    let tid = r.thread.as_ref().and_then(|t| t.tid).unwrap_or(pid);
                     self.requests.insert(r.key, (r.url.clone(), r.at));
                     lines.push(line(
                         r.at,

@@ -171,6 +171,8 @@ fn detail_tabs_for_json_post() {
     );
     snap!("detail_request_json", detail(12.0, MEDIUM, init(), "ll"));
     snap!("detail_call_stack", detail(12.0, MEDIUM, init(), "lll"));
+    // the app's log while it ran, the request's own line (its thread's) marked
+    snap!("detail_logs", detail(12.0, MEDIUM, init(), "llll"));
     snap!("detail_call_stack_expanded", detail(12.0, MEDIUM, init(), "lll<Down><Down><Down><Enter>"));
 }
 

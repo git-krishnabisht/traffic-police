@@ -177,6 +177,17 @@ pub(crate) fn shown(text: &str) -> std::borrow::Cow<'_, str> {
     std::borrow::Cow::Owned(out)
 }
 
+/// A line's time: since the session's start (before it, negative), or the wall clock.
+pub(crate) fn line_time(line: &LogLine<'_>, origin: Ts, wall: bool) -> String {
+    if wall {
+        fmt::wall_clock(line.wall_ms)
+    } else if line.ts >= origin {
+        fmt::offset(line.ts - origin)
+    } else {
+        format!("-{}", fmt::offset(origin - line.ts))
+    }
+}
+
 /// A message's rows (of its [`shown`] text): byte ranges, one for each of its lines, or
 /// (wrapping) for each row they take at `width`.
 fn message_rows(message: &str, width: usize, wrapping: bool) -> Vec<(usize, usize)> {
@@ -438,13 +449,7 @@ pub fn draw(app: &mut App, r: Rect, buf: &mut Buffer) {
             }
             let mut spans: Vec<Span<'static>> = Vec::new();
             if k == 0 {
-                let time = if wall {
-                    fmt::wall_clock(line.wall_ms)
-                } else if line.ts >= origin {
-                    fmt::offset(line.ts - origin)
-                } else {
-                    format!("-{}", fmt::offset(origin - line.ts))
-                };
+                let time = line_time(&line, origin, wall);
                 spans.push(Span::styled(format!("{time:<TIME_W$} "), t.dim().patch(base)));
                 spans.push(Span::styled(format!("{:>6}-{:<6} ", line.pid, line.tid), t.faint().patch(base)));
                 spans.push(Span::styled(

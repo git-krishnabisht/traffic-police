@@ -187,7 +187,7 @@ pub fn http_date(wall_ms: i64) -> String {
 // --- threads and stacks ---------------------------------------------------------------------
 
 pub fn thread(name: &str, id: i64, origin: &str) -> ThreadInfo {
-    ThreadInfo { name: name.into(), id, origin: Some(origin.into()) }
+    ThreadInfo { name: name.into(), id, tid: None, origin: Some(origin.into()) }
 }
 
 fn f(c: &str, m: &str, file: &str, line: i32) -> StackFrame {

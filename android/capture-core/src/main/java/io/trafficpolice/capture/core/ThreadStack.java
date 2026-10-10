@@ -13,6 +13,8 @@ public final class ThreadStack {
 
     final String threadName;
     final long threadId;
+    /** The kernel's id of the thread (logcat's tid), or -1 where there is none (off Android). */
+    final int tid;
     final String origin;
     private final int depth;
     /** Where the app was; resolved (and dropped) on first use of {@link #frames()}. */
@@ -21,17 +23,24 @@ public final class ThreadStack {
     private boolean truncated;
 
     public ThreadStack(String threadName, long threadId, String origin, StackTraceElement[] frames, boolean truncated) {
+        this(threadName, threadId, -1, origin, frames, truncated);
+    }
+
+    public ThreadStack(
+            String threadName, long threadId, int tid, String origin, StackTraceElement[] frames, boolean truncated) {
         this.threadName = threadName;
         this.threadId = threadId;
+        this.tid = tid;
         this.origin = origin;
         this.depth = frames.length;
         this.frames = frames;
         this.truncated = truncated;
     }
 
-    private ThreadStack(String threadName, long threadId, String origin, Throwable site, int depth) {
+    private ThreadStack(String threadName, long threadId, int tid, String origin, Throwable site, int depth) {
         this.threadName = threadName;
         this.threadId = threadId;
+        this.tid = tid;
         this.origin = origin;
         this.depth = depth;
         this.site = site;
@@ -43,7 +52,7 @@ public final class ThreadStack {
      */
     public static ThreadStack capture(String origin, int depth) {
         Thread t = Thread.currentThread();
-        return new ThreadStack(t.getName(), threadIdOf(t), origin, depth > 0 ? new Throwable() : null, depth);
+        return new ThreadStack(t.getName(), threadIdOf(t), Tids.current(), origin, depth > 0 ? new Throwable() : null, depth);
     }
 
     /** The frames, resolved on first use (the writer thread). */
@@ -100,7 +109,11 @@ public final class ThreadStack {
     }
 
     void writeThread(Json j) {
-        j.key("thread").obj().kv("name", threadName).kv("id", threadId).kv("origin", origin).endObj();
+        j.key("thread").obj().kv("name", threadName).kv("id", threadId);
+        if (tid >= 0) {
+            j.kv("tid", tid);
+        }
+        j.kv("origin", origin).endObj();
     }
 
     void writeStack(Json j) {

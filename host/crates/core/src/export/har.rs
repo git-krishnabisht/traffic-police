@@ -189,7 +189,11 @@ fn entry(store: &SessionStore, t: &Transaction, now: Ts) -> Value {
         extra.insert("client".into(), json!(c.label()));
     }
     if let Some(th) = &t.thread {
-        extra.insert("thread".into(), json!({ "name": th.name, "id": th.id, "origin": th.origin }));
+        let mut thread = json!({ "name": th.name, "id": th.id, "origin": th.origin });
+        if let Some(tid) = th.tid {
+            thread["tid"] = json!(tid);
+        }
+        extra.insert("thread".into(), thread);
     }
     if !t.stack.is_empty() {
         let frames: Vec<Value> =

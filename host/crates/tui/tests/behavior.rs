@@ -1718,3 +1718,32 @@ fn another_app_is_picked_in_the_session_and_the_log_follows_it() {
     assert_eq!(app.logdawg.len(), 1);
     assert!(text.contains("hello from the other app"), "{text}");
 }
+
+/// The Logs tab: the app's log lines while the request ran, the ones of its thread (the kernel
+/// id the capture sent, as a device's runtime does) marked; a request still running counts up
+/// to now; a session without a log says so.
+#[test]
+fn the_logs_tab_lists_the_apps_lines_while_the_request_ran() {
+    use traffic_police_tui::app::Tab;
+    let mut app = app_at(12.0);
+    let to = goto(&mut app, LARGE, |t| t.url.path == "/api/v1/sessions");
+    let text = press(&mut app, LARGE, &format!("{to}<Enter>llll"));
+    assert_eq!(app.detail.tab, Tab::Logs);
+    assert!(text.contains("of com.example.shop's log while the request ran"), "{text}");
+    let t = app.view_store().txns().iter().find(|t| t.url.path == "/api/v1/sessions").unwrap();
+    let tid = t.thread.as_ref().and_then(|th| th.tid).expect("the thread's kernel id");
+    assert!(text.contains(&format!("(tid {tid}): 1 of them")), "{text}");
+    let own = text.lines().find(|l| l.contains("--> POST")).expect("its own line");
+    assert!(own.contains("▶ ") && own.contains(&tid.to_string()), "{own}");
+    let reply = text.lines().find(|l| l.contains("<-- 200")).expect("the response's line, on OkHttp's thread");
+    assert!(!reply.contains("▶ "), "{reply}");
+    // h goes back through the tabs, from the first to the last
+    press(&mut app, LARGE, "hhhhh");
+    assert_eq!(app.detail.tab, Tab::Logs, "five tabs around");
+    // a session without a log
+    let mut app = app_at(12.0);
+    app.store.set_logs(traffic_police_core::logdawg::LogStore::new());
+    let to = goto(&mut app, LARGE, |t| t.url.path == "/api/v1/sessions");
+    let text = press(&mut app, LARGE, &format!("{to}<Enter>llll"));
+    assert!(text.contains("No log: Logdawg reads the device's log"), "{text}");
+}

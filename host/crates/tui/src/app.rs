@@ -68,18 +68,21 @@ pub enum Tab {
     Response,
     Request,
     CallStack,
+    /// The app's log lines while the request ran (Logdawg).
+    Logs,
 }
 
 impl Tab {
-    pub const ALL: [Tab; 4] = [Tab::Overview, Tab::Response, Tab::Request, Tab::CallStack];
+    pub const ALL: [Tab; 5] = [Tab::Overview, Tab::Response, Tab::Request, Tab::CallStack, Tab::Logs];
 
-    /// `[ui] tab`: overview, response, request or call-stack.
+    /// `[ui] tab`: overview, response, request, call-stack or logs.
     pub fn parse(s: &str) -> Option<Tab> {
         match s.trim().to_ascii_lowercase().replace(['_', ' '], "-").as_str() {
             "overview" => Some(Tab::Overview),
             "response" => Some(Tab::Response),
             "request" => Some(Tab::Request),
             "call-stack" | "stack" => Some(Tab::CallStack),
+            "logs" | "log" => Some(Tab::Logs),
             _ => None,
         }
     }
@@ -90,6 +93,7 @@ impl Tab {
             Tab::Response => "Response",
             Tab::Request => "Request",
             Tab::CallStack => "Call Stack",
+            Tab::Logs => "Logs",
         }
     }
     fn index(self) -> usize {
@@ -1868,8 +1872,10 @@ impl App {
     fn detail_action(&mut self, a: Action) {
         let Some(txn) = self.selected else { return };
         match a {
-            Action::Left => return self.set_tab(Tab::ALL[(self.detail.tab.index() + 3) % 4]),
-            Action::Right => return self.set_tab(Tab::ALL[(self.detail.tab.index() + 1) % 4]),
+            Action::Left => {
+                return self.set_tab(Tab::ALL[(self.detail.tab.index() + Tab::ALL.len() - 1) % Tab::ALL.len()]);
+            }
+            Action::Right => return self.set_tab(Tab::ALL[(self.detail.tab.index() + 1) % Tab::ALL.len()]),
             Action::Parsed => {
                 self.detail.parsed = !self.detail.parsed;
                 self.flash(if self.detail.parsed { "parsed view" } else { "source view" });
@@ -1953,7 +1959,7 @@ impl App {
                         self.open_value_menu(txn);
                     }
                 }
-                Some(DocRow::Line(_)) => {
+                Some(DocRow::Line(_) | DocRow::Hanging(..)) => {
                     if let Some(&(_, i)) = doc.messages.iter().find(|(r, _)| *r == cur) {
                         self.open_ws_message(txn, i);
                     } else if let Some((_, token)) = doc.tokens.iter().find(|(r, _)| *r == cur) {

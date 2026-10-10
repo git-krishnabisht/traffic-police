@@ -464,6 +464,14 @@ impl DemoDevice {
             }
             Emit::Msg(m) => {
                 let mut m = *m;
+                // the kernel's thread id, as the runtime sends it on a device: the main thread's is
+                // the pid (the demo's log uses the same ones)
+                if let DeviceMsg::Req(r) = &mut m
+                    && let Some(t) = &mut r.thread
+                {
+                    let pid = self.proc.pid;
+                    t.tid.get_or_insert(if t.name == "main" { pid } else { pid + t.id.clamp(0, 9999) as u32 });
+                }
                 match &m {
                     DeviceMsg::Req(r) => {
                         self.tx += r.headers.iter().map(|(n, v)| (n.len() + v.len() + 4) as u64).sum::<u64>() + 40;

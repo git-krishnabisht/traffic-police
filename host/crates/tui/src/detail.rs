@@ -69,6 +69,8 @@ pub fn ws_line(theme: &Theme, start: fmt::Ts, m: &traffic_police_core::model::Ws
 #[derive(Debug, Clone)]
 pub enum DocRow {
     Line(Line<'static>),
+    /// A line whose wrapped rows hang at this column (a log line's message).
+    Hanging(Line<'static>, usize),
     /// Line `i` of the body view.
     Body(usize),
     /// An app frame at stack index `index`.
@@ -387,14 +389,19 @@ pub fn build_doc(app: &mut App) -> Doc {
             doc.body_len = body_rows(app, txn, BodyDir::Request, &mut doc.head);
             doc.body_dir = Some(BodyDir::Request);
         }
+        Tab::Logs => logs_rows(app, txn, &mut doc.head),
         Tab::CallStack => {
             let t = app.view_store().txn(txn);
             match &t.thread {
                 Some(th) => {
+                    let ids = match th.tid {
+                        Some(tid) => format!("  (id {}, tid {tid})", th.id),
+                        None => format!("  (id {})", th.id),
+                    };
                     doc.head.push(DocRow::Line(Line::from(vec![
                         Span::styled("Thread  ", theme.dim()),
                         Span::styled(th.name.clone(), theme.title()),
-                        Span::styled(format!("  (id {})", th.id), theme.dim()),
+                        Span::styled(ids, theme.dim()),
                     ])));
                     let origin = match th.origin.as_deref() {
                         Some("call") => "captured when the app called execute() or enqueue(): the real call site",
@@ -445,6 +452,120 @@ pub fn build_doc(app: &mut App) -> Doc {
     doc
 }
 
+/// Lines the Logs tab lists at most; Logdawg (view 4) has them all.
+const LOG_ROWS: usize = 2000;
+/// How far past the request's end the log is read, for lines that came a little out of order.
+const LOG_SLACK: u64 = 5 * fmt::NS_PER_SEC;
+
+/// The Logs tab: the app's log lines while the request ran, from its start to its end (or now,
+/// while it runs), its thread's marked `▶`. The process that made the request is the app here,
+/// and while it is the session's app, so are the app's other processes (its uid).
+fn logs_rows(app: &App, txn: TxnIdx, rows: &mut Vec<DocRow>) {
+    let theme = &app.theme;
+    let store = app.view_store();
+    let t = store.txn(txn);
+    let logs = store.logs();
+    if logs.is_empty() {
+        let why = if app.replay.is_some() {
+            "This session file has no log."
+        } else if logs.info().status.is_none() {
+            "No log: Logdawg reads the device's log in a session on a device ([logdawg] enabled)."
+        } else {
+            "No log lines yet."
+        };
+        rows.push(DocRow::Line(Line::styled(why, theme.dim())));
+        return;
+    }
+    let source = store.source(t.key.source);
+    let pid = source.map(|s| s.pid);
+    let current = source.is_some_and(|s| logs.package() == Some(s.package.as_str()));
+    let ours = |l: &traffic_police_core::logdawg::Line<'_>| {
+        Some(l.pid) == pid || (current && l.uid.is_some() && l.uid == logs.uid())
+    };
+    // the thread's kernel id: as the capture said it, else the main thread's (the pid)
+    let thread = t.thread.as_ref();
+    let tid = thread.and_then(|th| th.tid.or(pid.filter(|_| th.name == "main")));
+    let (start, end) = (t.start, t.end.unwrap_or_else(|| app.now()));
+    let (origin, wall) = (store.origin(), app.wall_labels);
+    // the first line at the start: the log comes in time order
+    let (mut lo, mut hi) = (logs.first_id(), logs.end_id());
+    while lo < hi {
+        let mid = lo + (hi - lo) / 2;
+        if logs.get(mid).is_some_and(|l| l.ts < start) {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    let mut lines: Vec<DocRow> = Vec::new();
+    let (mut found, mut marked) = (0usize, 0usize);
+    for line in logs.iter_from(lo) {
+        if line.ts > end.saturating_add(LOG_SLACK) {
+            break;
+        }
+        if line.ts < start || line.ts > end || !ours(&line) {
+            continue;
+        }
+        found += 1;
+        let mine = tid.is_some_and(|tid| line.tid == tid && Some(line.pid) == pid);
+        marked += usize::from(mine);
+        if found > LOG_ROWS {
+            continue;
+        }
+        let (badge, text) = theme.log_level(line.level);
+        let message = crate::logdawg::shown(line.message);
+        let mut parts = message.split('\n');
+        let time = crate::logdawg::line_time(&line, origin, wall);
+        let tag = format!("{} ", crate::logdawg::shown(line.tag));
+        // wrapped rows hang under the message
+        let hang = 26 + unicode_width::UnicodeWidthStr::width(tag.as_str());
+        lines.push(DocRow::Hanging(
+            Line::from(vec![
+                Span::styled(if mine { "▶ " } else { "  " }, theme.accent()),
+                Span::styled(format!("{time:<12} "), theme.dim()),
+                Span::styled(format!("{:>6} ", line.tid), if mine { theme.accent() } else { theme.faint() }),
+                Span::styled(format!(" {} ", line.level.letter()), badge),
+                Span::raw(" "),
+                Span::styled(tag, theme.log_tag(line.tag_id)),
+                Span::styled(parts.next().unwrap_or_default().to_string(), text),
+            ]),
+            hang,
+        ));
+        for rest in parts {
+            let row = Line::from(vec![Span::raw(" ".repeat(hang)), Span::styled(rest.to_string(), text)]);
+            lines.push(DocRow::Hanging(row, hang));
+        }
+    }
+    let package = source.map_or("the app", |s| s.package.as_str());
+    let took = fmt::duration(end.saturating_sub(start));
+    let when = if t.end.is_some() { took } else { format!("{took} so far") };
+    rows.push(DocRow::Line(Line::from(vec![
+        Span::styled(format!("{found} line{} ", if found == 1 { "" } else { "s" }), theme.title()),
+        Span::styled(format!("of {package}'s log while the request ran ({when})"), theme.dim()),
+    ])));
+    rows.push(DocRow::Line(match (thread, tid) {
+        (Some(th), Some(tid)) => Line::from(vec![
+            Span::styled("▶ ", theme.accent()),
+            Span::styled(format!("its thread, {} (tid {tid}): {marked} of them", th.name), theme.dim()),
+        ]),
+        (Some(_), None) => {
+            Line::styled("the capture did not say its thread's kernel id: no line is marked", theme.faint())
+        }
+        (None, _) => Line::styled("no thread was captured: no line is marked", theme.faint()),
+    }));
+    rows.push(DocRow::Line(Line::default()));
+    if found == 0 {
+        rows.push(DocRow::Line(Line::styled("No line of the app's log while it ran.", theme.dim())));
+    }
+    rows.extend(lines);
+    if found > LOG_ROWS {
+        rows.push(DocRow::Line(Line::styled(
+            format!("… {} more; view 4 (Logdawg) has the whole log", found - LOG_ROWS),
+            theme.faint(),
+        )));
+    }
+}
+
 /// What a doc row is drawn as: text that wraps (with its indent, and whether its ` · ` items
 /// stay together), a body line, or something one row high.
 enum RowKind {
@@ -461,6 +582,7 @@ fn row_kind(app: &mut App, doc: &Doc, i: usize, txn: TxnIdx) -> RowKind {
                 l.spans.first().is_some_and(|s| s.content.chars().count() == LABEL_W && s.content.ends_with(' '));
             RowKind::Text(Text::from_line(&l), if label { LABEL_W } else { 2 }, true)
         }
+        Some(DocRow::Hanging(l, indent)) => RowKind::Text(Text::from_line(&l), indent, false),
         Some(DocRow::Body(bi)) => RowKind::Body(bi),
         Some(DocRow::Frame { index }) => {
             let theme = app.theme.clone();
@@ -946,7 +1068,7 @@ fn unicode_width_graphemes(s: &str) -> impl Iterator<Item = &str> {
 /// are not text (the timing bar, images).
 pub fn row_text(app: &mut App, doc: &Doc, i: usize, txn: TxnIdx) -> Option<String> {
     match doc.row(i)? {
-        DocRow::Line(l) => Some(l.spans.iter().map(|s| s.content.as_ref()).collect()),
+        DocRow::Line(l) | DocRow::Hanging(l, _) => Some(l.spans.iter().map(|s| s.content.as_ref()).collect()),
         DocRow::Body(bi) => {
             let dir = doc.body_dir?;
             let parsed = app.detail.parsed;

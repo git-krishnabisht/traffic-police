@@ -224,6 +224,7 @@ impl Translator {
                 thread: Some(ThreadInfo {
                     name: format!("isolate {thread_name}"),
                     id: thread_id,
+                    tid: None,
                     origin: Some("call".into()),
                 }),
                 stack: Vec::new(),

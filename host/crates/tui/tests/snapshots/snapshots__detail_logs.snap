@@ -1,6 +1,6 @@
 ---
 source: crates/tui/tests/snapshots.rs
-expression: "detail(12.0, MEDIUM, |t| t.status() == Some(500), \"l\")"
+expression: "detail(12.0, MEDIUM, init(), \"llll\")"
 ---
  traffic-police  Pixel 8 [demo]  com.example.shop  pid 4312  ● LIVE  ✎ 1 rule active          26 requests · 14 KB in · 18 KB out · 1 failed
 ╭─ Network · all app traffic ────────────────────────────────────────────────────────────────── ━ Receiving 3.9 KB/s   ━ Sending 2.4 KB/s ─╮
@@ -15,30 +15,30 @@ expression: "detail(12.0, MEDIUM, |t| t.status() == Some(500), \"l\")"
 │ 8.0 KB/s                                                                                  ┊                               ▔▔             │
 │                                                                                           00:00.000            00:05.000                 │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-╭─ Requests 26 ─ Connection ─ Thread ─ Rules ─ Logdawg ─────────────────────╮ ╭─ cancel ─ Response body ─ Request body ────────────────────╮
-│ Name                  Size  Type      Status         Time   Timeline      │ │ <!DOCTYPE html>                                            │
-│ token                364 B  json      200          513 ms           ▎    ▐│ │ <html>                                                     │
-│ sessions             290 B  json      200          2.11 s           🮉▎   ▐│ │   <head>                                                   │
-│ notifications        306 B  json      200          1.77 s           ▐▎   ▐│ │     <meta charset="utf-8">                                 │
-│ events                17 B  json      200          1.38 s           🮇▍   ▐│ │     <title>500 Internal Server Error</title>               │
-│ user_1024.png       4.9 KB  png       200          494 ms            ▎   ▐│ │     <style>                                                │
-│ notifications        306 B  json      200          1.33 s            🮉   ▐│ │       body{font-family:sans-serif;margin:2em}              │
-│ products?catego…    1.0 KB  json      200          431 ms            ▏   ▐│ │     </style>                                               │
+╭─ Requests 26 ─ Connection ─ Thread ─ Rules ─ Logdawg ─────────────────────╮ ╭─ sessions ─ Response body ─ Request body ──────────────────╮
+│ Name                  Size  Type      Status         Time   Timeline      │ │ {                                                          │
+│ token                364 B  json      200          513 ms           ▎    ▐│ │   "ok": true,                                              │
+│ sessions             290 B  json      200          2.11 s           🮉▎   ▐│ │   "sessionId": "session_15bce3a5a963c9fde0ebe700e9d76981", │
+│ notifications        306 B  json      200          1.77 s           ▐▎   ▐│ │   "userId": "user_1024",                                   │
+│ events                17 B  json      200          1.38 s           🮇▍   ▐│ │   "config": {                                              │
+│ user_1024.png       4.9 KB  png       200          494 ms            ▎   ▐│ │     "pollIntervalMs": 1500,                                │
+│ notifications        306 B  json      200          1.33 s            🮉   ▐│ │     "maxPolls": 20,                                        │
+│ products?catego…    1.0 KB  json      200          431 ms            ▏   ▐│ │     "features": {                                          │
 │ config                 0 B            302           61 ms            ▕   ▐│ ╰────────────────────────────────────────────────────────────╯
 │ ↪ config.json        103 B  json      200          315 ms            ▕   ▐│ ╭─ Overview ─ Response ─ Request ─ Call Stack ─ Logs ────────╮
-│ items                149 B  json      200          2.79 s            🮇█  ▐│ │ HTTP/1.1 500 Internal Server Error                         │
-│ metrics                6 B  protobuf  200          338 ms             ▏  ▐│ │                                                            │
-│ notifications        306 B  json      200          1.65 s             ▊  ▐│ │ Headers (4)                                                │
-│ events                17 B  json      200          1.09 s             ▌  ▐│ │ date: Tue, 29 Sep 2026 05:10:08 GMT                        │
-│ promo-banner-v3…     148 B  json      404          277 ms             ▕  ▐│ │ content-type: text/html; charset=utf-8                     │
-│ reviews               86 B  json      200          516 ms              ▎ ▐│ │ content-length: 305                                        │
-│ notifications        306 B  json      200          1.72 s              ▊ ▐│ │ server: envoy                                              │
-│ checkout              99 B  json      200          2.33 s              █ ▐│ │                                                            │
-│ cancel               305 B  html      500          222 ms              ▕ ▐│ │ Body  HTML, 305 B  [parsed · p: source]                    │
-│ lookup?fields=c…     120 B  json      200          291 ms              ▕ ▐│ │ <!DOCTYPE html>                                            │
-│ notifications        306 B  json      200          1.42 s              ▕▌▐│ │ <html>                                                     │
-│ events                17 B  json      200          958 ms               ▍ │ │   <head>                                                   │
-│ status?orderId=…     146 B  json      200          329 ms               ▏ │ │     <meta charset="utf-8">                                 │
-│ recommendations…                      ···          1.90 s               🮋 │ │     <title>500 Internal Server Error</title>               │
+│ items                149 B  json      200          2.79 s            🮇█  ▐│ │ 9 lines of com.example.shop's log while the request ran    │
+│ metrics                6 B  protobuf  200          338 ms             ▏  ▐│ │   (2.11 s)                                                 │
+│ notifications        306 B  json      200          1.65 s             ▊  ▐│ │ ▶ its thread, DefaultDispatcher-worker-2 (tid 4371): 1 of  │
+│ events                17 B  json      200          1.09 s             ▌  ▐│ │   them                                                     │
+│ promo-banner-v3…     148 B  json      404          277 ms             ▕  ▐│ │                                                            │
+│ reviews               86 B  json      200          516 ms              ▎ ▐│ │ ▶ 00:01.484      4371  D  OkHttp --> POST http://localhost:│
+│ notifications        306 B  json      200          1.72 s              ▊ ▐│ │                              8080/api/v1/sessions          │
+│ checkout              99 B  json      200          2.33 s              █ ▐│ │   00:01.500      4372  D  OkHttp --> GET http://localhost: │
+│ cancel               305 B  html      500          222 ms              ▕ ▐│ │                              8080/api/v1/notifications     │
+│ lookup?fields=c…     120 B  json      200          291 ms              ▕ ▐│ │   00:02.342      4383  D  OkHttp --> POST https://         │
+│ notifications        306 B  json      200          1.42 s              ▕▌▐│ │                              telemetry.example.com/v1/     │
+│ events                17 B  json      200          958 ms               ▍ │ │                              events                        │
+│ status?orderId=…     146 B  json      200          329 ms               ▏ │ │   00:03.025      4312  I  Choreographer Skipped 103 frames!│
+│ recommendations…                      ···          1.90 s               🮋 │ │                              The application may be doing  │
 ╰───────────────────────────────────────────────────────────────────────────╯ ╰────────────────────────────────────────────────────────────╯
  ←→ tabs   ↑↓ move   / search   nN next/previous   y copy   w save   Enter fold   p parsed/source   ? help       ⚠ studio inspector present

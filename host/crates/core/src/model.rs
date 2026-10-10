@@ -272,6 +272,8 @@ pub struct ThreadInfo {
     pub source: SourceId,
     pub id: i64,
     pub name: String,
+    /// The kernel's thread id, as logcat shows it (Logdawg marks the thread's lines).
+    pub tid: Option<u32>,
     /// `call`, `interceptor`, `huc`.
     pub origin: Option<String>,
 }

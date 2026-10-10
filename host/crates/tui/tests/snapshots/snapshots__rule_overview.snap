@@ -30,7 +30,7 @@ expression: "detail(40.0, LARGE, modified(), \"G\")"
 │ notifications                           306 B  json      200          1.42 s   ▉                          ▐│ │                                                                                       │
 │ events                                   17 B  json      200          958 ms   ▌                          ▐│ │                                                                                       │
 │ status?orderId=ord_15bce3a5a963c9fd     146 B  json      200          329 ms   ▎                          ▐│ ╰───────────────────────────────────────────────────────────────────────────────────────╯
-│ recommendations?productId=p_1042                         failed       10.0 s   🮋████████▏                 ▐│ ╭─ Overview ─ Response ─ Request ─ Call Stack ──────────────────────────────────────────╮
+│ recommendations?productId=p_1042                         failed       10.0 s   🮋████████▏                 ▐│ ╭─ Overview ─ Response ─ Request ─ Call Stack ─ Logs ───────────────────────────────────╮
 │ fonts.json                                               canceled     380 ms    ▍                         ▐│ │ Request type      —                                                                   │
 │ notifications                           306 B  json      200          1.50 s    🮉▊                        ▐│ │ Response type     application/json; charset=utf-8                                     │
 │ status?orderId=ord_15bce3a5a963c9fd     146 B  json      200          421 ms    🮈                         ▐│ │ Response size     145 B                                                               │

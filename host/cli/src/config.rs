@@ -19,7 +19,7 @@
 //! view = "connections"        # the view at start: connections, threads, rules or logdawg
 //! divider = 55                # the list's share of the width, in percent (25-80)
 //! side_by_side = 140          # from this width on the detail pane sits beside the list
-//! tab = "overview"            # the detail tab a request opens on: overview, response, request, call-stack
+//! tab = "overview"            # the detail tab a request opens on: overview, response, request, call-stack, logs
 //! body_box = true             # the body box above the tabs, with the response and request bodies (false hides it; B shows or hides it)
 //! body = "response"           # the body box's tab: response or request (b switches)
 //! body_height = 40            # the body box's share of the detail pane, percent (15-85)
@@ -373,7 +373,7 @@ impl Loaded {
             ("graph", &ui.graph, |s| GraphSource::parse(s).is_some(), "app or requests"),
             ("sort", &ui.sort, |s| Sort::parse(s).is_some(), "a column's name, like \"status\" or \"time desc\""),
             ("view", &ui.view, |s| View::parse(s).is_some(), "connections, threads, rules or logdawg"),
-            ("tab", &ui.tab, |s| Tab::parse(s).is_some(), "overview, response, request or call-stack"),
+            ("tab", &ui.tab, |s| Tab::parse(s).is_some(), "overview, response, request, call-stack or logs"),
             ("body", &ui.body, |s| BodyTab::parse(s).is_some(), "response or request"),
         ];
         for (name, value, valid, choices) in words {
@@ -921,6 +921,15 @@ gap = 2
     }
 
     #[test]
+    fn requests_can_open_on_the_logs_tab() {
+        let l = parse("[ui]\ntab = \"logs\"\n");
+        assert!(l.problems.is_empty(), "{:?}", l.problems);
+        let mut app = App::new(traffic_police_core::SessionStore::new(), Theme::default());
+        l.apply_ui(&mut app);
+        assert_eq!(app.detail.tab, Tab::Logs);
+    }
+
+    #[test]
     fn colors_apply_to_both_palettes_or_to_one() {
         let text = "[colors]\naccent = \"#112233\"\n[colors.dark]\nselection = \"#445566\"\n[colors.light]\nselection = \"#778899\"\n";
         let l = parse(text);
@@ -946,7 +955,7 @@ gap = 2
             "line 2: [ui] borders \"dotted\": use rounded, plain, double or thick",
             "line 3: [ui] scroll 900: use 0 (half the box) to 500",
             "line 4: [ui] body_height 5: use 15 to 85 (percent); body_box = false hides the box",
-            "line 5: [ui] tab \"headers\": use overview, response, request or call-stack",
+            "line 5: [ui] tab \"headers\": use overview, response, request, call-stack or logs",
             "line 6: [ui] gap 9: use 0 to 4 (rows)",
             "line 8: [colors] accent: use a color like \"#61afef\"",
             "line 9: [colors] \"colour\" is not a color's name; the names: text, dim,",

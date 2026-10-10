@@ -239,6 +239,9 @@ pub struct ClientInfo {
 pub struct ThreadInfo {
     pub name: String,
     pub id: i64,
+    /// The kernel's thread id, as logcat shows it; absent where the runtime cannot read it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tid: Option<u32>,
     /// `"call"`, `"interceptor"` or `"huc"`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub origin: Option<String>,
