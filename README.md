@@ -2,10 +2,11 @@
 
 Watch an Android app's HTTP and HTTPS traffic from your terminal, the way Android Studio's
 Network Inspector shows it: a live traffic graph, a connection list with a timeline, full request
-and response details, the thread and call stack that made each request, a thread view, and
-response rewrite rules. No proxy and no certificates: a small runtime inside the (debuggable)
-app hooks OkHttp, HttpURLConnection and gRPC and streams events to the terminal over adb. A
-Flutter app's own Dart traffic is read from its Dart VM service.
+and response details, the thread and call stack that made each request, a thread view, response
+rewrite rules, and the device's log beside them, as Android Studio's Logcat shows it
+([Logdawg](#the-devices-log-logdawg)). No proxy and no certificates: a small runtime inside the
+(debuggable) app hooks OkHttp, HttpURLConnection and gRPC and streams events to the terminal over
+adb. A Flutter app's own Dart traffic is read from its Dart VM service.
 
 > **Status: Phase 5.** Watch an app's traffic live from a device or an emulator in one of three
 > ways: add the library to its debug build ([library mode](#watch-your-app-library-mode)), attach
@@ -106,8 +107,8 @@ A pretend shop app (`com.example.shop`, a debug build talking to a dev server on
 one to the cart and checks out, then polls the order's status every 1.5 s until a rule marks the
 payment captured. Around that: telemetry, a notifications poll with gzip JSON, an avatar image, a
 redirect, a 404, a 500 HTML page, a timeout, a cancelled call, a multipart review upload, a
-protobuf body and a 5 MB download, on several threads. Nothing leaves your machine: the traffic
-is made up.
+protobuf body and a 5 MB download, on several threads, and the log the app and its system would
+write (press `4`). Nothing leaves your machine: the traffic is made up.
 
 | Option | What it does |
 |---|---|
@@ -324,12 +325,50 @@ traffic-police tail --mode flutter -p com.example.app --json
   keeps them in a hash map), and anything on the Java side: watch that with library or attach
   mode.
 
+## The device's log (Logdawg)
+
+Press `4` for Logdawg: the device's log, as Android Studio's Logcat shows it, on the same
+timeline as the requests. It is read over adb, the way `logcat` reads it, whenever you watch an
+app (library, attach or flutter mode), so the app needs nothing for it. It starts with your
+app's lines, `package:mine`: every line written under the app's user id, from all its processes
+and across restarts. The last 5,000 lines from before the session started come first.
+
+Each line shows its time (`t` switches between the time since the start and the wall clock), the
+process and thread ids, the tag, the process's name (on a wide screen), the level and the
+message; a message of several lines, a stack trace say, takes the rows it needs. New lines are
+followed while the cursor is on the newest, and `G` follows again. `Enter` opens a line with all
+its fields, `y` copies it as `logcat -v threadtime` prints it, `F` freezes the view, `x` clears
+the log (the requests stay) and `1` goes back to the requests.
+
+| Filter (`/`) | Matches |
+|---|---|
+| `package:mine` | the app's lines; `package:shop` (or `process:shop`) a process whose name contains the text |
+| `tag:OkHttp`, `tag=:OkHttp`, `tag~:Ok.*p` | a tag that contains the text, is exactly it, or matches the regular expression |
+| `message:timeout` (or `msg:`) | a message that contains the text (`=:` and `~:` work too) |
+| `timeout`, `"connection refused"`, `line:timeout` | the tag, the message or the process's name |
+| `/regex/`, `/regex/i` | the same, by a regular expression (`/i`: any case) |
+| `level:warn`, `level:w` | warnings and above: verbose, debug, info, warn, error, assert, or their first letters |
+| `is:crash`, `is:stacktrace`, `is:error` | a crash (Java or native); a message with a Java stack trace in it; exactly that level |
+| `age:30s`, `age:5m`, `age:2h`, `age:1d` | lines newer than that, by the device's clock |
+| `pid:4312`, `tid:4331`, `uid:10234` | a process, thread or user id |
+
+The language is Android Studio's: `-` in front of a term (or of parentheses) rules it out,
+`a | b` is either, `a & b` both, `&` goes before `|`, and parentheses group, so
+`(tag:OkHttp | level:error) & package:mine` reads as it does in Studio. Without operators, terms
+with the same key are alternatives (`tag:OkHttp tag:Retrofit`: either one) and everything else
+must hold, each word without a key too. Case does not matter. Quotes (`"…"` or `'…'`) keep spaces
+in a value, and a space may follow the colon (`tag: OkHttp`). An empty filter shows every line
+of every app. A filter that does not parse is marked where it breaks, and the previous one stays.
+`[logdawg]` in the [config](#config) sets the filter a session starts with, which of logcat's
+buffers are read, how much history and how much memory the lines may use (the oldest go first),
+or turns the log off.
+
 ## Keys
 
 | | Keys |
 |---|---|
 | Move | `↑` `↓` or `j` `k` · `g` `G` top and bottom · `PgUp` `PgDn` · `Ctrl+D` `Ctrl+U` (or `Ctrl+P`) half a page, the view and the cursor together as in Neovim (`[ui] scroll` sets how far) · `Tab` `Shift+Tab` move focus between graph, list and detail |
-| Views | `1` Connection View · `2` Thread View · `3` Rules |
+| Views | `1` Connection View · `2` Thread View · `3` Rules · `4` Logdawg, the device's log |
 | Rules | `r` on a request: a new rule that matches it, in the rule form · in the Rules view: `Space` on or off · `Enter` edit in the form · `r` (or `a`) a new rule · `K` `J` move the rule up or down (rules apply in order) · `E` edit `rules.toml` in `$EDITOR` |
 | Rule form | `↑` `↓` (or `Tab`) between lines · `Enter` types into a field (`Enter` keeps it, `Esc` puts back what was there), turns a yes/no line, or steps a choice · `←` `→` step a choice (`Space` ticks a method) · `a` adds an action · `Delete` or `Backspace` removes the action or query parameter · `K` `J` move an action · `Ctrl+S` saves · `Esc` leaves (asking when something changed) · `E` `$EDITOR` · the last line lists the captured requests the rule's match selects |
 | Detail pane | `Enter` open · `Esc` close · `h` `l` or `←` `→` switch tabs · `p` parsed or source · `o` original or rule-modified response |
@@ -340,6 +379,7 @@ traffic-police tail --mode flutter -p com.example.app --json
 | Graph | Receiving above the zero line, sending below, each half scaled to its own peak (`:` layout switches to one shared scale; `:` style switches between solid areas, braille curves and step lines) · `T` whole-app traffic or captured requests · `t` time since start or wall clock · `←` `→` move when the graph has focus |
 | List | New requests are followed while the cursor is on the newest; `G` (or `End`, `Ctrl+G`) goes back to it and follows again, also with a request open · `c` collapse repeated calls · `s` sort by the next column · `S` reverse the sort · `C` choose columns |
 | Find | `/` in the list: the filter bar ([language below](#filters)) · `/` in the detail pane: search the tab (`n` `N` next and previous match) · `m` pin a request (`is:pinned` lists pins) |
+| Logdawg | `/` filter ([language](#the-devices-log-logdawg)) · `Enter` a line with all its fields · `y` copy it as logcat prints it · `G` follow new lines · `F` freeze · `x` clear the log (asks first) · `t` time since start or wall clock |
 | Copy and save | `y` copy: as cURL, the URL, headers, one header, a body, the JSON value at the cursor · `w` save a body to a file · `e` export: HAR (all, listed or selected requests) or a session file |
 | Compare | `d` marks a request (◆), `d` on another compares them: request and status lines, headers (`s` in order or as sets), bodies (JSON with keys sorted); `n` `N` step through changes, `y` copies the diff |
 | Decode | `Enter` on a header or a JSON value: copy it, decode a JWT, base64 or URL encoding, or filter by it · the Overview lists JWTs with their expiry (`Enter` decodes) |
@@ -402,7 +442,8 @@ shown decoded, and the transferred (compressed) sizes are not kept.
 
 traffic-police hides nothing: headers such as `Authorization` and `Cookie`, tokens and personal
 data in bodies all appear exactly as the app sent and received them, on screen, in copies, and in
-HAR, session and `tail` output. Treat screenshots and exported files like the app's own logs.
+HAR, session and `tail` output, and Logdawg shows the device's log as the apps wrote it. Treat
+screenshots and exported files like the app's own logs.
 
 ## Config
 
@@ -423,7 +464,7 @@ time = "wall"                 # relative (since the session started) or wall (cl
 columns = ["method", "host"]  # optional columns shown besides the default ones
 sort = "status desc"          # the list's order at start: a column's name, desc for the reverse
 collapse = false              # start with repeated calls collapsed
-view = "connections"          # the view at start: connections, threads, rules
+view = "connections"          # the view at start: connections, threads, rules or logdawg
 divider = 55                  # the list's share of the width, in percent (25-80)
 side_by_side = 140            # from this width on, the detail pane sits beside the list (100-500)
 tab = "overview"              # the tab a request opens on: overview, response, request, call-stack
@@ -449,6 +490,13 @@ body_cap = "10mb"             # bytes kept of each body
 stack_depth = 64
 request_bodies = true
 response_bodies = true
+
+[logdawg]                     # the device's log, in view 4
+enabled = true                # false: the log is not read
+buffers = ["main", "system", "crash"]   # logcat's buffers: main, system, crash, radio, kernel
+history = 5000                # lines from before the session started (0-100000)
+keep = "64mb"                 # memory the lines may use (1mb or more); the oldest go first
+filter = "package:mine"       # the filter at start ("" shows every line)
 
 [keymap]
 pause = "p"                   # an action's name (see : or ?), then a key or a list of keys
@@ -488,6 +536,7 @@ The colors `[colors]` can set, by name:
 | `graph-selection` | the selected range on the graph |
 | `background` | your terminal's background. Not a color traffic-police paints: set it only if the graph's sending half or the timeline bars' left ends show boxes, which means your font lacks the upper- and right-eighth blocks (Menlo and SF Mono do; Cascadia Code, the Nerd Fonts and Iosevka have them). With it, they are drawn with the blocks every font has |
 | `search-match` `search-current` `search-current-text` | search matches, the current one, and its text |
+| `log-verbose` `log-debug` `log-info` `log-warning` `log-error` `log-assert` | Logdawg's levels: the letter's badge, and the text of warnings, errors and asserts |
 
 On a terminal with 256 or 16 colors each color is drawn as the nearest one it has.
 
