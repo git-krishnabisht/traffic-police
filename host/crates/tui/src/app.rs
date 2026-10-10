@@ -36,15 +36,18 @@ pub enum View {
     Connections,
     Threads,
     Rules,
+    /// The device's log (ARCHITECTURE.md §5.17).
+    Logdawg,
 }
 
 impl View {
-    /// `[ui] view`: connections, threads or rules.
+    /// `[ui] view`: connections, threads, rules or logdawg.
     pub fn parse(s: &str) -> Option<View> {
         match s.trim().to_ascii_lowercase().as_str() {
             "connections" | "connection" => Some(View::Connections),
             "threads" | "thread" => Some(View::Threads),
             "rules" => Some(View::Rules),
+            "logdawg" | "logs" | "log" => Some(View::Logdawg),
             _ => None,
         }
     }
@@ -119,6 +122,10 @@ pub enum Overlay {
     Decoded,
     /// The command palette (`:`): `App::palette`.
     Palette,
+    /// Typing Logdawg's filter in the bottom line.
+    LogFilter,
+    /// Clear the log (in Logdawg; the requests stay)?
+    ConfirmClearLogs,
 }
 
 /// A search match in the detail pane: a row, and display columns in it (however it wraps).
@@ -264,6 +271,8 @@ pub enum Target {
     RuleRow(usize),
     /// A line of the rule form.
     FormRow(usize),
+    /// The `i`th line Logdawg lists.
+    LogLine(usize),
     List,
 }
 
@@ -425,6 +434,12 @@ pub struct App {
     pub session_log: Option<Arc<traffic_police_core::session::SessionLog>>,
     pub search_input: Input,
     search_before: Option<String>,
+    /// Logdawg's view, its filter as typed, where that stops parsing, and what it was before
+    /// editing (for Esc).
+    pub logdawg: crate::logdawg::LogdawgView,
+    pub log_filter_input: Input,
+    pub log_filter_error: Option<ParseError>,
+    log_filter_before: Option<String>,
     /// Where the text being typed stops parsing (the previous filter stays active meanwhile).
     pub filter_error: Option<ParseError>,
     /// The filter before editing started, for Esc.
@@ -516,6 +531,10 @@ impl App {
             palette: None,
             search_input: Input::default(),
             search_before: None,
+            logdawg: crate::logdawg::LogdawgView::default(),
+            log_filter_input: Input::new(crate::logdawg::DEFAULT_FILTER.into()),
+            log_filter_error: None,
+            log_filter_before: None,
             filter_error: None,
             filter_before: None,
             message: None,
@@ -643,6 +662,9 @@ impl App {
 
     /// Refresh derived rows and keep the cursor and selection consistent.
     pub fn refresh(&mut self) {
+        if self.view == View::Logdawg {
+            self.logdawg_refresh();
+        }
         let now = self.now();
         let range = self.graph.selection;
         let frozen = self.frozen.is_some();
@@ -940,7 +962,10 @@ impl App {
         for s in sources.into_iter().filter(|s| s.ended.is_none()) {
             store.apply(SessionEvent::SourceUp(Box::new(s)));
         }
+        // the log goes too, but not what its reader learned (the app's uid, process names)
+        store.set_logs(self.store.logs().emptied());
         self.store = store;
+        self.logdawg.reset();
         self.rows = RowModel::new();
         self.frozen = None;
         self.selected = None;
@@ -953,6 +978,34 @@ impl App {
         self.follow_list = true;
         self.graph.selection = None;
         self.flash("session cleared");
+    }
+
+    /// Logdawg's `x`: the log goes, the requests stay.
+    fn clear_logs(&mut self) {
+        self.store.logs_mut().clear();
+        if let Some(f) = &mut self.frozen {
+            f.store.logs_mut().clear();
+        }
+        self.logdawg.reset();
+        self.flash("log cleared");
+    }
+
+    /// `[logdawg] filter`: the view's filter at start, as if typed.
+    pub fn set_log_filter_text(&mut self, text: &str) {
+        self.log_filter_input = Input::new(text.to_string());
+        self.apply_log_filter(text);
+    }
+
+    /// Applies Logdawg's filter as it is typed (a filter that does not parse leaves the one
+    /// before active).
+    pub fn apply_log_filter(&mut self, text: &str) {
+        match traffic_police_core::logdawg::filter::LogFilter::parse(text) {
+            Ok(f) => {
+                self.logdawg.set_filter(f);
+                self.log_filter_error = None;
+            }
+            Err(e) => self.log_filter_error = Some(e),
+        }
     }
 
     // --- input -------------------------------------------------------------------------------
@@ -1033,6 +1086,38 @@ impl App {
                 self.overlay = Overlay::None;
                 if matches!(k.code, KeyCode::Char('y') | KeyCode::Char('Y')) {
                     self.form_discard();
+                }
+                return;
+            }
+            Overlay::ConfirmClearLogs => {
+                if matches!(k.code, KeyCode::Char('y') | KeyCode::Char('Y')) {
+                    self.clear_logs();
+                }
+                self.overlay = Overlay::None;
+                return;
+            }
+            Overlay::LogFilter => {
+                match k.code {
+                    KeyCode::Esc => {
+                        let before = self.log_filter_before.take().unwrap_or_default();
+                        self.log_filter_input = Input::new(before.clone());
+                        self.apply_log_filter(&before);
+                        self.log_filter_error = None;
+                        self.overlay = Overlay::None;
+                    }
+                    KeyCode::Enter => {
+                        self.log_filter_before = None;
+                        self.log_filter_error = None;
+                        self.overlay = Overlay::None;
+                        if self.log_filter_input.value().trim().is_empty() {
+                            self.flash("filter cleared: every line of the device");
+                        }
+                    }
+                    _ => {
+                        self.log_filter_input.handle_event(&Event::Key(k));
+                        let text = self.log_filter_input.value().to_string();
+                        self.apply_log_filter(&text);
+                    }
                 }
                 return;
             }
@@ -1199,6 +1284,50 @@ impl App {
 
     /// Runs an action, from a key or the command palette.
     pub fn run(&mut self, a: Action) {
+        if self.view == View::Logdawg && matches!(self.focus, Focus::List | Focus::Graph) {
+            let list = self.focus == Focus::List;
+            match a {
+                Action::Find => {
+                    self.log_filter_before = Some(self.log_filter_input.value().to_string());
+                    self.log_filter_error = None;
+                    self.overlay = Overlay::LogFilter;
+                    self.focus = Focus::List;
+                    return;
+                }
+                Action::Clear => {
+                    self.overlay = Overlay::ConfirmClearLogs;
+                    return;
+                }
+                Action::Copy if list => return self.logdawg_copy(),
+                Action::Collapse
+                | Action::Sort
+                | Action::SortReverse
+                | Action::Columns
+                | Action::Pin
+                | Action::NewRule
+                | Action::Diff
+                | Action::Save
+                    if list =>
+                {
+                    self.flash("in Logdawg: / filters the log, Enter opens a line, y copies it (1 for the requests)");
+                    return;
+                }
+                Action::Up
+                | Action::Down
+                | Action::Top
+                | Action::Bottom
+                | Action::PageUp
+                | Action::PageDown
+                | Action::HalfPageUp
+                | Action::HalfPageDown
+                | Action::Activate
+                    if list =>
+                {
+                    return self.logdawg_action(a);
+                }
+                _ => {}
+            }
+        }
         let not_detail = !matches!(self.focus, Focus::Detail | Focus::Preview);
         match a {
             Action::Quit => self.should_quit = true,
@@ -1206,6 +1335,7 @@ impl App {
             Action::ViewConnections => self.set_view(View::Connections),
             Action::ViewThreads => self.set_view(View::Threads),
             Action::ViewRules => self.set_view(View::Rules),
+            Action::ViewLogdawg => self.set_view(View::Logdawg),
             Action::FocusNext => self.cycle_focus(1),
             Action::FocusPrev => self.cycle_focus(-1),
             Action::Pause if self.view == View::Rules && self.focus == Focus::List => self.toggle_rule(),
@@ -1312,6 +1442,7 @@ impl App {
                     View::Connections => self.list_action(a),
                     View::Threads => self.threads_action(a),
                     View::Rules => self.rules_action(a),
+                    View::Logdawg => self.logdawg_action(a),
                 },
                 Focus::Preview => self.explorer_action(a),
                 Focus::Detail => self.detail_action(a),
@@ -1501,7 +1632,8 @@ impl App {
     }
 
     fn cycle_focus(&mut self, dir: i32) {
-        let mut order: Vec<Focus> = if self.detail_open {
+        // Logdawg takes the whole width: no request's boxes beside it
+        let mut order: Vec<Focus> = if self.detail_open && self.view != View::Logdawg {
             vec![Focus::Graph, Focus::List, Focus::Preview, Focus::Detail]
         } else {
             vec![Focus::Graph, Focus::List]
@@ -1979,7 +2111,12 @@ impl App {
                 self.overlay = Overlay::None;
                 return;
             }
-            Overlay::Help | Overlay::Menu | Overlay::Columns { .. } | Overlay::ConfirmClear | Overlay::Palette => {
+            Overlay::Help
+            | Overlay::Menu
+            | Overlay::Columns { .. }
+            | Overlay::ConfirmClear
+            | Overlay::ConfirmClearLogs
+            | Overlay::Palette => {
                 return;
             }
             _ => {}
@@ -2060,6 +2197,7 @@ impl App {
                             }
                         }
                     }
+                    Some(Target::LogLine(i)) => self.logdawg_click(i, double),
                     Some(Target::List) => self.focus = Focus::List,
                     None => {}
                 }
@@ -2096,6 +2234,7 @@ impl App {
             MouseEventKind::ScrollDown | MouseEventKind::ScrollUp => {
                 let down = m.kind == MouseEventKind::ScrollDown;
                 match self.hits.at(x, y) {
+                    Some(Target::LogLine(_)) => self.logdawg_scroll(down),
                     Some(Target::ExplorerLine(_)) => self.explorer_scroll(down),
                     Some(Target::DetailLine(_) | Target::DetailTab(_)) => {
                         // the view moves three rows; the cursor stays on it

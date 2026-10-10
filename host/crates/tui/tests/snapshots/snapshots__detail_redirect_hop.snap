@@ -15,7 +15,7 @@ expression: "detail(12.0, MEDIUM, |t| t.hop > 0, \"\")"
 │ 8.0 KB/s                                                                                  ┊                               ▔▔             │
 │                                                                                           00:00.000            00:05.000                 │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-╭─ Requests 26 ─ Connection ─ Thread ─ Rules ───────────────────────────────╮ ╭─ config.json ─ Response body ─ Request body ───────────────╮
+╭─ Requests 26 ─ Connection ─ Thread ─ Rules ─ Logdawg ─────────────────────╮ ╭─ config.json ─ Response body ─ Request body ───────────────╮
 │ Name                  Size  Type      Status         Time   Timeline      │ │ {                                                          │
 │ token                364 B  json      200          513 ms           ▎    ▐│ │   "version": 42,                                           │
 │ sessions             290 B  json      200          2.11 s           🮉▎   ▐│ │   "minAppVersion": "3.6.0",                                │

@@ -13,7 +13,7 @@ expression: "press(&mut app, SMALL, \"G\")"
 │ 8.0 KB/s                                                         ┊                     🮃         │
 │                                                                  00:00.000                       │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
-╭─ Requests 26 ─ Connection ─ Thread ─ Rules ──────────────────────────────────────── rule orders ─╮
+╭─ Requests 26 ─ Connection ─ Thread ─ Rules ─ Logdawg ────────────────────────────── rule orders ─╮
 │   4.              header  (←→ another type)                                                      │
 │     op            remove  (←→ set, add, remove)                                                  │
 │     header        ETag                                                                           │

@@ -134,6 +134,26 @@ fn rules_view() {
 
 // --- detail pane -----------------------------------------------------------------------------
 
+// --- Logdawg (the device's log) --------------------------------------------------------------
+
+#[test]
+fn logdawg_view() {
+    // the app's lines (package:mine); a wide screen adds the process column
+    snap!("logdawg_medium", frame(40.0, MEDIUM, "4"));
+    snap!("logdawg_large", frame(40.0, LARGE, "4"));
+    // every process's warnings and errors
+    snap!("logdawg_warnings", frame(40.0, LARGE, "4/<C-u>level:w<Enter>"));
+    // a filter that does not parse: the term underlined, why on the right
+    snap!("logdawg_filter_error", frame(40.0, MEDIUM, "4/<C-u>tag:ok level:loud"));
+    // the app's crash, opened: its fields and the whole stack trace
+    let mut app = app_with(
+        30.0,
+        DemoConfig { restart_after_ns: Some(20 * traffic_police_core::fmt::NS_PER_SEC), ..DemoConfig::default() },
+        Theme::default(),
+    );
+    snap!("logdawg_crash_opened", press(&mut app, MEDIUM, "4/<C-u>is:crash<Enter><Enter>"));
+}
+
 #[test]
 fn detail_tabs_for_json_post() {
     let init = || path_is("/api/v1/sessions");

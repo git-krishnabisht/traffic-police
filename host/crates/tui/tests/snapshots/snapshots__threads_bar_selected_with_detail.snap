@@ -15,7 +15,7 @@ expression: "frame(12.0, MEDIUM, \"2jl<Enter>\")"
 │ 8.0 KB/s                                                                                  ┊                               ▔▔             │
 │                                                                                           00:00.000            00:05.000                 │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-╭─ Requests 26 ─ Connection ─ Thread ─ Rules ───────────────────────────────╮ ╭─ metrics ─ Response body ─ Request body ── protobuf · 6 B ─╮
+╭─ Requests 26 ─ Connection ─ Thread ─ Rules ─ Logdawg ─────────────────────╮ ╭─ metrics ─ Response body ─ Request body ── protobuf · 6 B ─╮
 │                                                     00:00.000             │ │ 1: 4                                                       │
 │ DefaultDispat… 5     ································🮊▏···🮇▌···▌··▕▎···🮈▎ │ │ 2: "ok"                                                    │
 │ DefaultDispat… 6     ·································🮈███▎▐·····▉··🮈██▏🮋 │ │                                                            │

@@ -15,7 +15,7 @@ expression: "press(&mut app, MEDIUM, &format!(\"G{}l\", \"k\".repeat(up)))"
 │ 8.0 KB/s                                 ┊            ▔▔▔                                                                                │
 │              00:10.000            00:15.000             00:20.000            00:25.000            00:30.000            00:35.000         │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-╭─ Requests 58 ─ Connection ─ Thread ─ Rules ────────────────────────────────────────────────────────────────────────── repeats collapsed ─╮
+╭─ Requests 58 ─ Connection ─ Thread ─ Rules ─ Logdawg ──────────────────────────────────────────────────────────────── repeats collapsed ─╮
 │ Name                                                     Size  Type      Status         Time   Timeline                                  │
 │ notifications                                           306 B  json      200          1.45 s             🮊█▎                             │
 │ ▸ status?orderId=ord_15bce3a5a963c9fd ×2                146 B  json      200          359 ms             ▎ ▐                             │

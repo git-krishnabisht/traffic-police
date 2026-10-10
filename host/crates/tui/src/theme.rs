@@ -117,6 +117,7 @@ struct RgbSet {
     hit_bg: (u8, u8, u8),
     hit_current_bg: (u8, u8, u8),
     hit_current_fg: (u8, u8, u8),
+    log: [(u8, u8, u8); 6],
 }
 
 /// The colors `[colors]` can set, by name, with what each one paints.
@@ -149,6 +150,12 @@ pub const COLOR_SLOTS: &[(&str, &str)] = &[
     ("search-match", "search matches"),
     ("search-current", "the current search match"),
     ("search-current-text", "the current search match's text"),
+    ("log-verbose", "Logdawg: verbose lines' level"),
+    ("log-debug", "Logdawg: debug lines' level"),
+    ("log-info", "Logdawg: info lines' level"),
+    ("log-warning", "Logdawg: warnings"),
+    ("log-error", "Logdawg: errors"),
+    ("log-assert", "Logdawg: asserts (wtf)"),
 ];
 
 impl RgbSet {
@@ -178,6 +185,12 @@ impl RgbSet {
             "search-match" => &mut self.hit_bg,
             "search-current" => &mut self.hit_current_bg,
             "search-current-text" => &mut self.hit_current_fg,
+            "log-verbose" => &mut self.log[0],
+            "log-debug" => &mut self.log[1],
+            "log-info" => &mut self.log[2],
+            "log-warning" => &mut self.log[3],
+            "log-error" => &mut self.log[4],
+            "log-assert" => &mut self.log[5],
             _ => return None,
         })
     }
@@ -209,6 +222,8 @@ const DARK: RgbSet = RgbSet {
     hit_bg: (110, 92, 40),
     hit_current_bg: (229, 192, 90),
     hit_current_fg: (20, 20, 20),
+    // Android Studio's Logcat: grey, blue, green, yellow, red, purple
+    log: [(150, 156, 166), (97, 175, 239), (106, 190, 120), (229, 192, 90), (232, 96, 96), (198, 120, 221)],
 };
 
 const LIGHT: RgbSet = RgbSet {
@@ -236,6 +251,7 @@ const LIGHT: RgbSet = RgbSet {
     hit_bg: (255, 236, 170),
     hit_current_bg: (255, 196, 60),
     hit_current_fg: (20, 20, 20),
+    log: [(120, 126, 136), (9, 105, 218), (26, 127, 55), (154, 103, 0), (207, 34, 46), (130, 80, 223)],
 };
 
 fn ansi256((r, g, b): (u8, u8, u8)) -> u8 {
@@ -434,6 +450,37 @@ impl Theme {
     }
     pub fn ok(&self) -> Style {
         self.fg(self.rgb.ok)
+    }
+
+    /// Logdawg: a level's badge (the letter on its color) and its lines' text. Without colors
+    /// the badge is reversed from warnings up and the text bold from errors up.
+    pub fn log_level(&self, level: traffic_police_core::logdawg::Level) -> (Style, Style) {
+        use traffic_police_core::logdawg::Level;
+        let i = level as usize;
+        if self.mono() {
+            let badge = if level >= Level::Warn { Modifier::REVERSED | Modifier::BOLD } else { Modifier::BOLD };
+            let text = if level >= Level::Error { Modifier::BOLD } else { Modifier::empty() };
+            return (Style::default().add_modifier(badge), Style::default().add_modifier(text));
+        }
+        let ground = if self.palette == Palette::Light { (255, 255, 255) } else { (24, 26, 30) };
+        let badge = Style::default().bg(self.c(self.rgb.log[i])).fg(self.c(ground)).add_modifier(Modifier::BOLD);
+        let text = match level {
+            Level::Verbose => self.faint(),
+            Level::Debug | Level::Info => self.text(),
+            Level::Warn | Level::Error => self.fg(self.rgb.log[i]),
+            Level::Assert => self.fg(self.rgb.log[i]).add_modifier(Modifier::BOLD),
+        };
+        (badge, text)
+    }
+
+    /// Logdawg: a tag's color, the same for the same tag (from the theme's syntax colors).
+    pub fn log_tag(&self, tag_id: u32) -> Style {
+        if self.mono() {
+            return Style::default();
+        }
+        let r = &self.rgb;
+        let colors = [r.accent, r.ok, r.redirect, r.key, r.client_err, r.attr, r.marker, r.string];
+        self.fg(colors[(tag_id as usize).wrapping_mul(7) % colors.len()])
     }
 
     pub fn status(&self, class: StatusClass) -> Style {

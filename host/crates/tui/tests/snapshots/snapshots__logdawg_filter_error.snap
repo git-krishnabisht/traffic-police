@@ -1,6 +1,6 @@
 ---
 source: crates/tui/tests/snapshots.rs
-expression: "frame(40.0, MEDIUM, \"3\")"
+expression: "frame(40.0, MEDIUM, \"4/<C-u>tag:ok level:loud\")"
 ---
  traffic-police  Pixel 8 [demo]  com.example.shop  pid 4312  ● LIVE  ✎ 1 rule active         60 requests · 5.0 MB in · 40 KB out · 2 failed
 ╭─ Network · all app traffic ─────────────────────────────────────────────────────────────────── ━ Receiving 3.9 KB/s   ━ Sending 769 B/s ─╮
@@ -15,19 +15,8 @@ expression: "frame(40.0, MEDIUM, \"3\")"
 │ 8.0 KB/s                                 ┊            ▔▔▔                                                                                │
 │              00:10.000            00:15.000             00:20.000            00:25.000            00:30.000            00:35.000         │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-╭─ Requests 60 ─ Connection ─ Thread ─ Rules ─ Logdawg ────────────────────────────────────────────────────────────────────────────────────╮
-│      id              name                      hits  state                   Force payment captured                                      │
-│  [x] force-paid      Force payment captured       1  on                      on                                                          │
-│  [ ] checkout-down   Checkout endpoint down       0  off                                                                                 │
-│                                                                              Match                                                       │
-│                                                                                methods  GET                                              │
-│                                                                                host     localhost                                        │
-│                                                                                port     8080                                             │
-│                                                                                path     /api/v1/orders/status                            │
-│                                                                                                                                          │
-│                                                                              Actions                                                     │
-│                                                                                replace text  "payment":"pending"                         │
-│                                                                                with          "payment":"captured"                        │
+╭─ Log 0 ─ Connection ─ Thread ─ Rules ─ Logdawg ───────────────────────────────────────────────────────────────────────── Pixel 8 [demo] ─╮
+│ 165 lines, none passes tag:ok level · / changes the filter                                                                               │
 │                                                                                                                                          │
 │                                                                                                                                          │
 │                                                                                                                                          │
@@ -39,6 +28,17 @@ expression: "frame(40.0, MEDIUM, \"3\")"
 │                                                                                                                                          │
 │                                                                                                                                          │
 │                                                                                                                                          │
-│ The demo's built-in rules (a project's come from .traffic-police/rules.toml).                                                            │
-╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
- ↑↓ select   Space on/off   Enter edit   a new   KJ move   E $EDITOR   Tab next panel   ? help                   ⚠ studio inspector present
+│                                                                                                                                          │
+│                                                                                                                                          │
+│                                                                                                                                          │
+│                                                                                                                                          │
+│                                                                                                                                          │
+│                                                                                                                                          │
+│                                                                                                                                          │
+│                                                                                                                                          │
+│                                                                                                                                          │
+│                                                                                                                                          │
+│                                                                                                                                          │
+│                                                                                                                                          │
+╰─ filter tag:ok level ───────────────────────────────────────────────────────────────────────────────────────────────────────── 0 of 165 ─╯
+ log filter ▸ tag:ok level:loud                                          "loud" is not a level: verbose, debug, info, warn, error or assert

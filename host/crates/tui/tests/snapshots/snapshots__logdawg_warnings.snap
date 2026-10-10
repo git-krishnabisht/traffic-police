@@ -1,6 +1,6 @@
 ---
 source: crates/tui/tests/snapshots.rs
-expression: "frame(40.0, LARGE, \"2\")"
+expression: "frame(40.0, LARGE, \"4/<C-u>level:w<Enter>\")"
 ---
  traffic-police  Pixel 8 [demo]  com.example.shop  pid 4312  ● LIVE  ✎ 1 rule active                                                        60 requests · 5.0 MB in · 40 KB out · 2 failed · 12 dropped
 ╭─ Network · all app traffic ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── ━ Receiving 3.8 KB/s   ━ Sending 763 B/s ─╮
@@ -17,15 +17,16 @@ expression: "frame(40.0, LARGE, \"2\")"
 │ 8.0 KB/s                                                ┊                                                                                                                                            │
 │                00:10.000                      00:15.000                       00:20.000                      00:25.000                      00:30.000                      00:35.000                 │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-╭─ Requests 60 ─ Connection ─ Thread ─ Rules ─ Logdawg ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│                                    00:10.000                 00:15.000                  00:20.000                  00:25.000                  00:30.000                  00:35.000                   │
-│ DefaultDispatcher-worker-1 11      ······▐█▌·········🮇█████████▎···········🮊███████········▕█▎························🮋███████▎··································🮋███████▉·········🮉████████████████ │
-│ DefaultDispatcher-worker-2 12      ████▉···████████········🮈▍··············🮇▋···················🮇██████▉························▕████████▊····························█████████▍······🮈██████▋······ │
-│ DefaultDispatcher-worker-3 11      ▐█▎·····▐█▊··················▐███████▎··········🮇█▋·············▕█▌·····································🮈███████························▕████████▉············🮉██ │
-│ Telemetry-Uploader 13              ███▎··············🮋████▊···········🮉██████▍·········🮇██████▎············🮋████▎············🮉█████▉··········🮇███████▎·········🮊███████▏·······▕███████▊·········🮋█ │
-│ DefaultDispatcher-worker-4 10      ▐█████████████████████████████████████████████████████▏·················▐██████▉···································🮉███████▋·················🮈█▏················· │
-│                                    ················🮈█▏·············🮈▍·················█████████▏···································································································· │
-│ DownloadWorker-1 1                 ············🮉▍████████████████████████████████▋·················································································································· │
+╭─ Log 9 ─ Connection ─ Thread ─ Rules ─ Logdawg ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── Pixel 8 [demo] · following ─╮
+│ 00:08.712      4312-4312   CheckoutViewModel       com.example.shop          W  request failed: HTTP 500 Internal Server Error (will retry)                                                          │
+│ 00:11.580      4312-4369   OkHttp                  com.example.shop          E  <-- HTTP FAILED: java.io.IOException: Canceled                                                                       │
+│ 00:12.206       612-643    ActivityManager         system_server             W  Slow operation: 112ms so far, now at startProcess                                                                    │
+│ 00:14.600       612-643    ActivityManager         system_server             W  Slow operation: 112ms so far, now at startProcess                                                                    │
+│ 00:19.158       612-643    ActivityManager         system_server             W  Slow operation: 112ms so far, now at startProcess                                                                    │
+│ 00:19.921       612-643    ActivityManager         system_server             W  Slow operation: 112ms so far, now at startProcess                                                                    │
+│ 00:20.100      4312-4369   OkHttp                  com.example.shop          E  <-- HTTP FAILED: java.net.SocketTimeoutException: timeout                                                            │
+│ 00:25.769       612-643    ActivityManager         system_server             W  Slow operation: 112ms so far, now at startProcess                                                                    │
+│ 00:31.311       612-643    ActivityManager         system_server             W  Slow operation: 112ms so far, now at startProcess                                                                    │
 │                                                                                                                                                                                                      │
 │                                                                                                                                                                                                      │
 │                                                                                                                                                                                                      │
@@ -49,6 +50,5 @@ expression: "frame(40.0, LARGE, \"2\")"
 │                                                                                                                                                                                                      │
 │                                                                                                                                                                                                      │
 │                                                                                                                                                                                                      │
-│                                                                                                                                                                                                      │
-╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
- ↑↓ threads   ←→ requests   Enter open   Space pause   Tab next panel   ? help                                                                                               ⚠ studio inspector present
+╰─ filter level:w ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── 9 of 165 ─╯
+ ↑↓ move   / filter   G follow   Enter open   y copy   F freeze   x clear   1 requests   ? help                                                                              ⚠ studio inspector present

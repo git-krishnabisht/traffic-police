@@ -670,7 +670,7 @@ fn the_palette_finds_and_runs_commands() {
     let mut app = app_at(40.0);
     let text = press(&mut app, MEDIUM, ":");
     assert_eq!(app.overlay, Overlay::Palette);
-    assert!(text.contains("commands") && text.contains("Export"), "{text}");
+    assert!(text.contains("commands") && text.contains("Connection View") && text.contains("view-logdawg"), "{text}");
     // a setting without a key of its own
     press(&mut app, MEDIUM, "braille<Enter>");
     assert_eq!(app.overlay, Overlay::None);
@@ -1503,4 +1503,110 @@ fn colon_q_quits_like_neovim() {
     // the help says so
     let text = press(&mut app, MEDIUM, "?");
     assert!(text.contains(":q quit"), "{text}");
+}
+
+/// Logdawg (4): the app's lines by default, a filter typed (and one that does not parse), a line
+/// opened and copied, following, the focus, and `x` clearing the log alone.
+#[test]
+fn logdawg_lists_the_apps_log_filters_opens_copies_and_clears() {
+    use traffic_police_core::logdawg::Level;
+    use traffic_police_tui::app::View;
+    let mut app = app_at(40.0);
+    let text = press(&mut app, MEDIUM, "4");
+    assert_eq!(app.view, View::Logdawg);
+    assert!(text.contains("╭─ Log ") && text.contains("OkHttp"), "{text}");
+    let logs = app.view_store().logs();
+    let (all, mine) = (logs.len(), app.logdawg.len());
+    assert!(mine > 0 && mine < all, "{mine} of {all}");
+    let line = |app: &App, i: usize| app.view_store().logs().get(app.logdawg.id(i).unwrap()).unwrap().uid;
+    assert!((0..mine).all(|i| line(&app, i) == Some(10_234)), "package:mine is the app's uid");
+    assert!(app.logdawg.follow && app.logdawg.cursor == mine - 1, "following, on the newest line");
+    // a filter: every process's warnings and up
+    press(&mut app, MEDIUM, "/<C-u>level:w<Enter>");
+    assert_eq!(app.overlay, Overlay::None);
+    let logs = app.view_store().logs();
+    assert!(!app.logdawg.is_empty());
+    assert!((0..app.logdawg.len()).all(|i| logs.get(app.logdawg.id(i).unwrap()).unwrap().level >= Level::Warn));
+    // one that does not parse is marked, and Esc puts back the one before
+    press(&mut app, MEDIUM, "/<C-u>level:loud");
+    assert!(app.log_filter_error.as_ref().is_some_and(|e| e.message.contains("not a level")));
+    press(&mut app, MEDIUM, "<Esc>");
+    assert_eq!((app.log_filter_input.value(), app.log_filter_error.is_none()), ("level:w", true));
+    // up a line: no longer following; Enter opens it, y copies it as logcat prints it
+    press(&mut app, MEDIUM, "k");
+    assert!(!app.logdawg.follow);
+    let id = app.logdawg.id(app.logdawg.cursor).unwrap();
+    let (tag, message) = {
+        let l = app.view_store().logs().get(id).unwrap();
+        (l.tag.to_string(), l.message.to_string())
+    };
+    let text = press(&mut app, MEDIUM, "<Enter>");
+    assert_eq!(app.overlay, Overlay::Decoded);
+    assert!(text.contains(&tag), "{text}");
+    press(&mut app, MEDIUM, "<Esc>y");
+    let copied = app.copied.clone().unwrap();
+    assert!(copied.contains(&format!(" {tag}: {}", message.lines().next().unwrap())), "{copied}");
+    press(&mut app, MEDIUM, "G");
+    assert!(app.logdawg.follow, "G follows again");
+    // Tab: the graph and the log (the request's boxes wait)
+    press(&mut app, MEDIUM, "<Tab>");
+    assert_eq!(app.focus, Focus::Graph);
+    press(&mut app, MEDIUM, "<Tab>");
+    assert_eq!(app.focus, Focus::List);
+    // x clears the log alone
+    let requests = app.view_store().len();
+    press(&mut app, MEDIUM, "xy");
+    assert_eq!((app.view_store().logs().len(), app.logdawg.len()), (0, 0));
+    assert_eq!(app.view_store().len(), requests, "the requests stay");
+    let text = press(&mut app, MEDIUM, "1");
+    assert!(text.contains("╭─ Requests "), "{text}");
+}
+
+/// New lines move the cursor along only while it is on the newest; a frozen view keeps them
+/// waiting; a click puts the cursor on a line and the wheel scrolls.
+#[test]
+fn logdawg_follows_new_lines_freezes_and_takes_the_mouse() {
+    use traffic_police_core::SessionEvent;
+    use traffic_police_core::logdawg::{Level, LogLine};
+    let mut app = app_at(12.0);
+    press(&mut app, MEDIUM, "4");
+    let line = |ts, msg: &str| LogLine {
+        ts,
+        wall_ms: 0,
+        pid: 4312,
+        tid: 4312,
+        uid: Some(10_234),
+        level: Level::Info,
+        buffer: 0,
+        tag: "Test".into(),
+        message: msg.into(),
+    };
+    let message_at =
+        |app: &App, i: usize| app.view_store().logs().get(app.logdawg.id(i).unwrap()).unwrap().message.to_string();
+    let ts = app.now();
+    app.ingest(vec![SessionEvent::Logs(vec![line(ts, "one")])]);
+    press(&mut app, MEDIUM, "");
+    assert_eq!(message_at(&app, app.logdawg.cursor), "one", "the cursor came along");
+    // up a line: a new one does not move it
+    press(&mut app, MEDIUM, "k");
+    let at = app.logdawg.cursor;
+    app.ingest(vec![SessionEvent::Logs(vec![line(ts + 1, "two")])]);
+    press(&mut app, MEDIUM, "");
+    assert_eq!(app.logdawg.cursor, at);
+    // frozen: new lines wait until it thaws
+    press(&mut app, MEDIUM, "F");
+    let shown = app.logdawg.len();
+    app.ingest(vec![SessionEvent::Logs(vec![line(ts + 2, "three")])]);
+    press(&mut app, MEDIUM, "");
+    assert_eq!(app.logdawg.len(), shown, "frozen");
+    press(&mut app, MEDIUM, "F");
+    assert_eq!(app.logdawg.len(), shown + 1, "thawed");
+    // a click on a line, and the wheel
+    press(&mut app, MEDIUM, "");
+    let r = app.hits.rect_of(Target::LogLine(app.logdawg.len() - 3)).expect("a line on screen");
+    click(&mut app, r.x + 3, r.y);
+    assert_eq!((app.logdawg.cursor, app.logdawg.follow), (app.logdawg.len() - 3, false));
+    let top = app.logdawg.top;
+    app.handle_mouse(mouse(MouseEventKind::ScrollUp, r.x + 3, r.y));
+    assert!(app.logdawg.top < top, "the wheel moved the view up");
 }

@@ -17,7 +17,7 @@ expression: "frame(12.0, MEDIUM, \"?\")"
 ╰──────────│ Move     ↑/k up · ↓/j down · ←/h left · →/l right · g/Home top · G/End/Ctrl+g bottom · PgUp page up                │──────────╯
 ╭─ Requests│          PgDn page down · Ctrl+u/Ctrl+p ½ page up · Ctrl+d ½ page down · Enter open/decode · Esc back              │──────────╮
 │ Name     │          Tab next panel · Shift+Tab previous panel                                                                 │          │
-│ events   │ Views    1 connections · 2 threads · 3 rules                                                                       │          │
+│ events   │ Views    1 connections · 2 threads · 3 rules · 4 logdawg                                                           │          │
 │ user_1024│ List     c collapse · s sort · S reverse · C columns · / filter · m pin · r new rule · d diff                      │          │
 │ notificat│ Detail   n next match · N previous match · p parsed/source · o original · b req/resp body · B body box · | jq      │         ▐│
 │ products?│          < scroll left · > scroll right · [ fold all · ] unfold all                                                │         ▐│

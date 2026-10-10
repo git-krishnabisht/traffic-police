@@ -15,7 +15,7 @@ expression: "frame(40.0, MEDIUM, \"3j\")"
 │ 8.0 KB/s                                 ┊            ▔▔▔                                                                                │
 │              00:10.000            00:15.000             00:20.000            00:25.000            00:30.000            00:35.000         │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-╭─ Requests 60 ─ Connection ─ Thread ─ Rules ──────────────────────────────────────────────────────────────────────────────────────────────╮
+╭─ Requests 60 ─ Connection ─ Thread ─ Rules ─ Logdawg ────────────────────────────────────────────────────────────────────────────────────╮
 │      id              name                      hits  state                   Checkout endpoint down                                      │
 │  [x] force-paid      Force payment captured       1  on                      off                                                         │
 │  [ ] checkout-down   Checkout endpoint down       0  off                                                                                 │

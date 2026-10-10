@@ -15,7 +15,7 @@ expression: "detail(40.0, MEDIUM, |t| t.url.query.is_some(), \"ll\")"
 │ 8.0 KB/s                                 ┊            ▔▔▔                                                                                │
 │              00:10.000            00:15.000             00:20.000            00:25.000            00:30.000            00:35.000         │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-╭─ Requests 60 ─ Connection ─ Thread ─ Rules ───────────────────────────────╮ ╭─ products?category=headp… ─ Response body ─ Request body ──╮
+╭─ Requests 60 ─ Connection ─ Thread ─ Rules ─ Logdawg ─────────────────────╮ ╭─ products?category=headp… ─ Response body ─ Request body ──╮
 │ Name                  Size  Type      Status         Time   Timeline      │ │ {                                                          │
 │ token                364 B  json      200          513 ms                ▐│ │   "page": 1,                                               │
 │ sessions             290 B  json      200          2.11 s                ▐│ │   "pageSize": 6,                                           │

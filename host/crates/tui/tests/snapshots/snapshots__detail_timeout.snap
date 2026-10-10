@@ -15,7 +15,7 @@ expression: "detail(40.0, MEDIUM, path_ends(\"/recommendations\"), \"\")"
 │ 8.0 KB/s                                 ┊            ▔▔▔                                                                                │
 │              00:10.000            00:15.000             00:20.000            00:25.000            00:30.000            00:35.000         │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-╭─ Requests 60 ─ Connection ─ Thread ─ Rules ───────────────────────────────╮ ╭─ recommendations?product… ─ Response body ─ Request body ──╮
+╭─ Requests 60 ─ Connection ─ Thread ─ Rules ─ Logdawg ─────────────────────╮ ╭─ recommendations?product… ─ Response body ─ Request body ──╮
 │ Name                  Size  Type      Status         Time   Timeline      │ │ no response · SocketTimeoutException: timeout              │
 │ token                364 B  json      200          513 ms                ▐│ │                                                            │
 │ sessions             290 B  json      200          2.11 s                ▐│ │                                                            │

@@ -11,6 +11,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Axis, Chart, Dataset, GraphType, Paragraph, Widget, Wrap};
 use traffic_police_core::backend::ConnectionStatus;
 use traffic_police_core::event::MarkerKind;
+use traffic_police_core::filter::ParseError;
 use traffic_police_core::fmt::{self, NS_PER_MS, NS_PER_SEC, Ts};
 use traffic_police_core::model::{Transaction, TxnIdx};
 use traffic_police_core::phases::Segments;
@@ -23,6 +24,7 @@ use crate::app::{App, Bar, Focus, Overlay, Tab, Target, View};
 use crate::detail::{self, draw_line};
 use crate::graph::{self, GraphLayout, GraphStyle, Grow};
 use crate::theme::Theme;
+use tui_input::Input;
 
 pub const MIN_WIDTH: u16 = 100;
 pub const MIN_HEIGHT: u16 = 30;
@@ -71,6 +73,8 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         Overlay::Diff => crate::diffview::draw(app, area, f.buffer_mut()),
         Overlay::Decoded => crate::values::draw(app, area, f.buffer_mut()),
         Overlay::Palette => crate::palette::draw(f, app, area),
+        Overlay::LogFilter => draw_log_filter(f, app, footer),
+        Overlay::ConfirmClearLogs => draw_confirm_logs(app, area, f.buffer_mut()),
         Overlay::None => {}
     }
     // a field being typed into (the rule form) shows the terminal's cursor
@@ -670,7 +674,8 @@ pub fn draw_bar(buf: &mut Buffer, area: Rect, (left, right): (Ts, Ts), seg: Segm
 
 fn draw_main(app: &mut App, r: Rect, buf: &mut Buffer) {
     let side_by_side = r.width >= app.prefs.side_by_side;
-    if app.detail_open && app.selected.is_some() {
+    // Logdawg's lines are wide: the log takes the whole width, the request's boxes wait
+    if app.detail_open && app.selected.is_some() && app.view != View::Logdawg {
         if side_by_side {
             let (lw, gap) = ((u32::from(r.width) * u32::from(app.split_pct) / 100) as u16, gap_cols(app));
             let left = Rect { width: lw, ..r };
@@ -701,8 +706,17 @@ fn draw_views(app: &mut App, r: Rect, buf: &mut Buffer) {
     };
     let title_style =
         if focused { t.accent().add_modifier(Modifier::BOLD) } else { t.title().add_modifier(Modifier::BOLD) };
-    let mut labels = vec![vec![Span::styled("Requests", title_style), Span::styled(format!(" {count}"), t.dim())]];
-    let views = [(View::Connections, "Connection"), (View::Threads, "Thread"), (View::Rules, "Rules")];
+    let mut labels = if app.view == View::Logdawg {
+        vec![vec![Span::styled("Log", title_style), Span::styled(format!(" {}", app.logdawg.len()), t.dim())]]
+    } else {
+        vec![vec![Span::styled("Requests", title_style), Span::styled(format!(" {count}"), t.dim())]]
+    };
+    let views = [
+        (View::Connections, "Connection"),
+        (View::Threads, "Thread"),
+        (View::Rules, "Rules"),
+        (View::Logdawg, "Logdawg"),
+    ];
     for (v, name) in views {
         let style = if app.view == v {
             if focused { t.accent().add_modifier(Modifier::BOLD) } else { t.text().add_modifier(Modifier::BOLD) }
@@ -766,12 +780,47 @@ fn draw_views(app: &mut App, r: Rect, buf: &mut Buffer) {
         ];
         border_labels(buf, room, bottom, false, vec![label]);
     }
+    // Logdawg: on the right where the log comes from; at the bottom its filter, and how many
+    // of the lines pass it
+    if app.view == View::Logdawg {
+        let logs = app.view_store().logs();
+        let mut right = Vec::new();
+        if let Some(d) = &logs.info().device {
+            right.push(Span::styled(d.clone(), t.dim()));
+        }
+        if app.logdawg.follow && !app.logdawg.is_empty() {
+            right.push(Span::styled(if right.is_empty() { "following" } else { " · following" }, t.dim()));
+        }
+        let used = at.last().map_or(r.x, |l| l.x + l.width);
+        if !right.is_empty() {
+            border_labels(
+                buf,
+                Rect { x: used, width: (r.x + r.width).saturating_sub(used), ..r },
+                r.y,
+                true,
+                vec![right],
+            );
+        }
+        let bottom = r.y + r.height.saturating_sub(1);
+        let (matched, total) = (app.logdawg.len(), logs.len());
+        let at =
+            border_labels(buf, r, bottom, true, vec![vec![Span::styled(format!("{matched} of {total}"), t.dim())]]);
+        if let Some(f) = app.logdawg.filter.as_ref().map(|f| f.source.clone()) {
+            let room = at.first().map_or(r, |c| Rect { width: c.x.saturating_sub(r.x), ..r });
+            let label = vec![
+                Span::styled("filter ", t.dim()),
+                Span::styled(truncate(&f, (room.width as usize).saturating_sub(14)), t.accent()),
+            ];
+            border_labels(buf, room, bottom, false, vec![label]);
+        }
+    }
     // a column of air between the border and the text
     let inner = Rect { x: inner.x + 1, width: inner.width.saturating_sub(1), ..inner };
     match app.view {
         View::Connections => draw_connections(app, inner, buf),
         View::Threads => draw_threads(app, inner, buf),
         View::Rules => draw_rules(app, inner, buf),
+        View::Logdawg => crate::logdawg::draw(app, inner, buf),
     }
 }
 
@@ -1630,7 +1679,7 @@ fn hints(app: &App) -> Vec<(&'static [Action], &'static str)> {
             ..,
         ) => vec![],
         (Overlay::Menu, ..) => vec![(&[A::Up, A::Down], "move"), (&[A::Activate], "choose"), (&[A::Back], "close")],
-        (Overlay::Palette, ..) => vec![],
+        (Overlay::Palette | Overlay::LogFilter | Overlay::ConfirmClearLogs, ..) => vec![],
         (Overlay::Decoded, ..) => vec![(&[A::Up, A::Down], "scroll"), (&[A::Copy], "copy"), (&[A::Back], "close")],
         (Overlay::Diff, ..) => vec![
             (&[A::Up, A::Down], "scroll"),
@@ -1671,6 +1720,17 @@ fn hints(app: &App) -> Vec<(&'static [Action], &'static str)> {
             (&[A::Parsed], "parsed/source"),
             (&[A::Jq], "jq"),
             (&[A::Back], "close"),
+            (&[A::Help], "help"),
+        ],
+        (_, Focus::List, View::Logdawg) => vec![
+            (&[A::Up, A::Down], "move"),
+            (&[A::Find], "filter"),
+            (&[A::Bottom], "follow"),
+            (&[A::Activate], "open"),
+            (&[A::Copy], "copy"),
+            (&[A::Freeze], "freeze"),
+            (&[A::Clear], "clear"),
+            (&[A::ViewConnections], "requests"),
             (&[A::Help], "help"),
         ],
         (_, Focus::List, View::Threads) => vec![
@@ -1880,6 +1940,23 @@ fn draw_confirm_discard(app: &App, area: Rect, buf: &mut Buffer) {
     );
 }
 
+fn draw_confirm_logs(app: &App, area: Rect, buf: &mut Buffer) {
+    let t = &app.theme;
+    let r = centered(area, 56, 5);
+    draw_box(buf, r, "clear the log", t);
+    text(
+        buf,
+        r.x + 2,
+        r.y + 2,
+        r.width - 4,
+        vec![
+            Span::styled("Discard the log's lines (the requests stay)? ", t.text()),
+            Span::styled("y", t.accent()),
+            Span::styled(" / n", t.dim()),
+        ],
+    );
+}
+
 fn draw_confirm(app: &App, area: Rect, buf: &mut Buffer) {
     let t = &app.theme;
     let r = centered(area, 56, 5);
@@ -1900,23 +1977,44 @@ fn draw_confirm(app: &App, area: Rect, buf: &mut Buffer) {
 /// The filter being typed, in the bottom line: where it stops parsing is underlined, with the
 /// reason on the right; otherwise how many requests pass.
 fn draw_filter(f: &mut Frame, app: &mut App, r: Rect) {
-    let t = app.theme.clone();
     let (matched, total) = (app.view_rows().matched(), app.view_store().len());
+    let note = format!("{matched} of {total} · Enter keep · Esc cancel");
+    let (input, error) = (app.filter_input.clone(), app.filter_error.clone());
+    filter_bar(f, &app.theme.clone(), r, " filter ▸ ", &input, error.as_ref(), note);
+}
+
+/// Logdawg's filter, typed in the bottom line.
+fn draw_log_filter(f: &mut Frame, app: &mut App, r: Rect) {
+    let (matched, total) = (app.logdawg.len(), app.view_store().logs().len());
+    let note = format!("{matched} of {total} lines · Enter keep · Esc cancel");
+    let (input, error) = (app.log_filter_input.clone(), app.log_filter_error.clone());
+    filter_bar(f, &app.theme.clone(), r, " log filter ▸ ", &input, error.as_ref(), note);
+}
+
+/// A filter being typed: the prompt, the text with the token that does not parse underlined,
+/// and on the right what it matches (or what is wrong).
+fn filter_bar(
+    f: &mut Frame,
+    t: &Theme,
+    r: Rect,
+    prompt: &str,
+    input: &Input,
+    error: Option<&ParseError>,
+    note: String,
+) {
     let buf = f.buffer_mut();
     fill(buf, r, t.selected());
-    let prompt = " filter ▸ ";
     let pw = prompt.width() as u16;
-    let value = app.filter_input.value().to_string();
-    let (note, note_style) = match &app.filter_error {
+    let value = input.value().to_string();
+    let (note, note_style) = match error {
         Some(e) => (e.message.clone(), t.error()),
-        None => (format!("{matched} of {total} · Enter keep · Esc cancel"), t.dim()),
+        None => (note, t.dim()),
     };
     let note_w = (note.width() as u16 + 2).min(r.width / 2);
     let width = r.width.saturating_sub(pw + note_w + 1) as usize;
-    let scroll = app.filter_input.visual_scroll(width);
-    // the text, with the broken token underlined
-    let mut spans = vec![Span::styled(prompt, t.accent().patch(t.selected()))];
-    let err = app.filter_error.as_ref().map(|e| e.span.clone());
+    let scroll = input.visual_scroll(width);
+    let mut spans = vec![Span::styled(prompt.to_string(), t.accent().patch(t.selected()))];
+    let err = error.map(|e| e.span.clone());
     let mut byte = 0usize;
     for (i, c) in value.chars().enumerate() {
         if i >= scroll {
@@ -1933,7 +2031,7 @@ fn draw_filter(f: &mut Frame, app: &mut App, r: Rect) {
         r.y,
         vec![Span::styled(truncate(&note, note_w.saturating_sub(2) as usize), note_style.patch(t.selected()))],
     );
-    let cx = (app.filter_input.visual_cursor().max(scroll) - scroll) as u16;
+    let cx = (input.visual_cursor().max(scroll) - scroll) as u16;
     f.set_cursor_position((r.x + pw + cx, r.y));
 }
 

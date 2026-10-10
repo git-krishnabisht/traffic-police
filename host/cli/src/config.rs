@@ -16,7 +16,7 @@
 //! columns = ["method", "host"] # optional columns shown beside the default ones
 //! sort = "status desc"        # the list's starting order: a column, `desc` for the reverse
 //! collapse = false            # start with repeated calls collapsed
-//! view = "connections"        # the view at start: connections, threads, rules
+//! view = "connections"        # the view at start: connections, threads, rules or logdawg
 //! divider = 55                # the list's share of the width, in percent (25-80)
 //! side_by_side = 140          # from this width on the detail pane sits beside the list
 //! tab = "overview"            # the detail tab a request opens on: overview, response, request, call-stack
@@ -42,6 +42,13 @@
 //! stack_depth = 64
 //! request_bodies = true
 //! response_bodies = true
+//!
+//! [logdawg]                   # the device's log, in view 4 (ARCHITECTURE.md §5.17)
+//! enabled = true              # false: the log is not read
+//! buffers = ["main", "system", "crash"]  # logcat's buffers: main, system, crash, radio, kernel
+//! history = 5000              # lines from before the session started
+//! keep = "64mb"               # memory the lines may use; the oldest go first
+//! filter = "package:mine"     # the view's filter at start ("" for every line)
 //!
 //! [keymap]
 //! pause = "p"                 # an action's name, then one key or a list of keys
@@ -102,6 +109,8 @@ pub struct Config {
     pub adb: AdbSection,
     #[serde(default)]
     pub storage: Storage,
+    #[serde(default)]
+    pub logdawg: LogdawgSection,
     /// `name = "#rrggbb"` for both palettes, and `dark` / `light` tables for one.
     #[serde(default)]
     pub colors: toml::Table,
@@ -153,6 +162,23 @@ pub struct AdbSection {
     pub server: Option<Spanned<String>>,
     pub path: Option<PathBuf>,
 }
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LogdawgSection {
+    pub enabled: Option<bool>,
+    pub buffers: Option<Spanned<Vec<String>>>,
+    pub history: Option<Spanned<u32>>,
+    pub keep: Option<Spanned<Size>>,
+    pub filter: Option<Spanned<String>>,
+}
+
+/// `[logdawg] buffers`: the ones logcat writes as text.
+const LOG_BUFFERS: [&str; 5] = ["main", "system", "crash", "radio", "kernel"];
+/// `[logdawg] history`: lines from before the start.
+const LOG_HISTORY_MAX: u32 = 100_000;
+/// `[logdawg] keep`: at least a megabyte (the store keeps whole chunks).
+const LOG_KEEP_MIN: u64 = 1 << 20;
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -326,7 +352,7 @@ impl Loaded {
             ("borders", &ui.borders, |s| parse_borders(s).is_some(), "rounded, plain, double or thick"),
             ("graph", &ui.graph, |s| GraphSource::parse(s).is_some(), "app or requests"),
             ("sort", &ui.sort, |s| Sort::parse(s).is_some(), "a column's name, like \"status\" or \"time desc\""),
-            ("view", &ui.view, |s| View::parse(s).is_some(), "connections, threads or rules"),
+            ("view", &ui.view, |s| View::parse(s).is_some(), "connections, threads, rules or logdawg"),
             ("tab", &ui.tab, |s| Tab::parse(s).is_some(), "overview, response, request or call-stack"),
             ("body", &ui.body, |s| BodyTab::parse(s).is_some(), "response or request"),
         ];
@@ -384,6 +410,39 @@ impl Loaded {
             {
                 found.push((v.span().start, format!("{what}: {e}")));
             }
+        }
+        let log = &self.config.logdawg;
+        if let Some(b) = &log.buffers {
+            for name in b.get_ref() {
+                if !LOG_BUFFERS.contains(&name.as_str()) {
+                    found.push((
+                        b.span().start,
+                        format!("[logdawg] buffers: {name:?} is not one of {}", LOG_BUFFERS.join(", ")),
+                    ));
+                }
+            }
+        }
+        if let Some(h) = &log.history
+            && *h.get_ref() > LOG_HISTORY_MAX
+        {
+            found.push((
+                h.span().start,
+                format!("[logdawg] history {}: use 0 to {LOG_HISTORY_MAX} (lines)", h.get_ref()),
+            ));
+        }
+        if let Some(k) = &log.keep {
+            match size(k.get_ref()) {
+                Ok(n) if n < LOG_KEEP_MIN => {
+                    found.push((k.span().start, "[logdawg] keep: use 1mb or more".to_string()));
+                }
+                Ok(_) => {}
+                Err(e) => found.push((k.span().start, format!("[logdawg] keep: {e}"))),
+            }
+        }
+        if let Some(f) = &log.filter
+            && let Err(e) = traffic_police_core::logdawg::filter::LogFilter::parse(f.get_ref())
+        {
+            found.push((f.span().start, format!("[logdawg] filter {:?}: {}", f.get_ref(), e.message)));
         }
         if let Some(s) = &self.config.adb.server
             && server(s.get_ref()).is_none()
@@ -584,6 +643,15 @@ impl Loaded {
         if let Some(c) = ui.collapse {
             app.rows.set_collapse(c);
         }
+        let log = &self.config.logdawg;
+        if let Some(f) = log.filter.as_ref().map(|f| f.get_ref().clone())
+            && traffic_police_core::logdawg::filter::LogFilter::parse(&f).is_ok()
+        {
+            app.set_log_filter_text(&f);
+        }
+        if let Some(n) = log.keep.as_ref().and_then(|k| size(k.get_ref()).ok()).filter(|n| *n >= LOG_KEEP_MIN) {
+            app.store.logs_mut().set_keep(n as usize);
+        }
         app.keymap = self.keymap();
         if !self.problems.is_empty() {
             for p in &self.problems {
@@ -595,6 +663,30 @@ impl Loaded {
                 if n == 1 { "" } else { "s" }
             ));
         }
+    }
+
+    /// What Logdawg reads for a session's device and app (`[logdawg]`); `None` when it is off.
+    pub fn logdawg(
+        &self,
+        serial: Option<String>,
+        package: Option<String>,
+    ) -> Option<traffic_police_backends::LogdawgTarget> {
+        let log = &self.config.logdawg;
+        if log.enabled == Some(false) {
+            return None;
+        }
+        let mut target = traffic_police_backends::LogdawgTarget { serial, package, ..Default::default() };
+        if let Some(b) = &log.buffers {
+            let valid: Vec<String> =
+                b.get_ref().iter().filter(|n| LOG_BUFFERS.contains(&n.as_str())).cloned().collect();
+            if !valid.is_empty() {
+                target.buffers = valid;
+            }
+        }
+        if let Some(h) = log.history.as_ref().map(|h| *h.get_ref()).filter(|h| *h <= LOG_HISTORY_MAX) {
+            target.history = h;
+        }
+        Some(target)
     }
 
     /// What to capture, from `[capture]`.
@@ -851,6 +943,51 @@ gap = 2
         black.set_color("selection", (0, 0, 0));
         assert_eq!(theme.selected(), black.selected());
         assert_eq!(theme.accent(), Theme::default().accent());
+    }
+
+    #[test]
+    fn logdawg_settings_apply_and_bad_ones_name_their_line() {
+        let fresh = || App::new(traffic_police_core::SessionStore::new(), Theme::default());
+        let text = "[ui]\nview = \"logdawg\"\n[logdawg]\nbuffers = [\"main\", \"crash\", \"radio\"]\nhistory = 200\n\
+                    keep = \"8mb\"\nfilter = \"level:w tag:OkHttp\"\n";
+        let l = parse(text);
+        assert!(l.problems.is_empty(), "{:?}", l.problems);
+        let t = l.logdawg(Some("emulator-5554".into()), Some("io.example".into())).unwrap();
+        assert_eq!((t.serial.as_deref(), t.package.as_deref()), (Some("emulator-5554"), Some("io.example")));
+        assert_eq!((t.buffers, t.history), (vec!["main".to_string(), "crash".into(), "radio".into()], 200));
+        let mut app = fresh();
+        l.apply_ui(&mut app);
+        assert_eq!((app.view, app.log_filter_input.value()), (View::Logdawg, "level:w tag:OkHttp"));
+        assert_eq!(app.store.logs().keep(), 8 << 20);
+        // the defaults, and off
+        let l = parse("");
+        let t = l.logdawg(None, None).unwrap();
+        assert_eq!((t.buffers.join(","), t.history), ("main,system,crash".to_string(), 5000));
+        let mut app = fresh();
+        l.apply_ui(&mut app);
+        assert_eq!(app.log_filter_input.value(), "package:mine");
+        assert_eq!(app.store.logs().keep(), traffic_police_core::logdawg::DEFAULT_KEEP);
+        assert!(parse("[logdawg]\nenabled = false\n").logdawg(None, None).is_none());
+        // bad values name their line, and the defaults (or the valid part) apply instead
+        let text =
+            "[logdawg]\nbuffers = [\"main\", \"events\"]\nhistory = 200000\nkeep = \"10kb\"\nfilter = \"level:loud\"\n";
+        let l = parse(text);
+        let want = [
+            "line 2: [logdawg] buffers: \"events\" is not one of main, system, crash, radio, kernel",
+            "line 3: [logdawg] history 200000: use 0 to 100000 (lines)",
+            "line 4: [logdawg] keep: use 1mb or more",
+            "line 5: [logdawg] filter \"level:loud\": \"loud\" is not a level",
+        ];
+        assert_eq!(l.problems.len(), want.len(), "{:?}", l.problems);
+        for (got, want) in l.problems.iter().zip(want) {
+            assert!(got.starts_with(want), "{got:?} should start with {want:?}");
+        }
+        let t = l.logdawg(None, None).unwrap();
+        assert_eq!((t.buffers.join(","), t.history), ("main".to_string(), 5000));
+        let mut app = fresh();
+        l.apply_ui(&mut app);
+        assert_eq!(app.log_filter_input.value(), "package:mine");
+        assert_eq!(app.store.logs().keep(), traffic_police_core::logdawg::DEFAULT_KEEP);
     }
 
     #[test]

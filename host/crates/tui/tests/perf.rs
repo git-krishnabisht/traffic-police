@@ -1,4 +1,5 @@
-//! Frame time with 50,000 transactions (ARCHITECTURE.md §6: at most 33 ms, target under 8 ms).
+//! Frame time with 50,000 transactions (ARCHITECTURE.md §6: at most 33 ms, target under 8 ms),
+//! and with half a million lines of the device's log in Logdawg.
 //!
 //! Ignored by default because it is only meaningful in release builds:
 //! `cargo test --release -p traffic-police-tui --test perf -- --ignored --nocapture`
@@ -162,6 +163,118 @@ fn frame_time_with_50k_transactions() {
     results.push(time_frames("detail open on Response", &mut app, 200, |_, _| {}));
     render_keys(&mut app, 200, 50, &parse_keys("<Esc>----").unwrap());
     results.push(time_frames("graph zoomed out to 10 minutes", &mut app, 200, |_, _| {}));
+    for avg in results {
+        assert!(avg < budget, "a frame took {avg:?} on average, over the {budget:?} budget");
+    }
+}
+
+/// Logdawg (ARCHITECTURE.md §5.17): half a million lines, what a busy device writes in about
+/// forty minutes, one in ten of them the app's; then a new batch every frame while following.
+#[test]
+#[ignore = "run in release: cargo test --release -p traffic-police-tui --test perf -- --ignored --nocapture"]
+fn logdawg_with_500k_lines() {
+    use traffic_police_core::logdawg::{Level, LogLine};
+    const LINES: u64 = 500_000;
+    const APP_UID: u32 = 10_234;
+    let tags = [
+        "OkHttp",
+        "ActivityManager",
+        "chatty",
+        "SurfaceFlinger",
+        "wificond",
+        "NetworkScheduler.Stats",
+        "CheckoutViewModel",
+        "Choreographer",
+        "ConnectivityService",
+        "BoundBrokerSvc",
+        "WindowManager",
+        "AndroidRuntime",
+    ];
+    let messages = [
+        "--> GET https://api.example.app/api/v1/notifications?page=3",
+        "<-- 200 OK https://api.example.app/api/v1/orders/status (412ms)",
+        "Slow operation: 112ms so far, now at startProcess",
+        "uid=1000(system) android.bg identical 3 lines",
+        "Finished setting power mode 2 on display 0",
+        "NetworkAgentInfo [WIFI () - 100] validation passed",
+        "<-- HTTP FAILED: java.net.SocketTimeoutException: timeout",
+        "Skipped 85 frames!  The application may be doing too much work on its main thread.",
+    ];
+    let mut app = common::app_at(2.0);
+    app.store.logs_mut().set_keep(1 << 30);
+    let start = DemoSession::clock_at(2 * NS_PER_SEC);
+    let line = |i: u64| {
+        let mine = i.is_multiple_of(10);
+        let pid = if mine { 4312 } else { 600 + (i % 37) as u32 };
+        LogLine {
+            ts: start + i * 4 * NS_PER_MS,
+            wall_ms: 1_791_000_000_000 + (i * 4) as i64,
+            pid,
+            tid: pid + (i % 5) as u32,
+            uid: Some(if mine { APP_UID } else { 1000 + (i % 3) as u32 }),
+            level: Level::ALL[(i % 23 % 6) as usize],
+            buffer: if i.is_multiple_of(4) { 3 } else { 0 },
+            tag: tags[(i % tags.len() as u64) as usize].into(),
+            message: messages[(i % messages.len() as u64) as usize].into(),
+        }
+    };
+    let batches: Vec<Vec<LogLine>> =
+        (0..LINES / 2000).map(|b| (b * 2000..(b + 1) * 2000).map(line).collect()).collect();
+    let t = Instant::now();
+    for b in batches {
+        app.ingest(vec![SessionEvent::Logs(b)]);
+    }
+    let took = t.elapsed();
+    let logs = app.store.logs();
+    println!(
+        "{:<44} {:>8.2?}  ({:.1} M lines/s, {} bytes a line)",
+        "Logdawg: 500,000 lines into the store",
+        took,
+        LINES as f64 / took.as_secs_f64() / 1e6,
+        logs.bytes() / logs.len()
+    );
+    assert_eq!(logs.dropped(), 0, "all of them kept");
+    let end = start + LINES * 4 * NS_PER_MS;
+    app.now_override = Some(end);
+    // the first frame scans every line against package:mine
+    let t = Instant::now();
+    render_keys(&mut app, 200, 50, &parse_keys("4").unwrap());
+    println!("{:<44} {:>8.2?}", "first frame, every line tested (package:mine)", t.elapsed());
+    assert!(app.logdawg.len() as u64 >= LINES / 10);
+    let budget = Duration::from_millis(33);
+    let mut results = Vec::new();
+    let mut i = LINES;
+    let mut now = end;
+    // 20 new lines a frame: 600 a second at 30 frames
+    let mut feed = |app: &mut App, _| {
+        let batch: Vec<LogLine> = (i..i + 20).map(line).collect();
+        i += 20;
+        now += 33 * NS_PER_MS;
+        app.ingest(vec![SessionEvent::Logs(batch)]);
+        app.now_override = Some(now);
+    };
+    results.push(time_frames("Logdawg following, 20 new lines every frame", &mut app, 200, &mut feed));
+    for (filter, label) in [
+        ("", "every line"),
+        ("level:w tag:OkHttp", "level:w tag:OkHttp"),
+        ("/timeout|refused/i -tag:chatty", "a regex"),
+        ("age:5m", "age:5m (tested again each second)"),
+    ] {
+        app.apply_log_filter(filter);
+        let t = Instant::now();
+        render_text(&mut app, 200, 50);
+        println!(
+            "{:<44} {:>8.2?}  ({} lines pass)",
+            format!("filter {label}: every line tested"),
+            t.elapsed(),
+            app.logdawg.len()
+        );
+        results.push(time_frames("  then 20 new lines every frame", &mut app, 100, &mut feed));
+    }
+    // the cursor up in the list, a message of several lines on screen
+    app.apply_log_filter("package:mine");
+    render_keys(&mut app, 200, 50, &parse_keys("<C-u><C-u>kkk").unwrap());
+    results.push(time_frames("Logdawg not following, 20 new lines a frame", &mut app, 200, &mut feed));
     for avg in results {
         assert!(avg < budget, "a frame took {avg:?} on average, over the {budget:?} budget");
     }

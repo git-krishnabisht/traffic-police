@@ -9,6 +9,7 @@ pub mod diffview;
 pub mod explorer;
 pub mod graph;
 pub mod images;
+pub mod logdawg;
 pub mod palette;
 pub mod picker;
 pub mod ruleform;

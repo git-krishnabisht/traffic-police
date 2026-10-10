@@ -680,8 +680,15 @@ async fn run_device_mode(
     let log = session_log();
     app.session_log = log.clone();
     let sink = log.map(|l| l as std::sync::Arc<dyn traffic_police_core::session::StreamSink>);
+    // Logdawg: the device's log, read beside the app's capture, for the UI only
+    let reader = settings
+        .logdawg(target.serial.clone(), Some(target.package.clone()))
+        .map(|t| tokio::spawn(traffic_police_backends::run_logdawg(adb.clone(), t, event_tx.clone())));
     let backend = tokio::spawn(run_device(adb, target, ids, event_tx, command_rx, status_tx, sink));
     let ui = catch_unwind(terminal::run(app, event_rx, RunOptions { detect_images, status: Some(status_rx) })).await;
+    if let Some(r) = reader {
+        r.abort();
+    }
     // the UI dropped its command sender (a panic too): the backend says goodbye and removes its
     // forward
     let _ = tokio::time::timeout(Duration::from_secs(3), backend).await;

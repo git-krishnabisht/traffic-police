@@ -1,0 +1,44 @@
+---
+source: crates/tui/tests/snapshots.rs
+expression: "press(&mut app, MEDIUM, \"4/<C-u>is:crash<Enter><Enter>\")"
+---
+ traffic-police  Pixel 8 [demo]  com.example.shop  pid 4498  ● LIVE  ✎ 1 rule active         50 requests · 5.0 MB in · 33 KB out · 1 failed
+╭─ Network · all app traffic ────────────────────────────────────────────────────────────────── ━ Receiving 3.6 KB/s   ━ Sending 2.5 KB/s ─╮
+│ 1.0 MB/s     ┊                                                      ▁▃▃▃▃▃▃▂▂▂▂▃▃▃▃▃▃▃▃▃▃▂        ┊       ┊                              │
+│              ┊                                                     ▄███████████████████████▆▂     ┊       ┊                              │
+│ 512 KB/s     ┊                                                    ▆██████████████████████████▆▁   ┊       ┊                              │
+│              ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▃██████████████████████████████▆▄▃▄▅▅▄▂▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁ │
+│        0 ┄┄┄┄┊┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┊┄┄┄┄┄┄┄┄┄┄┄┄┄┄┊┄┄┄┄┄┄┄┊┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄ │
+│              🮂▀🮄🮆██████🮆🮅🮅🮅🮆████🮆🮅🮅🮆███🮆🮅🮄🮆██████████████🮆🮄▀▀🮅🮆🮆🮅🮄🮄🮆████🮅🮄🮄🮄🮄🮅🮅🮅🮅🮆█████████████████████🮆▀🮃🮂🮃▀🮄🮆█████🮆🮄🮄🮅🮆█🮆🮅▀🮃🮂🮃▀🮅██████ │
+│ 4.0 KB/s     ┊    ▔▔▔▔      ▔🮃🮃▔    ▔🮂▔    ▀████🮆🮂  🮂🮃▀▀🮂           ▔🮂🮂▔           ▔▔      🮂▀🮆🮆🮄🮄🮆███🮆🮂   ┊       ▔                🮂🮃🮃🮂  │
+│              ┊                              ▀██🮄                                   ┊              ▔▀🮃     ┊                              │
+│ 8.0 KB/s     ┊               ╭ AndroidRuntime · error ───────────────────────────────────────────────────╮┊                              │
+│              00:00.000       │ time    2026-09-29T05:10:20.000Z                                          │0            00:25.000         │
+╰──────────────────────────────│ level   error                                                             │───────────────────────────────╯
+╭─ Log 1 ─ Connection ─ Thread │ tag     AndroidRuntime                                                    │── Pixel 8 [demo] · following ─╮
+│ 00:20.000      4312-4312   An│ process com.example.shop                                                  │                               │
+│                              │ pid     4312                                                              │                               │
+│                              │ tid     4312                                                              │ices                           │
+│                              │ uid     10234                                                             │artRepository.kt:58)           │
+│                              │ buffer  crash                                                             │CartViewModel.kt:31)           │
+│                              │                                                                           │ctivity.kt:88)                 │
+│                              │ FATAL EXCEPTION: main                                                     │                               │
+│                              │ Process: com.example.shop, PID: 4312                                      │                               │
+│                              │ java.lang.IllegalStateException: the cart has no prices                   │                               │
+│                              │     at com.example.shop.cart.CartRepository.total(CartRepository.kt:58)   │                               │
+│                              │     at com.example.shop.cart.CartViewModel.refresh(CartViewModel.kt:31)   │                               │
+│                              │     at com.example.shop.MainActivity.onResume(MainActivity.kt:88)         │                               │
+│                              │                                                                           │                               │
+│                              │ y copies · any other key closes                                           │                               │
+│                              ╰───────────────────────────────────────────────────────────────────────────╯                               │
+│                                                                                                                                          │
+│                                                                                                                                          │
+│                                                                                                                                          │
+│                                                                                                                                          │
+│                                                                                                                                          │
+│                                                                                                                                          │
+│                                                                                                                                          │
+│                                                                                                                                          │
+│                                                                                                                                          │
+╰─ filter is:crash ───────────────────────────────────────────────────────────────────────────────────────────────────────────── 1 of 137 ─╯
+ ↑↓ scroll   y copy   Esc close                                                                                  ⚠ studio inspector present
