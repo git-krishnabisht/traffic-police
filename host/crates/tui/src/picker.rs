@@ -360,12 +360,16 @@ async fn run(
                 // a `:` line being typed takes every key but Ctrl+C
                 if command.is_some() && !ctrl_c {
                     match crate::palette::command_line_key(&mut command, &k) {
-                        crate::palette::CommandLine::Quit => {
+                        crate::palette::CommandLine::Quit if keymap.colon_q() => {
                             fetcher.abort();
                             return Ok(None);
                         }
+                        // `:q` turned off in `[keymap]`
+                        crate::palette::CommandLine::Quit => message = Some(way_out(keymap, in_session)),
                         crate::palette::CommandLine::Unknown(c) => {
-                            message = Some(format!(":{c} is not a command here (:q quits)"));
+                            let quit = keymap.labels(Action::Quit).join(" or ");
+                            let does = if in_session { "goes back to the session" } else { "quits" };
+                            message = Some(format!(":{c} is not a command here ({quit} {does})"));
                         }
                         crate::palette::CommandLine::Editing => {}
                     }
@@ -376,14 +380,10 @@ async fn run(
                     fetcher.abort();
                     return Ok(None);
                 }
-                // as in Neovim, Ctrl+C does not quit (nor `q`, unless `[keymap]` binds it): say what does
-                if ctrl_c || (action.is_none() && k.code == KeyCode::Char('q') && k.modifiers.is_empty()) {
+                // as in Neovim, Ctrl+C does not quit (nor `q`), unless `[keymap]` binds it: say what does
+                if action.is_none() && (ctrl_c || (k.code == KeyCode::Char('q') && k.modifiers.is_empty())) {
                     command = None;
-                    message = Some(if in_session {
-                        format!("{} (or :q) goes back to the session", keymap.key_label(Action::Back))
-                    } else {
-                        crate::app::QUIT_HINT.to_string()
-                    });
+                    message = Some(way_out(keymap, in_session));
                     continue;
                 }
                 if action == Some(Action::Palette) {
@@ -593,17 +593,15 @@ fn draw(buf: &mut ratatui::buffer::Buffer, area: Rect, t: &Theme, v: &View) {
     if chosen.is_some() {
         help.push_str(&format!(" · {} back to devices", key(Action::Back)));
     }
+    // what quits, as `[keymap]` says: `:q`, keys, or both
+    let quit = keymap.labels(Action::Quit).join(" or ");
     if in_session {
         match chosen {
-            None => help.push_str(&format!(" · {} or :q back to the session", key(Action::Back))),
-            Some(_) => help.push_str(" · :q back to the session"),
+            None => help.push_str(&format!(" · {} or {quit} back to the session", key(Action::Back))),
+            Some(_) => help.push_str(&format!(" · {quit} back to the session")),
         }
     } else {
-        // `quit = []` in `[keymap]` leaves only `:q` (and Ctrl+C)
-        match key(Action::Quit) {
-            k if k.is_empty() => help.push_str(" · :q quit"),
-            k => help.push_str(&format!(" · {k} or :q quit")),
-        }
+        help.push_str(&format!(" · {quit} quit"));
     }
     let help = help.as_str();
     let mut bottom: Vec<Line> = Vec::new();
@@ -629,6 +627,18 @@ fn draw(buf: &mut ratatui::buffer::Buffer, area: Rect, t: &Theme, v: &View) {
     list.extend(body);
     Paragraph::new(list).render(Rect { height: list_h, ..inner }, buf);
     Paragraph::new(bottom).render(Rect { y: inner.y + inner.height - bottom_h, height: bottom_h, ..inner }, buf);
+}
+
+/// What `q` and Ctrl+C say when they do not quit: what does, or in a session what goes back to it.
+fn way_out(keymap: &Keymap, in_session: bool) -> String {
+    if !in_session {
+        return keymap.quit_hint();
+    }
+    let quit = keymap.labels(Action::Quit).join(" or ");
+    match keymap.key_label(Action::Back) {
+        back if back.is_empty() => format!("{quit} goes back to the session"),
+        back => format!("{back} (or {quit}) goes back to the session"),
+    }
 }
 
 fn truncate(s: &str, w: usize) -> String {
@@ -708,6 +718,35 @@ mod tests {
         let shown = text(&view);
         assert!(shown.contains("Another app: choose a device"), "{shown}");
         assert!(shown.contains("Enter open · Esc or :q back to the session"), "{shown}");
+    }
+
+    #[test]
+    fn the_way_out_follows_the_keymap() {
+        let mut keymap = Keymap::default();
+        assert_eq!(way_out(&keymap, false), "type :q and press Enter to quit");
+        assert_eq!(way_out(&keymap, true), "Esc (or :q) goes back to the session");
+        // `quit = "q"` in [keymap]: `q` instead of `:q`
+        assert!(keymap.apply(&[("quit".into(), vec!["q".into()])]).is_empty());
+        assert_eq!(way_out(&keymap, false), "press q to quit");
+        assert_eq!(way_out(&keymap, true), "Esc (or q) goes back to the session");
+        let devices = Ok(vec![phone()]);
+        let abouts = HashMap::new();
+        let mut view = View {
+            loaded: true,
+            devices: &devices,
+            abouts: &abouts,
+            chosen: None,
+            processes: None,
+            cursor: 0,
+            message: None,
+            attach: false,
+            keymap: &keymap,
+            command: None,
+            in_session: false,
+        };
+        assert!(text(&view).contains("Enter open · q quit"), "{}", text(&view));
+        view.in_session = true;
+        assert!(text(&view).contains("Enter open · Esc or q back to the session"), "{}", text(&view));
     }
 
     #[test]

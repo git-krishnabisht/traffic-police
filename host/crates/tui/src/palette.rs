@@ -152,20 +152,16 @@ pub fn score(query: &str, text: &str) -> Option<usize> {
 
 impl Palette {
     fn new(app: &App) -> Palette {
+        // Quit is the palette's `:q`: with `:q` turned off in `[keymap]` it is not here
         let mut items: Vec<Item> = ACTIONS
             .iter()
             .filter(|i| !LEFT_OUT.contains(&i.action))
-            .map(|i| {
-                let mut keys: Vec<String> = app.keymap.keys(i.action).iter().map(ToString::to_string).collect();
-                if i.action == Action::Quit {
-                    keys.push(":q".into());
-                }
-                Item {
-                    command: Command::Action(i.action),
-                    title: i.title.to_string(),
-                    name: i.name.to_string(),
-                    keys: keys.join(" "),
-                }
+            .filter(|i| i.action != Action::Quit || app.keymap.colon_q())
+            .map(|i| Item {
+                command: Command::Action(i.action),
+                title: i.title.to_string(),
+                name: i.name.to_string(),
+                keys: app.keymap.labels(i.action).join(" "),
             })
             .collect();
         for g in GraphStyle::ALL {
@@ -201,12 +197,16 @@ impl Palette {
             .collect();
         scored.sort();
         self.shown = scored.into_iter().map(|(_, i)| i).collect();
-        // `:q`, `:wq`, `:x` and the like: Quit first, so Enter quits as in Neovim
-        if is_quit_command(&q)
-            && let Some(quit) = self.items.iter().position(|it| it.command == Command::Action(Action::Quit))
-        {
-            self.shown.retain(|&i| i != quit);
-            self.shown.insert(0, quit);
+        // `:q`, `:wq`, `:x` and the like: Quit first, so Enter quits as in Neovim; nothing when
+        // `:q` does not quit, and Enter says what does
+        if is_quit_command(&q) {
+            match self.items.iter().position(|it| it.command == Command::Action(Action::Quit)) {
+                Some(quit) => {
+                    self.shown.retain(|&i| i != quit);
+                    self.shown.insert(0, quit);
+                }
+                None => self.shown.clear(),
+            }
         }
         self.cursor = self.cursor.min(self.shown.len().saturating_sub(1));
     }
@@ -239,6 +239,7 @@ impl App {
             }
             _ if k.code == KeyCode::Enter || action == Some(Action::Activate) => {
                 let chosen = p.shown.get(p.cursor).map(|&i| p.items[i].command);
+                let quit_command = is_quit_command(p.input.value());
                 self.overlay = Overlay::None;
                 self.palette = None;
                 match chosen {
@@ -247,6 +248,7 @@ impl App {
                         self.graph_style = g;
                         self.flash(format!("graph style: {}", g.name()));
                     }
+                    None if quit_command => self.flash(self.keymap.quit_hint()),
                     None => self.flash("no command matches"),
                 }
             }
@@ -286,8 +288,10 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
     let visible = (inner.height as usize).saturating_sub(2);
     let first = p.cursor.saturating_sub(visible.saturating_sub(1));
     if p.shown.is_empty() {
-        let none = Line::from(Span::styled("no command matches", t.faint()));
-        draw_line(buf, inner.x, list_y, inner.width, &none, 0, Style::default());
+        // `:q` turned off in `[keymap]`: what quits instead
+        let none =
+            if is_quit_command(p.input.value()) { app.keymap.quit_hint() } else { "no command matches".to_string() };
+        draw_line(buf, inner.x, list_y, inner.width, &Line::from(Span::styled(none, t.faint())), 0, Style::default());
     }
     for (row, &i) in p.shown.iter().enumerate().skip(first).take(visible) {
         let it = &p.items[i];

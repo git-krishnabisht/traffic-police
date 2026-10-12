@@ -54,6 +54,7 @@
 //! [keymap]
 //! pause = "p"                 # an action's name, then one key or a list of keys
 //! copy = ["y", "ctrl+c"]
+//! quit = ":q"                 # what quits: ":q" (the default), keys ("q", "ctrl+c"), or both: ["q", ":q"]
 //!
 //! [adb]
 //! server = "127.0.0.1:5037"   # the adb server (ADB_SERVER_SOCKET and friends otherwise)
@@ -834,6 +835,25 @@ memory = 1048576
         assert_eq!((app.split_pct, app.clipboard, app.fps), (60, ClipboardMode::Off, 120));
         let p = traffic_police_tui::actions::Action::Pause;
         assert_eq!(app.keymap.key_label(p), "p");
+    }
+
+    #[test]
+    fn quit_takes_keys_and_colon_q() {
+        let l = parse("[keymap]\nquit = [\"q\", \":q\"]\n");
+        assert!(l.problems.is_empty(), "{:?}", l.problems);
+        let keymap = l.keymap();
+        assert!(keymap.colon_q());
+        assert_eq!(keymap.key_label(traffic_police_tui::actions::Action::Quit), "q");
+        // only quit takes a command, and only one that quits; the default stays
+        let l = parse("[keymap]\nquit = \":w\"\ncopy = \":q\"\n");
+        assert_eq!(
+            l.problems,
+            [
+                "line 2: [keymap] quit: \":w\" is not a command that quits; use \":q\" (or :wq, :x, as in Neovim)",
+                "line 3: [keymap] copy: \":q\" is not a key; only quit takes a command (\":q\")",
+            ]
+        );
+        assert!(l.keymap().colon_q());
     }
 
     #[test]

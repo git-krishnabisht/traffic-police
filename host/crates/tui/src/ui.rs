@@ -1808,14 +1808,7 @@ fn draw_footer(app: &App, r: Rect, buf: &mut Buffer) {
     let mut items: Vec<(String, &str)> = shown
         .into_iter()
         .map(|(actions, label)| {
-            let keys: String = actions
-                .iter()
-                .map(|&a| match app.keymap.key_label(a) {
-                    // quitting is `:q` unless a key is bound to it
-                    k if k.is_empty() && a == Action::Quit => ":q".to_string(),
-                    k => k,
-                })
-                .collect();
+            let keys: String = actions.iter().map(|&a| app.keymap.key_label(a)).collect();
             (keys, label)
         })
         .filter(|(keys, _)| !keys.is_empty())
@@ -1863,11 +1856,8 @@ fn draw_help(app: &App, area: Rect, buf: &mut Buffer) {
                 .iter()
                 .filter(|i| i.group == *g)
                 .filter_map(|i| {
-                    let mut keys: Vec<String> = app.keymap.keys(i.action).iter().map(ToString::to_string).collect();
-                    // the palette's `:q` (and `:wq`, `:x`, …) quits as in Neovim
-                    if i.action == crate::actions::Action::Quit {
-                        keys.push(":q".into());
-                    }
+                    // quit's include the palette's `:q` (and `:wq`, `:x`, …) when it quits
+                    let keys = app.keymap.labels(i.action);
                     (!keys.is_empty()).then(|| (keys.join("/"), i.hint))
                 })
                 .collect();

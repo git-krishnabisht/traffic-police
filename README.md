@@ -403,7 +403,7 @@ or turns the log off.
 | Copy and save | `y` copy: as cURL, the URL, headers, one header, a body, the JSON value at the cursor · `w` save a body to a file · `e` export: HAR (all, listed or selected requests) or a session file |
 | Compare | `d` marks a request (◆), `d` on another compares them: request and status lines, headers (`s` in order or as sets), bodies (JSON with keys sorted); `n` `N` step through changes, `y` copies the diff |
 | Decode | `Enter` on a header or a JSON value: copy it, decode a JWT, base64 or URL encoding, or filter by it · the Overview lists JWTs with their expiry (`Enter` decodes) |
-| Session | `:` command palette (every command by name, and the graph styles and layouts) · `A` (or `:app`) another debuggable app, without quitting · `x` clear (asks first) · `?` help · `:q` Enter quits, as in Neovim (`:q!`, `:qa`, `:wq` and `:x` too, also in the device and app pickers); `q` and Ctrl+C do not quit, they say how (`quit = ["q"]` under `[keymap]` brings `q` back) |
+| Session | `:` command palette (every command by name, and the graph styles and layouts) · `A` (or `:app`) another debuggable app, without quitting · `x` clear (asks first) · `?` help · `:q` Enter quits, as in Neovim (`:q!`, `:qa`, `:wq` and `:x` too, also in the device and app pickers); `quit` under `[keymap]` sets what quits: `quit = "q"` (as up to 0.3.1), both (`["q", ":q"]`), or any key, `"ctrl+c"` too; a key that does not quit (`q`, Ctrl+C) says what does |
 
 Mouse: click rows and tabs, double-click a row to open it, wheel to scroll (on the graph the
 wheel zooms and Shift+wheel moves in time), drag on the graph to select a range, drag the divider
@@ -523,6 +523,7 @@ requests = true               # the requests among the lines (R shows or hides t
 [keymap]
 pause = "p"                   # an action's name (see : or ?), then a key or a list of keys
 copy = ["y", "ctrl+y"]
+quit = ":q"                   # what quits: ":q" (the default), keys ("q", "ctrl+c"), or both: ["q", ":q"]
 
 [adb]
 server = "127.0.0.1:5037"     # otherwise ADB_SERVER_SOCKET / ANDROID_ADB_SERVER_PORT, as adb reads them

@@ -29,8 +29,6 @@ use crate::images::Images;
 use crate::theme::Theme;
 use crate::wrap;
 
-/// What Ctrl+C and a lone `q` say: only `:q` (and `:wq`, `:x`, …) quits, as in Neovim.
-pub const QUIT_HINT: &str = "type :q and press Enter to quit";
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum View {
     Connections,
@@ -1116,10 +1114,20 @@ impl App {
         // keys can arrive faster than frames; act on the rows as they are now
         self.refresh();
         let ctrl = k.modifiers.contains(KeyModifiers::CONTROL);
-        // as in Neovim, Ctrl+C does not quit: it says what does
+        // as in Neovim, Ctrl+C does not quit, and says what does; unless `[keymap]` binds it: to
+        // quit, it quits from anywhere, as in other terminal programs
         if ctrl && k.code == KeyCode::Char('c') {
-            self.flash(QUIT_HINT);
-            return;
+            match self.keymap.action(&k) {
+                Some(Action::Quit) => {
+                    self.should_quit = true;
+                    return;
+                }
+                Some(_) => {}
+                None => {
+                    self.flash(self.keymap.quit_hint());
+                    return;
+                }
+            }
         }
         match self.overlay {
             Overlay::Help => {
@@ -1328,8 +1336,8 @@ impl App {
         if let Some(action) = self.keymap.action(&k) {
             self.run(action);
         } else if k.code == KeyCode::Char('q') && k.modifiers.is_empty() {
-            // `q` quit until 2026-10-08: say what does now
-            self.flash(QUIT_HINT);
+            // `q` quit until 2026-10-08 (and does with `quit = "q"`): say what does
+            self.flash(self.keymap.quit_hint());
         }
     }
 

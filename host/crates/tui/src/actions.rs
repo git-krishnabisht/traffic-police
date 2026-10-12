@@ -125,6 +125,7 @@ pub struct Info {
     /// Short label in the footer's key hints.
     pub hint: &'static str,
     pub group: Group,
+    /// As `[keymap]` writes them; quit's `":q"` is Neovim's quit commands, typed after `:`.
     pub keys: &'static [&'static str],
 }
 
@@ -269,8 +270,8 @@ pub const ACTIONS: &[Info] = &[
     ),
     info!(SaveRule, "save-rule", Rules, "save", "Rule form: save the rule to rules.toml", ["ctrl+s"]),
     info!(EditFile, "edit-file", Rules, "$EDITOR", "Open rules.toml in $EDITOR at the rule", ["E"]),
-    // only `:q` (the palette's quit commands) quits unless `[keymap]` binds a key (2026-10-08)
-    info!(Quit, "quit", Session, "quit", "Quit", []),
+    // `:q` only, as in Neovim (2026-10-08); `[keymap]` can set keys, with or without `:q` (2026-10-12)
+    info!(Quit, "quit", Session, "quit", "Quit", [":q"]),
 ];
 
 impl Action {
@@ -400,19 +401,47 @@ impl fmt::Display for Key {
     }
 }
 
+/// An action's keys as `[keymap]` writes them, and whether they include `":q"`: only quit takes
+/// that, and `":wq"`, `":x"` and Neovim's other quit commands mean the same. `":"` alone is the key.
+fn bindings(action: Action, written: &[String]) -> Result<(Vec<Key>, bool), String> {
+    let mut keys = Vec::new();
+    let mut colon_q = false;
+    for w in written {
+        match w.trim().strip_prefix(':') {
+            Some(command) if !command.is_empty() => {
+                if action != Action::Quit {
+                    return Err(format!("{w:?} is not a key; only quit takes a command (\":q\")"));
+                }
+                if !crate::palette::is_quit_command(command) {
+                    return Err(format!("{w:?} is not a command that quits; use \":q\" (or :wq, :x, as in Neovim)"));
+                }
+                colon_q = true;
+            }
+            _ => keys.push(Key::parse(w)?),
+        }
+    }
+    Ok((keys, colon_q))
+}
+
 /// Keys to actions. Built from the defaults, then the user's `[keymap]`: naming an action
 /// there replaces its default keys.
 #[derive(Debug, Clone)]
 pub struct Keymap {
     by_key: HashMap<Key, Action>,
     by_action: HashMap<Action, Vec<Key>>,
+    /// `":q"` among quit's keys (see [`Keymap::colon_q`]).
+    colon_q: bool,
 }
 
 impl Default for Keymap {
     fn default() -> Self {
-        let mut m = Keymap { by_key: HashMap::new(), by_action: HashMap::new() };
+        let mut m = Keymap { by_key: HashMap::new(), by_action: HashMap::new(), colon_q: false };
         for i in ACTIONS {
-            let keys: Vec<Key> = i.keys.iter().map(|k| Key::parse(k).expect("default keys parse")).collect();
+            let written: Vec<String> = i.keys.iter().map(|k| k.to_string()).collect();
+            let (keys, colon_q) = bindings(i.action, &written).expect("default keys parse");
+            if i.action == Action::Quit {
+                m.colon_q = colon_q;
+            }
             m.set(i.action, keys);
         }
         m
@@ -450,8 +479,13 @@ impl Keymap {
                 errors.push(format!("unknown action {name:?}; valid names: {}", names.join(", ")));
                 continue;
             };
-            match keys.iter().map(|k| Key::parse(k)).collect::<Result<Vec<_>, _>>() {
-                Ok(keys) => self.set(action, keys),
+            match bindings(action, keys) {
+                Ok((keys, colon_q)) => {
+                    if action == Action::Quit {
+                        self.colon_q = colon_q;
+                    }
+                    self.set(action, keys);
+                }
                 Err(e) => errors.push(format!("{name}: {e}")),
             }
         }
@@ -466,9 +500,35 @@ impl Keymap {
         self.by_action.get(&action).map_or(&[], |v| v.as_slice())
     }
 
-    /// The first key of an action, for hints ("" when it has none).
+    /// Whether `:q` quits (and `:q!`, `:wq`, `:x`, … as in Neovim): when quit's keys in
+    /// `[keymap]` include `":q"`, as by default, and whenever no key quits, so that something
+    /// always does (`quit = []`, or its last key taken by another action).
+    pub fn colon_q(&self) -> bool {
+        self.colon_q || self.keys(Action::Quit).is_empty()
+    }
+
+    /// An action's keys as hints show them, and for quit `:q` when it quits.
+    pub fn labels(&self, action: Action) -> Vec<String> {
+        let mut labels: Vec<String> = self.keys(action).iter().map(ToString::to_string).collect();
+        if action == Action::Quit && self.colon_q() {
+            labels.push(":q".into());
+        }
+        labels
+    }
+
+    /// The first of an action's labels, for hints ("" when it has none).
     pub fn key_label(&self, action: Action) -> String {
-        self.keys(action).first().map(ToString::to_string).unwrap_or_default()
+        self.labels(action).into_iter().next().unwrap_or_default()
+    }
+
+    /// What quits, said when `q` or Ctrl+C does not.
+    pub fn quit_hint(&self) -> String {
+        let keys: Vec<String> = self.keys(Action::Quit).iter().map(ToString::to_string).collect();
+        match (keys.join(" or "), self.colon_q()) {
+            (keys, _) if keys.is_empty() => "type :q and press Enter to quit".into(),
+            (keys, false) => format!("press {keys} to quit"),
+            (keys, true) => format!("press {keys}, or type :q and press Enter, to quit"),
+        }
     }
 }
 
@@ -527,5 +587,56 @@ mod tests {
         assert!(m.keys(Action::Pause).iter().all(|k| k.code != KeyCode::Char(' ')));
         assert_eq!(Key::parse("shift+tab").unwrap().code, KeyCode::BackTab);
         assert_eq!(Key::parse("shift+g").unwrap(), Key::parse("G").unwrap());
+    }
+
+    #[test]
+    fn quit_takes_keys_and_colon_q() {
+        let q = ev(KeyCode::Char('q'), KeyModifiers::NONE);
+        let ctrl_c = ev(KeyCode::Char('c'), KeyModifiers::CONTROL);
+        let quit = |keys: &[&str]| {
+            let mut m = Keymap::default();
+            let errors = m.apply(&[("quit".into(), keys.iter().map(|k| k.to_string()).collect())]);
+            assert!(errors.is_empty(), "{errors:?}");
+            m
+        };
+        // by default `:q` alone, as in Neovim
+        let m = Keymap::default();
+        assert!(m.colon_q());
+        assert_eq!(m.action(&q), None);
+        assert_eq!(m.labels(Action::Quit), [":q"]);
+        assert_eq!(m.quit_hint(), "type :q and press Enter to quit");
+        // `q` instead
+        let m = quit(&["q"]);
+        assert_eq!(m.action(&q), Some(Action::Quit));
+        assert!(!m.colon_q());
+        assert_eq!(m.labels(Action::Quit), ["q"]);
+        assert_eq!(m.quit_hint(), "press q to quit");
+        // keys and `:q` (`:wq` and the other quit commands mean the same), Ctrl+C among them
+        let m = quit(&["q", "ctrl+c", ":wq"]);
+        assert_eq!(m.action(&ctrl_c), Some(Action::Quit));
+        assert!(m.colon_q());
+        assert_eq!(m.key_label(Action::Quit), "q");
+        assert_eq!(m.labels(Action::Quit).len(), 3);
+        assert_eq!(m.quit_hint(), "press q or Ctrl+c, or type :q and press Enter, to quit");
+        assert!(quit(&[":q"]).colon_q() && quit(&[":q"]).keys(Action::Quit).is_empty());
+        // something always quits: with no key left, `:q` does
+        assert!(quit(&[]).colon_q());
+        let mut m = quit(&["q"]);
+        assert!(m.apply(&[("pause".into(), vec!["q".into()])]).is_empty());
+        assert_eq!(m.action(&q), Some(Action::Pause));
+        assert!(m.colon_q(), "quit's only key went to pause");
+        // only quit takes a command, and only one that quits; `":"` alone is a key
+        let mut m = quit(&["q"]);
+        let errors = m.apply(&[
+            ("copy".into(), vec![":q".into()]),
+            ("quit".into(), vec![":w".into()]),
+            ("palette".into(), vec![":".into()]),
+        ]);
+        assert_eq!(errors.len(), 2, "{errors:?}");
+        assert!(errors[0].starts_with("copy: \":q\" is not a key"), "{}", errors[0]);
+        assert!(errors[1].starts_with("quit: \":w\" is not a command that quits"), "{}", errors[1]);
+        assert_eq!(m.action(&q), Some(Action::Quit), "a wrong entry leaves quit as it was");
+        assert!(!m.colon_q());
+        assert_eq!(m.action(&ev(KeyCode::Char(':'), KeyModifiers::NONE)), Some(Action::Palette));
     }
 }

@@ -204,6 +204,43 @@ fn only_colon_q_quits() {
     assert!(app.should_quit);
 }
 
+/// `[keymap] quit` sets what quits: `q` instead of `:q` (which then says what quits, in the
+/// palette and on Enter), both, or Ctrl+C, which then quits from anywhere.
+#[test]
+fn quit_comes_from_the_keymap() {
+    let quit = |keys: &[&str]| {
+        let mut app = app_at(5.0);
+        let errors = app.keymap.apply(&[("quit".to_string(), keys.iter().map(|k| k.to_string()).collect())]);
+        assert!(errors.is_empty(), "{errors:?}");
+        app
+    };
+    // `q` instead of `:q`
+    let mut app = quit(&["q"]);
+    let text = press(&mut app, MEDIUM, ":q");
+    assert!(text.contains("press q to quit"), "the palette says what quits: {text}");
+    let text = press(&mut app, MEDIUM, "<Enter>");
+    assert!(!app.should_quit, ":q does not quit");
+    assert!(text.contains("press q to quit"), "{text}");
+    let text = press(&mut app, MEDIUM, "<C-c>");
+    assert!(!app.should_quit && text.contains("press q to quit"), "{text}");
+    let text = press(&mut app, LARGE, "?");
+    assert!(text.contains("q quit") && !text.contains(":q quit"), "{text}");
+    press(&mut app, MEDIUM, "<Esc>q");
+    assert!(app.should_quit);
+    // both
+    let mut app = quit(&["q", ":q"]);
+    let text = press(&mut app, LARGE, "?");
+    assert!(text.contains("q/:q quit"), "{text}");
+    press(&mut app, MEDIUM, "<Esc>:q<Enter>");
+    assert!(app.should_quit);
+    // Ctrl+C, from anywhere: here the filter bar being typed in
+    let mut app = quit(&["ctrl+c"]);
+    let text = press(&mut app, MEDIUM, "q");
+    assert!(!app.should_quit && text.contains("press Ctrl+c to quit"), "{text}");
+    press(&mut app, MEDIUM, "/api<C-c>");
+    assert!(app.should_quit);
+}
+
 #[test]
 fn focus_cycles_through_open_panes() {
     let mut app = app_at(5.0);
