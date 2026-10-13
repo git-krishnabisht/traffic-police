@@ -231,7 +231,9 @@ download() {
 # elsewhere, and then eight parts at once arrive about six times as fast (measured on 2026-10-11:
 # 116 KB/s over one connection, 682 KB/s over eight; when one connection is fast, parts cost
 # nothing). Each part's size is checked, and the checksum after checks the whole; when a part
-# fails, or the server does not send parts, the file comes over one connection instead.
+# fails, or the server does not send parts, the file comes over one connection instead. The parts
+# are not removed (the scratch folder goes at the end): the progress bar reads their sizes
+# meanwhile, and a part removed between the bar finding it and reading it stopped the install.
 PARTS=8
 download_parts() {
     url=$1 out=$2 size=$3
@@ -269,12 +271,10 @@ download_parts() {
             cat "$out.part$k" >>"$out.joined"
             k=$((k + 1))
         done
-        rm -f "$out".part*
         mv "$out.joined" "$out"
         : >"$out.in-parts"
         return 0
     fi
-    rm -f "$out".part* "$out.joined"
     download "$url" "$out"
 }
 
@@ -287,11 +287,14 @@ fetch() {
     fi
 }
 
-# bytes of the binary so far: its parts, or the file
+# bytes of the binary so far: the file once it is there (whole, when it came in parts), else its
+# parts. A size it cannot read counts as nothing: the progress bar must not stop the install.
 got_bytes() {
+    if [ -f "$tmp/$asset" ]; then set -- "$tmp/$asset"; else set -- "$tmp/$asset".part*; fi
     n=0
-    for f in "$tmp/$asset" "$tmp/$asset".part*; do
-        if [ -f "$f" ]; then n=$((n + $(wc -c <"$f" | tr -d ' '))); fi
+    for f in "$@"; do
+        b=$({ wc -c <"$f" | tr -d ' '; } 2>/dev/null)
+        n=$((n + ${b:-0}))
     done
     say "$n"
 }
