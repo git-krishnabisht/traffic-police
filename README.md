@@ -142,8 +142,8 @@ and in the app module's `build.gradle.kts`:
 
 ```kotlin
 dependencies {
-    debugImplementation("io.trafficpolice:capture:0.5.0")
-    releaseImplementation("io.trafficpolice:capture-noop:0.5.0")
+    debugImplementation("io.trafficpolice:capture:0.5.1")
+    releaseImplementation("io.trafficpolice:capture-noop:0.5.1")
 }
 ```
 
