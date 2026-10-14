@@ -830,6 +830,51 @@ fn body_filters_fill_in_from_the_background() {
     assert!(paths.iter().all(|p| *p == "/api/v1/sessions"), "{paths:?}");
 }
 
+/// Typing goes on while the searches of what was typed before run: what they found is not taken
+/// for the new text (up to 0.5.1 it was, by the needle's place, so the requests that have
+/// "darkmode" showed for "darkmodex"), the ones still to run stop, and the new text's wait for
+/// typing to pause.
+#[test]
+fn searches_of_an_earlier_keystroke_do_not_fill_in_the_list() {
+    let mut app = app_at(40.0);
+    let mut term = Terminal::new(TestBackend::new(MEDIUM.0, MEDIUM.1)).unwrap();
+    // drawn as the live loop draws: the searches are not run in line
+    let mut draw = |app: &mut App| {
+        term.draw(|f| ui::draw(f, app)).unwrap();
+    };
+    for k in traffic_police_tui::parse_keys("/body:darkmode<Enter>").unwrap() {
+        app.handle_key(k);
+    }
+    draw(&mut app);
+    let batches = app.take_search_jobs();
+    assert!(!batches.is_empty(), "Enter starts the searches at once");
+    let mut found = Vec::new();
+    for b in batches.clone() {
+        b.run(|r| {
+            found.extend(r);
+            true
+        });
+    }
+    assert!(found.iter().any(|r| r.hit), "some requests have \"darkmode\"");
+    // the results come in after one more key
+    app.handle_key(key('/'));
+    app.handle_key(key('x'));
+    assert!(batches.iter().all(|b| b.ticket.cancelled()), "the searches for \"darkmode\" stop");
+    app.finish_searches(&found);
+    draw(&mut app);
+    assert_eq!(app.view_rows().len(), 0, "no request has \"darkmodex\"");
+    let mut late = Vec::new();
+    batches[0].clone().run(|r| {
+        late.extend(r);
+        true
+    });
+    assert!(late.is_empty(), "a stopped search sends nothing");
+    // while typing, the new text's searches wait
+    assert!(app.take_search_jobs().is_empty());
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert!(!app.take_search_jobs().is_empty());
+}
+
 #[test]
 fn search_in_the_detail_pane_steps_through_matches() {
     let mut app = app_at(40.0);

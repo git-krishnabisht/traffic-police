@@ -14,7 +14,7 @@ use traffic_police_core::event::MarkerKind;
 use traffic_police_core::filter::{BodySearch, Filter, ParseError};
 use traffic_police_core::fmt::{NS_PER_MS, NS_PER_SEC, Ts};
 use traffic_police_core::model::{BodyDir, TxnIdx};
-use traffic_police_core::rows::{Column, Row, RowModel, Sort};
+use traffic_police_core::rows::{Column, Row, RowModel, SearchTicket, Sort};
 use traffic_police_core::store::{GraphSource, SessionStore};
 use traffic_police_proto::msg::RuleSet;
 use tui_input::Input;
@@ -343,6 +343,63 @@ pub struct SearchJob {
     pub search: BodySearch,
 }
 
+/// What a `body:` search found, for the searches of `generation` ([`SearchTicket`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SearchResult {
+    pub generation: u64,
+    pub txn: TxnIdx,
+    pub needle: usize,
+    pub rev: u64,
+    pub hit: bool,
+}
+
+/// The `body:` searches a row model asked for, run in order by one worker, so that a big session
+/// does not flood the pool.
+#[derive(Debug, Clone)]
+pub struct SearchBatch {
+    pub ticket: SearchTicket,
+    pub jobs: Vec<SearchJob>,
+}
+
+/// Results go to the UI this many at a time, or after this long, whichever comes first.
+const SEARCH_RESULTS: usize = 512;
+const SEARCH_RESULTS_EVERY: Duration = Duration::from_millis(20);
+
+/// While the filter is typed, `body:` searches start once typing pauses this long: up to 0.5.1
+/// each keystroke started a search of the whole session.
+pub const SEARCH_PAUSE: Duration = Duration::from_millis(150);
+
+/// The most `body:` searches made in one turn of the loop: the rest wait for the next ones, so a
+/// big session's searches start over a few frames instead of in one long one.
+const SEARCHES_PER_TURN: usize = 4096;
+
+impl SearchBatch {
+    /// Runs the searches, handing the results to `send` in groups (it says `false` once nobody
+    /// takes them). Between two searches it stops when the ticket says so: the needles changed,
+    /// so the rest is not wanted. A search that fails with a bug counts as no match.
+    pub fn run(self, mut send: impl FnMut(Vec<SearchResult>) -> bool) {
+        let generation = self.ticket.generation;
+        let mut out = Vec::new();
+        let mut sent = Instant::now();
+        for job in self.jobs {
+            if self.ticket.cancelled() {
+                return;
+            }
+            let hit = crate::terminal::contained(|| job.search.run()).unwrap_or(false);
+            out.push(SearchResult { generation, txn: job.txn, needle: job.needle, rev: job.rev, hit });
+            if out.len() >= SEARCH_RESULTS || sent.elapsed() >= SEARCH_RESULTS_EVERY {
+                if !send(std::mem::take(&mut out)) {
+                    return;
+                }
+                sent = Instant::now();
+            }
+        }
+        if !out.is_empty() {
+            send(out);
+        }
+    }
+}
+
 /// The most frames drawn a second, unless `[ui] fps` says otherwise.
 pub const DEFAULT_FPS: u16 = 60;
 /// What `[ui] fps` accepts.
@@ -480,6 +537,8 @@ pub struct App {
     pub jq_runner: JqRunner,
     jq_jobs: Vec<JqJob>,
     jq_running: usize,
+    /// `body:` searches wait until then: the filter is being typed ([`SEARCH_PAUSE`]).
+    search_hold: Option<Instant>,
     pub source_roots: Vec<PathBuf>,
     /// What a live backend says about its connection, for the header.
     pub connection: Option<ConnectionStatus>,
@@ -572,6 +631,7 @@ impl App {
             jq_runner: inproc_jq,
             jq_jobs: Vec::new(),
             jq_running: 0,
+            search_hold: None,
             source_roots: Vec::new(),
             connection: None,
             editor_request: None,
@@ -955,7 +1015,12 @@ impl App {
     // --- freeze, pause, clear ----------------------------------------------------------------
 
     fn toggle_freeze(&mut self) {
-        if self.frozen.take().is_some() {
+        if let Some(mut f) = self.frozen.take() {
+            // the frozen rows' own searches (after a filter change; before, they share the live
+            // rows') are not wanted any more
+            if f.rows.search_generation() != self.rows.search_generation() {
+                f.rows.stop_searches();
+            }
             self.flash("unfrozen");
             self.rows.invalidate();
         } else {
@@ -1027,6 +1092,7 @@ impl App {
         store.set_logs(self.store.logs().emptied());
         self.store = store;
         self.logdawg.reset();
+        self.stop_searches();
         self.rows = RowModel::new();
         self.frozen = None;
         self.selected = None;
@@ -1105,6 +1171,7 @@ impl App {
                 }
                 let text = self.filter_input.value().to_string();
                 self.apply_filter(&text);
+                self.search_hold = Some(Instant::now() + SEARCH_PAUSE);
             }
             _ => {}
         }
@@ -1235,11 +1302,14 @@ impl App {
                         self.apply_filter(&before);
                         self.filter_error = None;
                         self.overlay = Overlay::None;
+                        self.search_hold = None;
                     }
                     KeyCode::Enter => {
                         self.filter_before = None;
                         self.filter_error = None;
                         self.overlay = Overlay::None;
+                        // the filter is done: its searches start now
+                        self.search_hold = None;
                         let text = self.filter_input.value().trim().to_string();
                         if text.is_empty() {
                             self.flash("filter cleared");
@@ -1249,6 +1319,7 @@ impl App {
                         self.filter_input.handle_event(&Event::Key(k));
                         let text = self.filter_input.value().to_string();
                         self.apply_filter(&text);
+                        self.search_hold = Some(Instant::now() + SEARCH_PAUSE);
                     }
                 }
                 return;
@@ -1659,31 +1730,56 @@ impl App {
         self.flash(if on { "pinned · is:pinned filters pinned requests" } else { "unpinned" });
     }
 
-    /// `body:` searches the filter is waiting for, ready to run off the UI task.
-    pub fn take_search_jobs(&mut self) -> Vec<SearchJob> {
-        let mut jobs = Vec::new();
+    /// `body:` searches the filter is waiting for, ready to run off the UI task: none until typing
+    /// pauses ([`SEARCH_PAUSE`]).
+    pub fn take_search_jobs(&mut self) -> Vec<SearchBatch> {
+        if self.search_hold.is_some_and(|until| Instant::now() < until) {
+            return Vec::new();
+        }
+        self.search_hold = None;
+        self.take_search_jobs_now(SEARCHES_PER_TURN)
+    }
+
+    /// At most `max` searches of those waiting (for each row model), also while typing. Each
+    /// holds its transaction and where its bodies' bytes are, which the worker reads.
+    fn take_search_jobs_now(&mut self, max: usize) -> Vec<SearchBatch> {
+        let mut batches = Vec::new();
         let mut collect = |rows: &mut RowModel, store: &SessionStore| {
-            let Some(filter) = rows.filter.clone() else {
-                rows.take_body_wanted();
-                return;
-            };
-            for (txn, needle) in rows.take_body_wanted() {
-                let t = store.txn(txn);
-                let needle_text = filter.needles().get(needle).cloned().unwrap_or_default();
-                jobs.push(SearchJob { txn, needle, rev: t.rev, search: BodySearch::new(store, t, needle_text) });
-            }
+            let (ticket, wanted) = rows.take_body_wanted(max);
+            let Some(filter) = rows.filter.clone().filter(|_| !wanted.is_empty()) else { return };
+            let needles: Vec<Arc<str>> = filter.needles().iter().map(|n| Arc::from(n.as_str())).collect();
+            let jobs = wanted
+                .into_iter()
+                .filter_map(|(txn, needle)| {
+                    let text = needles.get(needle)?.clone();
+                    let search = BodySearch::for_txn(store, txn, text);
+                    Some(SearchJob { txn, needle, rev: store.txn(txn).rev, search })
+                })
+                .collect();
+            batches.push(SearchBatch { ticket, jobs });
         };
         collect(&mut self.rows, &self.store);
         if let Some(f) = &mut self.frozen {
             collect(&mut f.rows, &f.store);
         }
-        jobs
+        batches
     }
 
-    pub fn finish_search(&mut self, job: &SearchJob, hit: bool) {
-        self.rows.set_body_hit(job.txn, job.needle, job.rev, hit);
+    /// Results of `body:` searches; those for other needles than the filter's now are dropped.
+    pub fn finish_searches(&mut self, results: &[SearchResult]) {
+        for r in results {
+            self.rows.set_body_hit(r.generation, r.txn, r.needle, r.rev, r.hit);
+            if let Some(f) = &mut self.frozen {
+                f.rows.set_body_hit(r.generation, r.txn, r.needle, r.rev, r.hit);
+            }
+        }
+    }
+
+    /// Stops the `body:` searches still running: the session is cleared, or the UI ends.
+    pub fn stop_searches(&mut self) {
+        self.rows.stop_searches();
         if let Some(f) = &mut self.frozen {
-            f.rows.set_body_hit(job.txn, job.needle, job.rev, hit);
+            f.rows.stop_searches();
         }
     }
 
@@ -2107,9 +2203,13 @@ impl App {
 
     /// Run queued filters and body decodes on this thread (tests and single-frame renders).
     pub fn run_jobs_inline(&mut self) {
-        for job in self.take_search_jobs() {
-            let hit = job.search.run();
-            self.finish_search(&job, hit);
+        for batch in self.take_search_jobs_now(usize::MAX) {
+            let mut results = Vec::new();
+            batch.run(|r| {
+                results.extend(r);
+                true
+            });
+            self.finish_searches(&results);
         }
         for job in self.take_body_jobs() {
             let view = job.run();
@@ -2126,6 +2226,9 @@ impl App {
     pub fn is_time_dependent(&self) -> bool {
         if self.message.as_ref().is_some_and(|(_, at)| at.elapsed() < Duration::from_secs(5))
             || self.jq_running > 0
+            || self.search_hold.is_some()
+            || self.rows.has_body_wanted()
+            || self.frozen.as_ref().is_some_and(|f| f.rows.has_body_wanted())
             || self.bodies.building()
             || self.graph.scale.is_some_and(|s| s.easing())
             || self.graph.send_scale.is_some_and(|s| s.easing())

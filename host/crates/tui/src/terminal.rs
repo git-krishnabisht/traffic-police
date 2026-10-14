@@ -299,7 +299,10 @@ pub async fn run(mut app: App, mut events: mpsc::Receiver<Vec<SessionEvent>>, op
     };
     app.switch_apps = opts.switch.is_some();
     // dropping `term` puts the terminal back
-    event_loop(&mut term, &mut app, &mut events, opts.status, opts.switch).await
+    let end = event_loop(&mut term, &mut app, &mut events, opts.status, opts.switch).await;
+    // what still runs on workers for the UI is not wanted any more
+    app.stop_searches();
+    end
 }
 
 /// An editor started from the Call Stack tab; the loop keeps ingesting events while it runs.
@@ -336,7 +339,7 @@ async fn event_loop(
     let mut editor_ended: Option<Instant> = None;
     let (jq_tx, mut jq_rx) = mpsc::unbounded_channel::<(JqJob, JqResult)>();
     let (body_tx, mut body_rx) = mpsc::unbounded_channel::<(BodyJob, BodyView)>();
-    let (search_tx, mut search_rx) = mpsc::unbounded_channel::<(crate::app::SearchJob, bool)>();
+    let (search_tx, mut search_rx) = mpsc::unbounded_channel::<Vec<crate::app::SearchResult>>();
     let (rules_tx, mut rules_rx) = mpsc::unbounded_channel::<traffic_police_core::rules::RulesFile>();
     // started once there is a rules file to watch (r can create it while the UI runs)
     let mut watcher = AbortOnDrop(None);
@@ -393,8 +396,8 @@ async fn event_loop(
                 app.finish_body(job, view);
                 dirty = true;
             }
-            Some((job, hit)) = search_rx.recv() => {
-                app.finish_search(&job, hit);
+            Some(results) = search_rx.recv() => {
+                app.finish_searches(&results);
                 dirty = true;
             }
             Some(f) = rules_rx.recv() => {
@@ -540,7 +543,7 @@ fn dispatch_jobs(
     app: &mut App,
     body_tx: &mpsc::UnboundedSender<(BodyJob, BodyView)>,
     jq_tx: &mpsc::UnboundedSender<(JqJob, JqResult)>,
-    search_tx: &mpsc::UnboundedSender<(crate::app::SearchJob, bool)>,
+    search_tx: &mpsc::UnboundedSender<Vec<crate::app::SearchResult>>,
 ) {
     for job in app.take_body_jobs() {
         let tx = body_tx.clone();
@@ -558,19 +561,9 @@ fn dispatch_jobs(
             let _ = tx.send((job, result));
         });
     }
-    let searches = app.take_search_jobs();
-    if !searches.is_empty() {
-        // one blocking task works through a batch, so a big session does not flood the pool
+    for batch in app.take_search_jobs() {
         let tx = search_tx.clone();
-        tokio::task::spawn_blocking(move || {
-            for job in searches {
-                // a search that failed with a bug counts as no match
-                let hit = contained(|| job.search.run()).unwrap_or(false);
-                if tx.send((job, hit)).is_err() {
-                    return;
-                }
-            }
-        });
+        tokio::task::spawn_blocking(move || batch.run(|results| tx.send(results).is_ok()));
     }
 }
 

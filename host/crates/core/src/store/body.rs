@@ -180,6 +180,65 @@ impl BodyStore {
     }
 }
 
+/// A body's bytes as the store holds them at one moment, to read later on another thread: the
+/// chunks in memory (shared, not copied) and where the spilled ones are in the spill file. The
+/// file is append-only and the chunks are shared, so what the store does meanwhile (more bytes,
+/// spilling) does not change what these read. What a `body:` search reads, so that the UI task
+/// copies no bytes and reads nothing back from disk to make one.
+#[derive(Debug, Clone, Default)]
+pub struct BodyPieces {
+    segments: Vec<Segment>,
+    held: u64,
+    spill: Option<Arc<SpillFile>>,
+}
+
+impl BodyStore {
+    /// `id`'s bytes as held now, to read later ([`BodyPieces::bytes`]); nothing is copied here.
+    pub fn pieces(&self, id: BodyId) -> BodyPieces {
+        let body = &self.bodies[id as usize];
+        BodyPieces { segments: body.segments.clone(), held: body.held, spill: self.spill.clone() }
+    }
+}
+
+impl BodyPieces {
+    /// How many bytes [`BodyPieces::bytes`] gives.
+    pub fn len(&self) -> u64 {
+        self.held
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.held == 0
+    }
+
+    /// All the bytes, in order, as [`BodyStore::bytes`] gives them (gaps are simply missing); the
+    /// spilled ones are read back from the spill file.
+    pub fn bytes(&self) -> Bytes {
+        match self.segments.as_slice() {
+            [] => Bytes::new(),
+            [Segment::Mem(b)] => b.clone(),
+            segments => {
+                let mut out = BytesMut::with_capacity(self.held as usize);
+                for s in segments {
+                    match s {
+                        Segment::Mem(b) => out.extend_from_slice(b),
+                        Segment::Disk { offset, len } => {
+                            let read = match &self.spill {
+                                Some(f) => f.read(*offset, *len, &mut out),
+                                None => Err(std::io::Error::other("no spill file")),
+                            };
+                            if let Err(e) = read {
+                                tracing::warn!("reading spilled body bytes failed: {e}");
+                                break;
+                            }
+                        }
+                    }
+                }
+                out.freeze()
+            }
+        }
+    }
+}
+
 /// Writes each run of in-memory segments to the file and replaces it with a disk segment.
 fn spill_body(file: &SpillFile, body: &mut BodyData) -> std::io::Result<()> {
     let mut out = Vec::with_capacity(body.segments.len());
@@ -254,5 +313,26 @@ mod tests {
         // a clone (the UI's frozen snapshot) reads the same bytes from the shared file
         let snapshot = s.clone();
         assert_eq!(&snapshot.bytes(a)[..], &joined(&[pattern(300, 1), pattern(50, 5)])[..]);
+    }
+
+    #[test]
+    fn pieces_read_what_the_store_held_when_they_were_taken() {
+        let mut s = BodyStore::with_budget(1000);
+        let a = s.alloc();
+        s.append(a, 0, pattern(300, 1));
+        s.append(a, 300, pattern(300, 2));
+        let before = s.pieces(a);
+        // more bytes, and the body goes to the spill file: the pieces still read the 600 bytes
+        let b = s.alloc();
+        s.append(b, 0, pattern(900, 3));
+        s.append(a, 600, pattern(100, 4));
+        assert!(s.spilled_bytes() > 0);
+        assert_eq!(before.len(), 600);
+        assert_eq!(&before.bytes()[..], &joined(&[pattern(300, 1), pattern(300, 2)])[..]);
+        // taken now, partly from the file: what the store reads
+        let after = s.pieces(a);
+        assert_eq!(after.bytes(), s.bytes(a));
+        assert_eq!(after.len(), 700);
+        assert!(BodyPieces::default().bytes().is_empty());
     }
 }

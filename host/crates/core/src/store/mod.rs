@@ -22,7 +22,7 @@ use crate::model::{
     Transaction, TxnIdx, TxnKey, TxnState, Url,
 };
 
-pub use body::{BodyStore, DEFAULT_MEMORY_BUDGET, set_default_budget};
+pub use body::{BodyPieces, BodyStore, DEFAULT_MEMORY_BUDGET, set_default_budget};
 pub use traffic::{Buckets, GraphSource, TrafficSeries};
 
 /// Hands out source ids; clone it into every backend.
@@ -187,6 +187,11 @@ impl SessionStore {
     /// Captured bytes of a body.
     pub fn body_bytes(&self, meta: &BodyMeta) -> Bytes {
         meta.id.map(|id| self.bodies.bytes(id)).unwrap_or_default()
+    }
+
+    /// A body's captured bytes to read later, off the UI task ([`BodyPieces`]).
+    pub fn body_pieces(&self, meta: &BodyMeta) -> BodyPieces {
+        meta.id.map(|id| self.bodies.pieces(id)).unwrap_or_default()
     }
 
     /// Wall-clock milliseconds for a timestamp, using the closest source's clock pair.

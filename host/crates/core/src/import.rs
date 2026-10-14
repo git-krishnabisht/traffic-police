@@ -487,21 +487,35 @@ impl SessionStore {
         t: &crate::model::Transaction,
         headers: Option<&'a Headers>,
     ) -> Option<std::borrow::Cow<'a, Headers>> {
-        let h = headers?;
-        let imported = self.source(t.key.source).is_some_and(|s| s.mode == "har");
-        // a body the client decoded before the capture saw it (dart:io): which one these
-        // headers are for, the request's or the response's
-        let is = |of: Option<&Headers>| of.is_some_and(|o| std::ptr::eq(o, h));
-        let decoded = (t.req_body.decoded && is(Some(&t.req_headers)))
-            || (t.resp_body.decoded && is(t.resp.as_ref().map(|r| &r.headers)))
-            || (t.delivered_body.as_ref().is_some_and(|b| b.decoded) && is(t.delivered.as_ref().map(|d| &d.headers)));
-        if (imported || decoded) && h.iter().any(|(n, _)| n.eq_ignore_ascii_case("content-encoding")) {
-            Some(std::borrow::Cow::Owned(
-                h.iter().filter(|(n, _)| !n.eq_ignore_ascii_case("content-encoding")).cloned().collect(),
-            ))
-        } else {
-            Some(std::borrow::Cow::Borrowed(h))
-        }
+        decoding_headers(self.is_imported(t.key.source), t, headers)
+    }
+
+    /// Whether `source` is a HAR file's, whose bodies are stored decoded.
+    pub fn is_imported(&self, source: crate::model::SourceId) -> bool {
+        self.source(source).is_some_and(|s| s.mode == "har")
+    }
+}
+
+/// [`SessionStore::decoding_headers`] where there is no store at hand (a `body:` search on a
+/// worker): `imported` says whether `t` came from a HAR file.
+pub fn decoding_headers<'a>(
+    imported: bool,
+    t: &crate::model::Transaction,
+    headers: Option<&'a Headers>,
+) -> Option<std::borrow::Cow<'a, Headers>> {
+    let h = headers?;
+    // a body the client decoded before the capture saw it (dart:io): which one these headers are
+    // for, the request's or the response's
+    let is = |of: Option<&Headers>| of.is_some_and(|o| std::ptr::eq(o, h));
+    let decoded = (t.req_body.decoded && is(Some(&t.req_headers)))
+        || (t.resp_body.decoded && is(t.resp.as_ref().map(|r| &r.headers)))
+        || (t.delivered_body.as_ref().is_some_and(|b| b.decoded) && is(t.delivered.as_ref().map(|d| &d.headers)));
+    if (imported || decoded) && h.iter().any(|(n, _)| n.eq_ignore_ascii_case("content-encoding")) {
+        Some(std::borrow::Cow::Owned(
+            h.iter().filter(|(n, _)| !n.eq_ignore_ascii_case("content-encoding")).cloned().collect(),
+        ))
+    } else {
+        Some(std::borrow::Cow::Borrowed(h))
     }
 }
 
