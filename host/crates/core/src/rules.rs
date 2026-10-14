@@ -173,6 +173,12 @@ fn empty() -> RuleSet {
     RuleSet { version: "none".into(), rules: Vec::new() }
 }
 
+/// The most the rules may take as the app gets them (their JSON, with the bodies of body actions
+/// in it). They go in one message (`hello_ack`, `set_rules`: PROTOCOL.md §8) of 16 MiB at most,
+/// and this leaves room for the rest of it. Up to 0.5.1 a larger set was not refused here, and
+/// sending it made the frame encoder assert.
+pub const MAX_RULES_BYTES: usize = traffic_police_proto::frame::MAX_FRAME_LEN as usize - (1 << 20);
+
 fn line_of(text: &str, offset: usize) -> usize {
     text[..offset.min(text.len())].matches('\n').count() + 1
 }
@@ -243,12 +249,39 @@ pub fn parse(text: &str, base: &Path) -> RulesFile {
             out.set.rules.push(rule);
         }
     }
+    if out.problems.is_empty()
+        && let Some(problem) = too_large(&out.set)
+    {
+        out.problems.push(problem);
+    }
     if out.problems.is_empty() {
         out.set.version = version_of(&out.set);
     } else {
         out.set = empty();
     }
     out
+}
+
+/// Rules that do not fit in one message to the app ([`MAX_RULES_BYTES`]), and the one that takes
+/// the most room.
+fn too_large(set: &RuleSet) -> Option<Problem> {
+    let size = |r: &Rule| serde_json::to_vec(r).map_or(0, |j| j.len());
+    let total: usize = set.rules.iter().map(size).sum();
+    if total <= MAX_RULES_BYTES {
+        return None;
+    }
+    let largest = set.rules.iter().max_by_key(|r| size(r))?;
+    Some(Problem {
+        line: None,
+        rule: Some(largest.id.clone()),
+        message: format!(
+            "the rules come to {} with their bodies, more than the {} the app takes in one message; this \
+             one has {} of it: use a smaller body",
+            crate::fmt::bytes(total as u64),
+            crate::fmt::bytes(MAX_RULES_BYTES as u64),
+            crate::fmt::bytes(size(largest) as u64)
+        ),
+    })
 }
 
 fn first_line(s: &str) -> String {
@@ -750,6 +783,30 @@ id = "fine"
         assert_eq!(f.problems.len(), 1);
         assert_eq!(f.problems[0].line, Some(3));
         assert!(f.problems[0].message.contains("bogus"), "{}", f.problems[0].message);
+    }
+
+    /// The rules go to the app in one message of at most 16 MiB: a set whose bodies make it larger
+    /// is refused here, naming the rule with the most of it, rather than failing whenever it is sent.
+    #[test]
+    fn rules_too_large_for_one_message_are_refused() {
+        let rule = |id: &str, n: usize| {
+            format!(
+                "[[rule]]\nid = \"{id}\"\n  [rule.match]\n  path = \"/{id}\"\n  [[rule.action]]\n  type = \"body\"\n  text = \"{}\"\n",
+                "x".repeat(n)
+            )
+        };
+        let fits = parse(&format!("version = 1\n{}{}", rule("small", 1 << 20), rule("large", 8 << 20)), Path::new("."));
+        assert!(fits.is_valid(), "{:?}", fits.problems);
+        assert_eq!(fits.set.rules.len(), 2);
+        let over =
+            parse(&format!("version = 1\n{}{}", rule("small", 1 << 20), rule("large", 15 << 20)), Path::new("."));
+        assert_eq!(over.problems.len(), 1, "{:?}", over.problems);
+        assert_eq!(
+            over.problems[0].to_string(),
+            "rule large: the rules come to 16 MB with their bodies, more than the 15 MB the app takes in one \
+             message; this one has 15 MB of it: use a smaller body"
+        );
+        assert!(over.set.rules.is_empty(), "a file with problems is not used");
     }
 
     #[test]

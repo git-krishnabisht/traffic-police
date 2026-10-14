@@ -25,10 +25,22 @@ pub enum SessionEvent {
     },
     Request(Box<RequestStarted>),
     Response(Box<ResponseStarted>),
-    /// A WebSocket message on a transaction's socket.
+    /// A WebSocket message on a transaction's socket (PROTOCOL.md §7.1 `ws`).
     WsMessage {
         key: TxnKey,
-        msg: crate::model::WsMessage,
+        at: Ts,
+        /// Sent by the app (else received).
+        out: bool,
+        /// `text`, `binary` or `close`.
+        op: String,
+        /// The payload's whole size.
+        size: u64,
+        /// The payload as captured (at most the capture cap).
+        data: Bytes,
+        truncated: bool,
+        /// A close's status code and reason.
+        code: Option<u16>,
+        reason: Option<String>,
     },
     Body {
         key: TxnKey,
@@ -108,6 +120,26 @@ pub enum SessionEvent {
         kind: MarkerKind,
         label: String,
     },
+}
+
+impl SessionEvent {
+    /// The request the event is about, if any.
+    pub fn txn_key(&self) -> Option<TxnKey> {
+        match self {
+            SessionEvent::Request(r) => Some(r.key),
+            SessionEvent::Response(r) => Some(r.key),
+            SessionEvent::Failed(f) => Some(f.key),
+            SessionEvent::RuleApplied(r) => Some(r.key),
+            SessionEvent::WsMessage { key, .. }
+            | SessionEvent::Body { key, .. }
+            | SessionEvent::BodyProgress { key, .. }
+            | SessionEvent::BodyEnd { key, .. }
+            | SessionEvent::Mark { key, .. }
+            | SessionEvent::Trailers { key, .. }
+            | SessionEvent::Completed { key, .. } => Some(*key),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

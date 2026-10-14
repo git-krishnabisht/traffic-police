@@ -842,4 +842,65 @@ mod tests {
         let shown = text(&view);
         assert!(shown.contains("debuggable, no library") && !shown.contains("Enter attaches"), "{shown}");
     }
+
+    /// Where the shell may not read the socket list (some devices hide it), the processes come
+    /// from probing each one's socket by name: only those of apps run-as accepts (a userdebug
+    /// image lists every app as debuggable), each "yes" once, and a "no" again after a while,
+    /// since the agent can start a runtime in a running process. Until 2026-10-14 only the
+    /// backend's probe was tested, not the picker's.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_device_that_hides_its_socket_list_has_each_app_process_probed() {
+        use traffic_police_fakeadb::{FakeAdb, FakeRuntime};
+        const SERIAL: &str = "emulator-5554";
+        const SHOP: &str = "com.example.shop";
+        let fake = FakeAdb::start().await;
+        fake.add_device(SERIAL, 36);
+        fake.set_unix_readable(SERIAL, false);
+        // the app with the library, a process of it without, and a system app run-as refuses
+        let app = FakeRuntime::new(SHOP, SHOP, 4312);
+        fake.start_app(SERIAL, &app);
+        fake.start_process(SERIAL, 4400, "com.example.shop:worker");
+        fake.start_process(SERIAL, 612, "com.android.systemui");
+        fake.refuse_run_as(SERIAL, "com.android.systemui");
+        let adb = fake.client();
+        let id = adb.devices().await.unwrap()[0].transport_id;
+        let listed = |rows: &[ProcessRow]| rows.iter().map(|r| (r.name.clone(), r.capturing)).collect::<Vec<_>>();
+        let probes = || fake.forwarded().into_iter().filter(|(_, r)| r.contains(SHOP)).count();
+        let run_as = || fake.commands(SERIAL).iter().filter(|c| c.contains("run-as")).count();
+        let mut known = Known::default();
+
+        let rows = fetch_processes(&adb, id, &mut known).await.unwrap();
+        let expected = [(SHOP.to_string(), true), ("com.example.shop:worker".to_string(), false)];
+        assert_eq!(listed(&rows), expected);
+        assert_eq!((probes(), fake.forwarded().len()), (2, 2), "the shop's two processes, not the system app");
+        assert!(fake.forwards().is_empty(), "the probes remove their forwards: {:?}", fake.forwards());
+        assert_eq!(run_as(), 1, "every package in one command");
+
+        // a refresh asks nothing again: the "yes" stands, and the "no" is too recent
+        assert_eq!(listed(&fetch_processes(&adb, id, &mut known).await.unwrap()), expected);
+        assert_eq!((probes(), run_as()), (2, 1));
+
+        // the agent starts a runtime in the worker; once the "no" is old, it is asked again
+        fake.kill_process(SERIAL, 4400);
+        fake.start_app(SERIAL, &FakeRuntime::new(SHOP, "com.example.shop:worker", 4400));
+        let old = std::time::Instant::now().checked_sub(PROBE_AGAIN).expect("the clock has run 5 s");
+        known.probed.insert(4400, (false, old));
+        let rows = fetch_processes(&adb, id, &mut known).await.unwrap();
+        assert_eq!(listed(&rows), [(SHOP.to_string(), true), ("com.example.shop:worker".to_string(), true)]);
+        assert_eq!((probes(), run_as()), (3, 1), "the worker's socket only");
+
+        // where the list can be read, nothing is probed
+        fake.set_unix_readable(SERIAL, true);
+        assert_eq!(listed(&fetch_processes(&adb, id, &mut known).await.unwrap()).len(), 2);
+        assert_eq!(probes(), 3);
+
+        // with run-as disabled on the device, every app counts (library mode needs no run-as)
+        fake.add_device("emulator-5556", 34);
+        fake.set_unix_readable("emulator-5556", false);
+        fake.disable_run_as("emulator-5556");
+        fake.start_process("emulator-5556", 700, "com.android.systemui");
+        let id = adb.devices().await.unwrap().iter().find(|d| d.serial == "emulator-5556").unwrap().transport_id;
+        let rows = fetch_processes(&adb, id, &mut Known::default()).await.unwrap();
+        assert_eq!(listed(&rows), [("com.android.systemui".to_string(), false)]);
+    }
 }

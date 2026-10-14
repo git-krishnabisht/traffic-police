@@ -19,7 +19,12 @@ final class TeeOutputStream extends FilterOutputStream {
     @Override
     public void write(int b) throws IOException {
         out.write(b);
-        record(new byte[] {(byte) b}, 0, 1);
+        try {
+            started();
+            txn.request.write(b); // gathered with the bytes around it, captured or not
+        } catch (Throwable t) {
+            internal(t);
+        }
     }
 
     @Override
@@ -28,32 +33,48 @@ final class TeeOutputStream extends FilterOutputStream {
         record(b, off, len);
     }
 
+    private void started() {
+        if (first) {
+            first = false;
+            txn.mark("req_body_start");
+        }
+    }
+
     private void record(byte[] b, int off, int len) {
         try {
-            if (first) {
-                first = false;
-                txn.mark("req_body_start");
-            }
+            started();
             if (txn.request.wantsBytes()) {
                 txn.request.write(b, off, len);
             } else {
                 txn.request.skip(len);
             }
         } catch (Throwable t) {
-            CaptureRuntime rt = CaptureRuntime.current();
-            if (rt != null) {
-                rt.internalError("huc.requestTee", t);
-            }
+            internal(t);
         }
     }
 
+    private static void internal(Throwable t) {
+        CaptureRuntime rt = CaptureRuntime.current();
+        if (rt != null) {
+            rt.internalError("huc.requestTee", t);
+        }
+    }
+
+    /** A close that fails (the body could not be sent whole) ends the body as {@code error}. */
     @Override
     public void close() throws IOException {
+        boolean closed = false;
         try {
             super.close();
+            closed = true;
         } finally {
-            if (txn.request.end("complete")) {
-                txn.mark("req_body_end");
+            // the app gets close()'s own exception, never one of ours in its place
+            try {
+                if (txn.request.end(closed ? "complete" : "error") && closed) {
+                    txn.mark("req_body_end");
+                }
+            } catch (Throwable t) {
+                internal(t);
             }
         }
     }

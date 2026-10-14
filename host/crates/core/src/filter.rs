@@ -19,15 +19,16 @@
 //! | `body:"needle"` | a request or response body contains the text (searched in the background) |
 
 use std::ops::Range;
+use std::sync::Arc;
 
 use bytes::Bytes;
 use regex::{Regex, RegexBuilder};
 
 use crate::decode::decode_body;
 use crate::fmt::{NS_PER_MS, NS_PER_SEC, Ts};
-use crate::model::{Headers, Transaction, TxnState, header};
+use crate::model::{BodyDir, Headers, Transaction, TxnIdx, TxnState, header};
 use crate::rows::is_pending;
-use crate::store::SessionStore;
+use crate::store::{BodyPieces, SessionStore};
 
 /// Where a filter stops making sense, for highlighting in place.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -410,43 +411,73 @@ impl Filter {
     }
 }
 
-/// A `body:` search to run off the UI thread: the transaction's bodies as captured, with the
-/// headers that say how they are encoded.
+/// A `body:` search to run off the UI task: the transaction (shared, not copied) and its request,
+/// response and delivered bodies as the store holds them. The bytes are read (spilled ones read
+/// back from disk) and decoded where it runs: up to 0.5.1 making one copied every body on the UI
+/// task, and read the spilled ones back there.
 #[derive(Debug, Clone)]
 pub struct BodySearch {
-    pub bodies: Vec<(Bytes, Option<Headers>)>,
+    txn: Arc<Transaction>,
+    /// The transaction came from a HAR file, whose bodies are stored decoded.
+    imported: bool,
+    /// The request's, the response's and the delivered body (empty when there is none).
+    bodies: [(BodyDir, BodyPieces); 3],
     /// Lower-cased.
-    pub needle: String,
+    pub needle: Arc<str>,
 }
 
 impl BodySearch {
-    /// A search of `t`'s request, response and delivered bodies for `needle` (lower-cased).
+    /// A search of `t`'s bodies for `needle` (lower-cased).
     pub fn new(store: &SessionStore, t: &Transaction, needle: String) -> BodySearch {
-        let headers = |h: Option<&Headers>| store.decoding_headers(t, h).map(std::borrow::Cow::into_owned);
-        let mut bodies = vec![(store.body_bytes(&t.req_body), headers(Some(&t.req_headers)))];
-        bodies.push((store.body_bytes(&t.resp_body), headers(t.resp.as_ref().map(|r| &r.headers))));
-        if let Some(d) = &t.delivered_body {
-            bodies.push((store.body_bytes(d), headers(t.delivered.as_ref().map(|x| &x.headers))));
-        }
-        BodySearch { bodies, needle }
+        let shared = store.find(t.key).map(|i| &store.txns()[i as usize]).filter(|s| std::ptr::eq(&***s, t));
+        let txn = shared.cloned().unwrap_or_else(|| Arc::new(t.clone()));
+        BodySearch::of(store, txn, needle.into())
+    }
+
+    /// A search of transaction `idx`'s bodies for `needle` (lower-cased). Cheap: no bytes are
+    /// copied or read.
+    pub fn for_txn(store: &SessionStore, idx: TxnIdx, needle: Arc<str>) -> BodySearch {
+        BodySearch::of(store, store.txns()[idx as usize].clone(), needle)
+    }
+
+    fn of(store: &SessionStore, txn: Arc<Transaction>, needle: Arc<str>) -> BodySearch {
+        let bodies = [
+            (BodyDir::Request, store.body_pieces(&txn.req_body)),
+            (BodyDir::Response, store.body_pieces(&txn.resp_body)),
+            (BodyDir::Delivered, txn.delivered_body.as_ref().map(|d| store.body_pieces(d)).unwrap_or_default()),
+        ];
+        BodySearch { imported: store.is_imported(txn.key.source), txn, bodies, needle }
     }
 
     /// Whether any body contains the needle, after Content-Encoding decoding; text is compared
     /// without regard to case, other bytes exactly.
     pub fn run(&self) -> bool {
-        self.bodies.iter().any(|(raw, headers)| {
-            if raw.is_empty() {
+        let t = &*self.txn;
+        self.bodies.iter().any(|(dir, pieces)| {
+            if pieces.is_empty() {
                 return false;
             }
-            let decoded = decode_body(raw.clone(), headers.as_ref(), 64 << 20);
-            match std::str::from_utf8(&decoded.bytes) {
-                Ok(text) => text.to_lowercase().contains(&self.needle),
-                Err(_) => {
-                    let n = self.needle.as_bytes();
-                    !n.is_empty() && decoded.bytes.windows(n.len()).any(|w| w.eq_ignore_ascii_case(n))
-                }
-            }
+            let headers = match dir {
+                BodyDir::Request => Some(&t.req_headers),
+                BodyDir::Response => t.resp.as_ref().map(|r| &r.headers),
+                BodyDir::Delivered => t.delivered.as_ref().map(|d| &d.headers),
+            };
+            let headers = crate::import::decoding_headers(self.imported, t, headers);
+            body_contains(pieces.bytes(), headers.as_deref(), &self.needle)
         })
+    }
+}
+
+/// Whether a body contains `needle` (lower-cased), after Content-Encoding decoding: text without
+/// regard to case, other bytes exactly.
+fn body_contains(raw: Bytes, headers: Option<&Headers>, needle: &str) -> bool {
+    let decoded = decode_body(raw, headers, 64 << 20);
+    match std::str::from_utf8(&decoded.bytes) {
+        Ok(text) => text.to_lowercase().contains(needle),
+        Err(_) => {
+            let n = needle.as_bytes();
+            !n.is_empty() && decoded.bytes.windows(n.len()).any(|w| w.eq_ignore_ascii_case(n))
+        }
     }
 }
 
@@ -554,7 +585,47 @@ mod tests {
         gz.write_all(br#"{"verdict":"PASS"}"#).unwrap();
         let raw = Bytes::from(gz.finish().unwrap());
         let headers = vec![("Content-Encoding".to_string(), "gzip".to_string())];
-        let s = BodySearch { bodies: vec![(raw, Some(headers))], needle: "\"pass\"".into() };
-        assert!(s.run());
+        assert!(body_contains(raw.clone(), Some(&headers), "\"pass\""));
+        assert!(!body_contains(raw, None, "\"pass\""), "not without decoding");
+    }
+
+    /// The search reads the store's bytes where it runs: a body of several chunks whole (the
+    /// body store's tests read spilled pieces).
+    #[test]
+    fn body_search_reads_the_bytes_where_it_runs() {
+        use crate::SessionEvent;
+        use crate::event::{RequestStarted, ResponseStarted};
+        use crate::model::TxnKey;
+        let mut s = SessionStore::new();
+        let key = TxnKey { source: 0, txn: 1 };
+        s.apply(SessionEvent::Request(Box::new(RequestStarted {
+            key,
+            at: 1,
+            call: None,
+            hop: 0,
+            method: "GET".into(),
+            url: "https://api.example.app/a".into(),
+            headers: Vec::new(),
+            client: None,
+            thread: None,
+            stack: Vec::new(),
+            stack_truncated: false,
+            body: None,
+            marks: Vec::new(),
+            conn: None,
+        })));
+        let headers = vec![("content-type".into(), "application/json".into())];
+        let r =
+            ResponseStarted { key, at: 2, status: 200, message: String::new(), protocol: None, headers, conn: None };
+        s.apply(SessionEvent::Response(Box::new(r)));
+        for (offset, part) in [(0, &b"{\"session\":\"abc"[..]), (15, &b"-123\"}"[..])] {
+            let bytes = Bytes::from_static(part);
+            s.apply(SessionEvent::Body { key, dir: BodyDir::Response, at: 3, offset, bytes });
+        }
+        let search = |n: &str| BodySearch::for_txn(&s, 0, n.into());
+        assert!(search("abc-123").run(), "across the two chunks");
+        assert!(!search("xyz").run());
+        let t = s.txn(0).clone();
+        assert!(BodySearch::new(&s, &t, "\"session\"".into()).run());
     }
 }

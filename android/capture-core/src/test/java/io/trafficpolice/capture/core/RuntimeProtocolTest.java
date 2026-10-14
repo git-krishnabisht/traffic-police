@@ -5,6 +5,7 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -222,6 +223,34 @@ public final class RuntimeProtocolTest {
         assertEquals(null, q.takeDropped(100));
     }
 
+    /** An idle writer waits with no timeout (WAITING, not TIMED_WAITING): it does not wake up for nothing. */
+    @Test
+    public void anIdleWriterDoesNotWakeUp() throws Exception {
+        TestPlatform.awaitWriter(rt);
+        long deadline = System.nanoTime() + 2_000_000_000L;
+        while (rt.writerThread.getState() != Thread.State.WAITING && System.nanoTime() < deadline) {
+            Thread.sleep(5); // after a batch the writer rests 2 ms (TIMED_WAITING), then waits
+        }
+        for (int i = 0; i < 10; i++) {
+            assertEquals(Thread.State.WAITING, rt.writerThread.getState());
+            Thread.sleep(30);
+        }
+        // and events still wake it (no task posted here: awaitWriter would wake it by itself)
+        Txn t = exchange("https://example.com/idle", new byte[0]);
+        deadline = System.nanoTime() + 2_000_000_000L;
+        while (!rt.queue.isEmpty() && System.nanoTime() < deadline) {
+            Thread.sleep(1);
+        }
+        assertTrue("the writer took the events", rt.queue.isEmpty());
+        try (TestHost host = TestHost.connect(rt)) {
+            boolean seen = false;
+            for (TestHost.Msg m : host.replayed) {
+                seen |= "done".equals(m.t()) && m.txn == t.id;
+            }
+            assertTrue("replayed", seen);
+        }
+    }
+
     @Test
     public void ringKeepsWholeRecentTransactions() {
         ReplayRing ring = new ReplayRing(2, 1 << 20);
@@ -239,6 +268,142 @@ public final class RuntimeProtocolTest {
         assertEquals(7, kept.size()); // txns 2 and 3 (3 frames each) and the diagnostic
         assertEquals(4, kept.get(0).seq);
         assertEquals(10, kept.get(6).seq);
+    }
+
+    /**
+     * The ring's budget counts what its frames cost, not only their body bytes: a body read one
+     * byte at a time is one 40-byte frame per byte. Until 0.5.1 a 64 KiB budget let 65,536 such
+     * frames in, about 6.8 MB.
+     */
+    @Test
+    public void theRingBoundsTheMemoryOfOneByteChunks() {
+        long budget = 64 * 1024;
+        ReplayRing ring = new ReplayRing(1000, budget);
+        long seq = 1;
+        for (int i = 0; i < 100_000; i++, seq++) {
+            Event chunk = new Event.Chunk(i, 1, Frames.DIR_RESPONSE, i, new byte[] {(byte) i});
+            ring.add(seq, chunk, chunk.encode(seq));
+            assertTrue(ring.bytes() <= budget);
+        }
+        long kept = ReplayRing.TXN_OVERHEAD;
+        List<ReplayRing.Entry> entries = ring.after(0);
+        for (ReplayRing.Entry e : entries) {
+            kept += e.frame.length + ReplayRing.FRAME_OVERHEAD;
+        }
+        assertEquals(kept, ring.bytes());
+        assertTrue(entries.size() + " frames kept", entries.size() > 0 && entries.size() <= budget / 104);
+        assertEquals("the newest frame is kept", seq - 1, entries.get(entries.size() - 1).seq);
+    }
+
+    /** The same body through the queue, with no writer taking from it: bounded too, and the drops counted. */
+    @Test
+    public void theQueueBoundsTheMemoryOfOneByteChunks() throws Exception {
+        EventQueue q = new EventQueue(64 * 1024);
+        for (int i = 0; i < 100_000; i++) {
+            q.offer(new Event.Chunk(i, 1, Frames.DIR_RESPONSE, i, new byte[] {(byte) i}));
+            assertTrue(q.bytes() <= 64 * 1024);
+        }
+        List<Event> queued = new ArrayList<>();
+        q.drainTo(queued, new ArrayList<Txn.Body>());
+        assertEquals(0, q.bytes());
+        assertTrue(queued.size() + " queued", queued.size() <= 64 * 1024 / 65);
+        assertEquals(100_000 - queued.size(), q.takeDropped(0).events);
+    }
+
+    /**
+     * What costs the app's start is done when a host connects instead: the late client versions
+     * (gRPC's initializes GrpcUtil) and the instance id (SecureRandom). The hello is the same.
+     */
+    @Test
+    public void lateClientsAndTheInstanceAreReadWhenAHostConnects() throws Exception {
+        rt.stop();
+        final java.util.concurrent.atomic.AtomicInteger reads = new java.util.concurrent.atomic.AtomicInteger();
+        CaptureRuntime.Options o = new CaptureRuntime.Options();
+        o.sampleTraffic = false;
+        o.clients.put("okhttp", "4.12.0");
+        o.lateClients = new CaptureRuntime.Clients() {
+            @Override
+            public void clients(Map<String, String> into) {
+                reads.incrementAndGet();
+                into.put("grpc", "1.84.0");
+            }
+        };
+        CaptureRuntime late = CaptureRuntime.start(platform, o);
+        try {
+            TestPlatform.awaitWriter(late);
+            assertEquals("nothing read at start", 0, reads.get());
+            assertEquals("no instance id yet", null, late.instance);
+            String first;
+            try (TestHost host = TestHost.connect(late)) {
+                Map<String, Object> clients = host.hello.obj("clients");
+                assertEquals(java.util.Arrays.asList("okhttp", "grpc"), new ArrayList<>(clients.keySet()));
+                assertEquals("1.84.0", clients.get("grpc"));
+                first = host.hello.str("instance");
+                assertTrue(first, first.matches("[0-9a-f]{32}"));
+            }
+            try (TestHost host = TestHost.connect(late)) {
+                assertEquals("one instance for every hello", first, host.hello.str("instance"));
+            }
+            assertEquals(2, reads.get());
+        } finally {
+            late.stop();
+        }
+    }
+
+    /** The app's limits (TrafficPolice.buffer): what is over them goes at once, and hello shows them. */
+    @Test
+    public void theAppSetsWhatTheRingKeeps() throws Exception {
+        List<Long> ids = new ArrayList<>();
+        for (int i = 0; i < 10; i++) {
+            ids.add(exchange("https://example.com/" + i, "{\"ok\":true}".getBytes(Json.UTF_8)).id);
+        }
+        TestPlatform.awaitWriter(rt);
+        rt.buffer(3, 32L << 20);
+        try (TestHost host = TestHost.connect(rt)) {
+            Map<String, Object> buffer = host.hello.obj("buffer");
+            assertEquals(3, JsonParser.num(buffer, "max_txns", -1));
+            assertEquals(32L << 20, JsonParser.num(buffer, "max_body_bytes", -1));
+            assertEquals(3, JsonParser.num(buffer, "txns", -1));
+            java.util.Set<Long> replayed = new java.util.TreeSet<>();
+            for (TestHost.Msg m : host.replayed) {
+                if (m.txn != 0) {
+                    replayed.add(m.txn);
+                }
+            }
+            assertEquals(new java.util.TreeSet<>(ids.subList(7, 10)), replayed);
+        }
+        rt.buffer(-1, -1); // as 0: no transaction is kept, diagnostics still are
+        try (TestHost host = TestHost.connect(rt)) {
+            assertEquals(0, JsonParser.num(host.hello.obj("buffer"), "max_txns", -1));
+            assertEquals(0, JsonParser.num(host.hello.obj("buffer"), "txns", -1));
+            boolean started = false;
+            for (TestHost.Msg m : host.replayed) {
+                assertEquals("no transaction replayed", 0, m.txn);
+                started |= "started".equals(m.str("code"));
+            }
+            assertTrue(started);
+        }
+    }
+
+    /** A queued event counts what it holds: trailers, a failure's messages, a diagnostic's text. */
+    @Test
+    public void queuedEventsCountWhatTheyHold() {
+        String text = new String(new char[10_000]).replace('\0', 'x');
+        String[] trailers = {"grpc-status", "0", "x-debug", text};
+        assertTrue(new Event.Done(0, 1, trailers, new Txn.GrpcStatus(0, "OK", text)).size() > 40_000);
+        IOException failure = new IOException(text, new IOException(text));
+        assertTrue(new Event.Fail(0, 1, "connect", false, false, failure, null, null, null).size() > 40_000);
+        Map<String, String> data = new java.util.LinkedHashMap<>();
+        data.put("detail", text);
+        assertTrue(new Event.Diag(0, "warn", "x", text, data).size() > 40_000);
+        // an exception whose message cannot be read still counts, and does not throw
+        IOException odd = new IOException() {
+            @Override
+            public String getMessage() {
+                throw new IllegalStateException("no message");
+            }
+        };
+        assertTrue(new Event.Fail(0, 1, "connect", false, false, odd, null, null, null).size() > 0);
     }
 
     @Test

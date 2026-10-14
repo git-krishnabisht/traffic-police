@@ -19,10 +19,10 @@ use crate::event::{MarkerKind, SessionEvent};
 use crate::fmt::Ts;
 use crate::model::{
     BodyDir, BodyMeta, BodyState, ClientInfo, Failure, ResponseInfo, RuleHit, SourceId, SourceInfo, ThreadInfo,
-    Transaction, TxnIdx, TxnKey, TxnState, Url,
+    Transaction, TxnIdx, TxnKey, TxnState, Url, WsMessage,
 };
 
-pub use body::{BodyStore, DEFAULT_MEMORY_BUDGET, set_default_budget};
+pub use body::{BodyPieces, BodyStore, DEFAULT_MEMORY_BUDGET, set_default_budget};
 pub use traffic::{Buckets, GraphSource, TrafficSeries};
 
 /// Hands out source ids; clone it into every backend.
@@ -90,6 +90,8 @@ pub struct SessionStore {
     /// The device's log (Logdawg): its own change count, so log lines do not make the request
     /// list look again.
     logs: crate::logdawg::LogStore,
+    /// What the slot of a request let go holds ([`SessionStore::forget`]), one for all of them.
+    gone: Option<Arc<Transaction>>,
 }
 
 /// Approximate size of a header block on the wire (for the captured-traffic series).
@@ -189,6 +191,21 @@ impl SessionStore {
         meta.id.map(|id| self.bodies.bytes(id)).unwrap_or_default()
     }
 
+    /// A body's captured bytes to read later, off the UI task ([`BodyPieces`]).
+    pub fn body_pieces(&self, meta: &BodyMeta) -> BodyPieces {
+        meta.id.map(|id| self.bodies.pieces(id)).unwrap_or_default()
+    }
+
+    /// A WebSocket message's payload as captured (from memory or the spill file).
+    pub fn ws_payload(&self, t: &Transaction, m: &WsMessage) -> Bytes {
+        t.ws.body.map(|id| self.bodies.slice(id, m.offset, m.len)).unwrap_or_default()
+    }
+
+    /// The start of a WebSocket message's payload, at most `max` bytes (for a preview).
+    pub fn ws_payload_start(&self, t: &Transaction, m: &WsMessage, max: u64) -> Bytes {
+        t.ws.body.map(|id| self.bodies.slice(id, m.offset, m.len.min(max))).unwrap_or_default()
+    }
+
     /// Wall-clock milliseconds for a timestamp, using the closest source's clock pair.
     pub fn wall_ms(&self, ts: Ts) -> Option<i64> {
         self.sources.values().filter(|s| s.clock.is_some()).min_by_key(|s| s.started.abs_diff(ts))?.wall_ms(ts)
@@ -217,6 +234,32 @@ impl SessionStore {
         self.txns.push(Arc::new(Transaction::new_placeholder(key, at)));
         self.index.insert(key, idx);
         idx
+    }
+
+    /// Lets a finished request go, for good: `tail` and `record` keep none they have printed or
+    /// written, so a day-long run does not grow with every request (up to 0.5.1 each kept
+    /// every one, a few KB each besides its bodies). Its bodies are released, its slot holds an
+    /// empty transaction shared by all such slots, and later events for it are dropped; what
+    /// stays is its key, for those events (about 40 bytes). Not for a store a view reads.
+    pub fn forget(&mut self, idx: TxnIdx) {
+        let gone = self
+            .gone
+            .get_or_insert_with(|| {
+                let mut t = Transaction::new_placeholder(TxnKey { source: SourceId::MAX, txn: u64::MAX }, 0);
+                t.state = TxnState::Complete;
+                Arc::new(t)
+            })
+            .clone();
+        let t = std::mem::replace(&mut self.txns[idx as usize], gone);
+        let bodies = [t.req_body.id, t.resp_body.id, t.delivered_body.as_ref().and_then(|b| b.id), t.ws.body];
+        for id in bodies.into_iter().flatten() {
+            self.bodies.release(id);
+        }
+    }
+
+    /// Whether a request was let go ([`SessionStore::forget`]).
+    pub fn is_forgotten(&self, idx: TxnIdx) -> bool {
+        self.gone.as_ref().is_some_and(|g| Arc::ptr_eq(g, &self.txns[idx as usize]))
     }
 
     /// Pin or unpin a transaction (a user annotation, not an event from the device).
@@ -294,6 +337,13 @@ impl SessionStore {
     }
 
     fn apply_network(&mut self, event: SessionEvent) {
+        // a request let go: what comes for it later (a socket's messages) is dropped
+        if self.gone.is_some()
+            && let Some(&i) = event.txn_key().and_then(|k| self.index.get(&k))
+            && self.is_forgotten(i)
+        {
+            return;
+        }
         self.generation += 1;
         match event {
             // `apply` gives these to the log
@@ -410,11 +460,23 @@ impl SessionStore {
                     headers: r.headers,
                 });
             }
-            SessionEvent::WsMessage { key, msg } => {
-                self.see(msg.at);
-                let idx = self.idx_or_placeholder(key, msg.at);
-                let (out, size, at) = (msg.out, msg.size, msg.at);
-                Arc::make_mut(&mut self.touch(idx).ws).push(msg);
+            SessionEvent::WsMessage { key, at, out, op, size, data, truncated, code, reason } => {
+                self.see(at);
+                let idx = self.idx_or_placeholder(key, at);
+                // the payload goes into the body store after the socket's others, under its budget
+                let id = self.txns[idx as usize].ws.body.unwrap_or_else(|| self.bodies.alloc());
+                let offset = self.bodies.held(id);
+                let len = self.bodies.append(id, offset, data).added;
+                let ws = Arc::make_mut(&mut self.touch(idx).ws);
+                ws.body = Some(id);
+                if out {
+                    ws.sent += 1;
+                    ws.sent_bytes = ws.sent_bytes.saturating_add(size);
+                } else {
+                    ws.received += 1;
+                    ws.received_bytes = ws.received_bytes.saturating_add(size);
+                }
+                ws.messages.push(WsMessage { at, out, op, size, offset, len, truncated, code, reason });
                 // what a socket carries is captured traffic, as bodies are
                 self.account(if out { BodyDir::Request } else { BodyDir::Response }, at, size);
             }
@@ -552,7 +614,9 @@ impl SessionStore {
                 self.see(at);
                 self.stats.dropped_events = self.stats.dropped_events.saturating_add(events);
                 for txn in txns {
-                    if let Some(&i) = self.index.get(&TxnKey { source, txn }) {
+                    if let Some(&i) = self.index.get(&TxnKey { source, txn })
+                        && !self.is_forgotten(i)
+                    {
                         self.touch(i).lossy = true;
                     }
                 }
@@ -606,6 +670,114 @@ mod tests {
             started,
             ended: None,
         }
+    }
+
+    /// A WebSocket's payloads are kept in the body store, under its budget: a busy socket spills
+    /// them to disk as bodies are, and each reads back. What went each way is counted as the
+    /// messages come (the Size column and the detail pane read the counts).
+    #[test]
+    fn websocket_payloads_spill_like_bodies_and_the_totals_are_kept() {
+        let mut s = SessionStore::new();
+        s.bodies = BodyStore::with_budget(64 << 10);
+        let key = TxnKey { source: 1, txn: 1 };
+        let message = |i: u64| SessionEvent::WsMessage {
+            key,
+            at: 1000 + i,
+            out: i.is_multiple_of(4),
+            op: if i == 999 { "close".into() } else { "text".into() },
+            size: if i == 999 { 0 } else { 100 + i % 3 },
+            data: if i == 999 { Bytes::new() } else { Bytes::from(format!("{i:0100}")) },
+            truncated: false,
+            code: (i == 999).then_some(1000),
+            reason: None,
+        };
+        s.apply_all((0..1000).map(message));
+        let t = s.txn(0);
+        assert_eq!((t.ws.len(), t.ws.sent, t.ws.received), (1000, 250, 750));
+        let received: u64 = (0..999).filter(|i: &u64| !i.is_multiple_of(4)).map(|i| 100 + i % 3).sum();
+        assert_eq!(t.ws.received_bytes, received);
+        assert_eq!(t.response_size(), received);
+        assert_eq!(t.ws.sent_bytes, (0..1000).filter(|i: &u64| i.is_multiple_of(4)).map(|i| 100 + i % 3).sum::<u64>());
+        // 100 KB of payloads, over the 64 KB budget
+        assert!(s.bodies().spilled_bytes() > 0 && s.bodies().mem_bytes() <= 64 << 10);
+        for (i, m) in t.ws.messages.iter().enumerate().take(999) {
+            assert_eq!(&s.ws_payload(t, m)[..], format!("{i:0100}").as_bytes());
+        }
+        assert!(s.ws_payload(t, &t.ws.messages[999]).is_empty(), "a close has no payload");
+        assert_eq!(&s.ws_payload_start(t, &t.ws.messages[7], 3)[..], b"000");
+    }
+
+    /// `tail` and `record` let a request go once it is printed or written: its bodies' memory is
+    /// freed, its slot shares one empty transaction, and what comes for it later is dropped.
+    #[test]
+    fn a_request_let_go_frees_its_bodies_and_drops_what_comes_later() {
+        let mut s = SessionStore::new();
+        let key = |txn| TxnKey { source: 1, txn };
+        let request = |txn: u64, at: Ts| {
+            SessionEvent::Request(Box::new(crate::event::RequestStarted {
+                key: key(txn),
+                at,
+                call: None,
+                hop: 0,
+                method: "GET".into(),
+                url: format!("https://api.example.app/{txn}"),
+                headers: vec![("Accept".into(), "*/*".into())],
+                client: None,
+                thread: None,
+                stack: Vec::new(),
+                stack_truncated: false,
+                body: None,
+                marks: Vec::new(),
+                conn: None,
+            }))
+        };
+        let body = |txn: u64, n: usize| SessionEvent::Body {
+            key: key(txn),
+            dir: BodyDir::Response,
+            at: 20,
+            offset: 0,
+            bytes: Bytes::from(vec![b'x'; n]),
+        };
+        s.apply_all([request(1, 10), body(1, 1000), SessionEvent::Completed { key: key(1), at: 30 }]);
+        s.apply_all([request(2, 11), body(2, 500)]);
+        assert_eq!(s.bodies().mem_bytes(), 1500);
+        s.forget(0);
+        assert!(s.is_forgotten(0) && !s.is_forgotten(1));
+        assert_eq!(s.bodies().mem_bytes(), 500);
+        // later events for it are dropped, a socket's messages too, and nothing wakes it
+        let generation = s.generation();
+        s.apply(SessionEvent::Body {
+            key: key(1),
+            dir: BodyDir::Response,
+            at: 40,
+            offset: 1000,
+            bytes: Bytes::from("y"),
+        });
+        s.apply(SessionEvent::WsMessage {
+            key: key(1),
+            at: 41,
+            out: false,
+            op: "text".into(),
+            size: 1,
+            data: Bytes::from("z"),
+            truncated: false,
+            code: None,
+            reason: None,
+        });
+        s.apply(SessionEvent::Dropped { source: 1, at: 42, events: 1, bytes: 0, txns: vec![1] });
+        assert_eq!(s.bodies().mem_bytes(), 500);
+        assert!(s.is_forgotten(0));
+        assert_eq!(s.generation(), generation + 1, "only the drop note counts");
+        // the other request is as it was, and later let go as well
+        assert_eq!(&s.body_bytes(&s.txn(1).resp_body)[..], &[b'x'; 500][..]);
+        s.forget(1);
+        assert!(Arc::ptr_eq(&s.txns()[0], &s.txns()[1]), "one transaction for both slots");
+        assert_eq!((s.len(), s.bodies().mem_bytes()), (2, 0));
+        s.apply(SessionEvent::SourceDown { source: 1, at: 50, reason: "the app exited".into() });
+        assert!(s.is_forgotten(0) && s.is_forgotten(1));
+        // a new request after them is a request as any
+        s.apply_all([request(3, 60), body(3, 10)]);
+        assert_eq!((s.len(), s.txn(2).url.path.as_str(), s.bodies().mem_bytes()), (3, "/3", 10));
     }
 
     #[test]

@@ -1,7 +1,8 @@
 //! The Connection View's rows: time-range filter, sort, and collapse repeats (ARCHITECTURE.md §5.7).
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use crate::filter::Filter;
 use crate::fmt::Ts;
@@ -116,6 +117,38 @@ impl Row {
     }
 }
 
+/// Which `body:` searches a row model asked for, as long as its filter's needles stay: a number
+/// unique in the process, which the results carry, so that results for other needles (an earlier
+/// keystroke's, a cleared session's) are told apart and dropped, and a flag that stops the
+/// searches still running once the needles change.
+#[derive(Debug, Clone)]
+pub struct SearchTicket {
+    pub generation: u64,
+    cancel: Arc<AtomicBool>,
+}
+
+impl Default for SearchTicket {
+    fn default() -> Self {
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        SearchTicket { generation: NEXT.fetch_add(1, Ordering::Relaxed), cancel: Arc::default() }
+    }
+}
+
+impl SearchTicket {
+    /// The searches are no longer wanted: the needles changed, or the rows went.
+    pub fn cancelled(&self) -> bool {
+        self.cancel.load(Ordering::Relaxed)
+    }
+
+    fn cancel(&self) {
+        self.cancel.store(true, Ordering::Relaxed);
+    }
+}
+
+/// One needle's `body:` results: by transaction, whether its bodies have the needle, with the
+/// transaction revision that was found for.
+type NeedleHits = (String, HashMap<TxnIdx, (u64, bool)>);
+
 #[derive(Debug, Clone, Default)]
 pub struct RowModel {
     pub sort: Sort,
@@ -124,10 +157,17 @@ pub struct RowModel {
     pub range: Option<(Ts, Ts)>,
     /// The filter bar's filter.
     pub filter: Option<Arc<Filter>>,
-    /// `body:` results per (transaction, needle index), with the revision they were found for.
-    body_hits: HashMap<(TxnIdx, usize), (u64, bool)>,
-    /// `body:` searches the filter needs and nobody has run yet.
-    body_wanted: HashSet<(TxnIdx, usize)>,
+    /// `body:` results for each needle of the filter (in its order), by transaction, with the
+    /// transaction revision they were found for. A needle that stays when the filter changes
+    /// keeps its results.
+    body_hits: Vec<NeedleHits>,
+    /// `body:` searches the filter needs and nobody has asked for yet: (transaction, needle).
+    body_wanted: BTreeSet<(TxnIdx, usize)>,
+    /// Searches handed out and not answered yet, which are not asked for again meanwhile: up to
+    /// 0.5.1 every refresh asked again for every search still running, so each result that came
+    /// in (it refreshes the rows) queued all the others once more.
+    body_pending: HashSet<(TxnIdx, usize)>,
+    search: SearchTicket,
     /// The filter's result per transaction, with the revision it was computed for (a new
     /// request or a change is filtered again; the others are not).
     filtered: Vec<Option<(u64, bool)>>,
@@ -223,21 +263,37 @@ impl RowModel {
             (None, None) => true,
             _ => false,
         };
-        if !same {
-            self.filter = filter;
-            self.body_hits.clear();
-            self.body_wanted.clear();
-            self.filtered.clear();
-            self.dirty = true;
+        if same {
+            return;
         }
+        let needles = filter.as_deref().map_or(&[][..], Filter::needles);
+        if !self.body_hits.iter().map(|(n, _)| n).eq(needles) {
+            // other needles: the searches for the old ones stop, and what they still send is
+            // dropped; the results for needles that stay are kept
+            self.stop_searches();
+            let mut old = std::mem::take(&mut self.body_hits);
+            self.body_hits = needles
+                .iter()
+                .map(|n| {
+                    let hits = old.iter_mut().find(|(o, _)| o == n).map(|(_, h)| std::mem::take(h));
+                    (n.clone(), hits.unwrap_or_default())
+                })
+                .collect();
+        }
+        self.filter = filter;
+        self.body_wanted.clear();
+        self.filtered.clear();
+        self.dirty = true;
     }
 
-    /// The `body:` searches the filter is waiting for: `(transaction, needle index)`. Each is
-    /// handed out once; report the result with [`RowModel::set_body_hit`].
-    pub fn take_body_wanted(&mut self) -> Vec<(TxnIdx, usize)> {
-        let mut v: Vec<_> = self.body_wanted.drain().collect();
-        v.sort_unstable();
-        v
+    /// At most `max` of the `body:` searches the filter is waiting for, the newest requests first
+    /// (the list's live end): `(transaction, needle index)`, with the ticket their results are to
+    /// carry ([`RowModel::set_body_hit`]). Each is handed out once, until its result comes in or
+    /// the needles change.
+    pub fn take_body_wanted(&mut self, max: usize) -> (SearchTicket, Vec<(TxnIdx, usize)>) {
+        let v: Vec<_> = std::iter::from_fn(|| self.body_wanted.pop_last()).take(max).collect();
+        self.body_pending.extend(v.iter().copied());
+        (self.search.clone(), v)
     }
 
     /// Whether `body:` searches are waiting to be handed out.
@@ -245,13 +301,34 @@ impl RowModel {
         !self.body_wanted.is_empty()
     }
 
-    /// A finished `body:` search, for the transaction revision it looked at.
-    pub fn set_body_hit(&mut self, txn: TxnIdx, needle: usize, rev: u64, hit: bool) {
-        self.body_hits.insert((txn, needle), (rev, hit));
+    /// A finished `body:` search of `generation`'s ticket, for the transaction revision it
+    /// looked at. One of another ticket (other needles) is dropped: `false`.
+    pub fn set_body_hit(&mut self, generation: u64, txn: TxnIdx, needle: usize, rev: u64, hit: bool) -> bool {
+        if generation != self.search.generation {
+            return false;
+        }
+        self.body_pending.remove(&(txn, needle));
+        let Some((_, hits)) = self.body_hits.get_mut(needle) else { return false };
+        hits.insert(txn, (rev, hit));
         if let Some(slot) = self.filtered.get_mut(txn as usize) {
             *slot = None;
         }
         self.dirty = true;
+        true
+    }
+
+    /// The generation of the `body:` searches asked for now.
+    pub fn search_generation(&self) -> u64 {
+        self.search.generation
+    }
+
+    /// Stops the `body:` searches still running and forgets what was asked for (the results
+    /// found stay): the needles changed, or these rows are going.
+    pub fn stop_searches(&mut self) {
+        self.search.cancel();
+        self.search = SearchTicket::default();
+        self.body_wanted.clear();
+        self.body_pending.clear();
     }
 
     pub fn set_range(&mut self, range: Option<(Ts, Ts)>) {
@@ -298,6 +375,7 @@ impl RowModel {
             now,
             hits: &self.body_hits,
             wanted: &mut self.body_wanted,
+            pending: &self.body_pending,
             cache: &mut self.filtered,
         };
         if sorted {
@@ -391,15 +469,17 @@ struct Check<'a> {
     /// The filter has terms that change with the clock.
     clock: bool,
     now: Ts,
-    hits: &'a HashMap<(TxnIdx, usize), (u64, bool)>,
-    wanted: &'a mut HashSet<(TxnIdx, usize)>,
+    hits: &'a [NeedleHits],
+    wanted: &'a mut BTreeSet<(TxnIdx, usize)>,
+    pending: &'a HashSet<(TxnIdx, usize)>,
     cache: &'a mut Vec<Option<(u64, bool)>>,
 }
 
 impl Check<'_> {
     /// Whether `t` passes the range and the filter. `body:` terms without a result yet are
-    /// queued in `wanted` and hide the row until the result arrives. Filter results are kept
-    /// per revision, except for open requests under a filter that uses the clock.
+    /// queued in `wanted` (unless their search is running) and hide the row until the result
+    /// arrives. Filter results are kept per revision, except for open requests under a filter
+    /// that uses the clock.
     fn passes(&mut self, i: TxnIdx, t: &Transaction) -> bool {
         let now = self.now;
         if let Some((a, b)) = self.range
@@ -416,11 +496,13 @@ impl Check<'_> {
             return *ok;
         }
         let mut waiting = false;
-        let (hits, wanted) = (self.hits, &mut *self.wanted);
-        let ok = f.matches(t, now, &mut |needle| match hits.get(&(i, needle)) {
+        let (hits, wanted, pending) = (self.hits, &mut *self.wanted, self.pending);
+        let ok = f.matches(t, now, &mut |needle| match hits.get(needle).and_then(|(_, h)| h.get(&i)) {
             Some(&(rev, hit)) if rev == t.rev => Some(hit),
             _ => {
-                wanted.insert((i, needle));
+                if !pending.contains(&(i, needle)) {
+                    wanted.insert((i, needle));
+                }
                 waiting = true;
                 None
             }
@@ -528,10 +610,108 @@ mod tests {
         let mut m = filtered("body:token");
         m.refresh(&s, 3 * NS_PER_SEC);
         assert!(shown(&m, &s).is_empty(), "hidden until the search has run");
-        let wanted = m.take_body_wanted();
+        let (ticket, wanted) = m.take_body_wanted(usize::MAX);
         assert_eq!(wanted, [(0, 0)]);
-        m.set_body_hit(0, 0, s.txn(0).rev, true);
+        assert!(m.set_body_hit(ticket.generation, 0, 0, s.txn(0).rev, true));
         m.refresh(&s, 3 * NS_PER_SEC);
         assert_eq!(shown(&m, &s), ["/a"]);
+    }
+
+    fn set_filter(m: &mut RowModel, text: &str) {
+        m.set_filter(Filter::parse(text).unwrap().map(Arc::new));
+    }
+
+    /// Typing `body:ab` and then `c`: what the search for "ab" sends after that is not taken for
+    /// "abc" (up to 0.5.1 results were kept by the needle's index, so it was, and rows that have
+    /// "ab" but not "abc" showed), and that search is told to stop.
+    #[test]
+    fn a_result_for_an_earlier_keystroke_is_dropped() {
+        let mut s = SessionStore::new();
+        let a = request(&mut s, 1, "/a", NS_PER_SEC);
+        respond(&mut s, a, 200, 2 * NS_PER_SEC);
+        let mut m = filtered("body:ab");
+        m.refresh(&s, 3 * NS_PER_SEC);
+        let (ab, wanted) = m.take_body_wanted(usize::MAX);
+        assert_eq!(wanted, [(0, 0)]);
+        set_filter(&mut m, "body:abc");
+        assert!(ab.cancelled(), "the search for \"ab\" stops");
+        m.refresh(&s, 3 * NS_PER_SEC);
+        // "ab" was found; it must not count for "abc"
+        assert!(!m.set_body_hit(ab.generation, 0, 0, s.txn(0).rev, true));
+        m.refresh(&s, 3 * NS_PER_SEC);
+        assert!(shown(&m, &s).is_empty());
+        let (abc, wanted) = m.take_body_wanted(usize::MAX);
+        assert_eq!(wanted, [(0, 0)], "asked for again, for \"abc\"");
+        assert!(!abc.cancelled());
+        assert!(m.set_body_hit(abc.generation, 0, 0, s.txn(0).rev, false));
+        m.refresh(&s, 3 * NS_PER_SEC);
+        assert!(shown(&m, &s).is_empty(), "no \"abc\" in it");
+        // a cleared session's rows: their results are not taken by the new rows either
+        let mut fresh = filtered("body:abc");
+        fresh.refresh(&s, 3 * NS_PER_SEC);
+        assert!(!fresh.set_body_hit(abc.generation, 0, 0, s.txn(0).rev, true));
+    }
+
+    /// While a search runs, new traffic (or another result) refreshes the rows: the search is not
+    /// asked for a second time; a request that changed meanwhile is searched again once the
+    /// result for its old revision is in.
+    #[test]
+    fn a_search_that_runs_is_not_asked_for_again() {
+        let mut s = SessionStore::new();
+        let a = request(&mut s, 1, "/a", NS_PER_SEC);
+        let mut m = filtered("body:token");
+        m.refresh(&s, 2 * NS_PER_SEC);
+        let (ticket, wanted) = m.take_body_wanted(usize::MAX);
+        assert_eq!(wanted, [(0, 0)]);
+        let old_rev = s.txn(0).rev;
+        // the request changes and another comes while the search runs
+        respond(&mut s, a, 200, 2 * NS_PER_SEC);
+        request(&mut s, 2, "/b", 2 * NS_PER_SEC);
+        m.refresh(&s, 3 * NS_PER_SEC);
+        assert_eq!(m.take_body_wanted(usize::MAX).1, [(1, 0)], "only the new one");
+        // the result for the old revision: the request is searched again
+        assert!(m.set_body_hit(ticket.generation, 0, 0, old_rev, true));
+        m.refresh(&s, 3 * NS_PER_SEC);
+        assert!(shown(&m, &s).is_empty(), "not shown on an old revision's result");
+        assert_eq!(m.take_body_wanted(usize::MAX).1, [(0, 0)]);
+    }
+
+    /// Searches are handed out a turn's worth at a time, the newest requests first.
+    #[test]
+    fn searches_are_handed_out_newest_first_and_a_few_at_a_time() {
+        let mut s = SessionStore::new();
+        for txn in 1..=3 {
+            request(&mut s, txn, "/a", NS_PER_SEC);
+        }
+        let mut m = filtered("body:token");
+        m.refresh(&s, 2 * NS_PER_SEC);
+        assert_eq!(m.take_body_wanted(2).1, [(2, 0), (1, 0)]);
+        assert!(m.has_body_wanted());
+        assert_eq!(m.take_body_wanted(2).1, [(0, 0)]);
+        assert!(!m.has_body_wanted());
+    }
+
+    /// A needle that stays when the filter changes keeps its results and its running searches;
+    /// one that goes takes its results with it.
+    #[test]
+    fn results_stay_for_a_needle_that_stays() {
+        let mut s = SessionStore::new();
+        let a = request(&mut s, 1, "/a", NS_PER_SEC);
+        respond(&mut s, a, 200, 2 * NS_PER_SEC);
+        let mut m = filtered("body:token");
+        m.refresh(&s, 3 * NS_PER_SEC);
+        let (ticket, _) = m.take_body_wanted(usize::MAX);
+        assert!(m.set_body_hit(ticket.generation, 0, 0, s.txn(0).rev, true));
+        set_filter(&mut m, "body:token status:200");
+        assert!(!ticket.cancelled());
+        assert_eq!(m.search_generation(), ticket.generation);
+        m.refresh(&s, 3 * NS_PER_SEC);
+        assert_eq!(shown(&m, &s), ["/a"]);
+        assert!(!m.has_body_wanted(), "nothing to search again");
+        set_filter(&mut m, "status:200");
+        assert!(ticket.cancelled());
+        set_filter(&mut m, "body:token");
+        m.refresh(&s, 3 * NS_PER_SEC);
+        assert!(m.has_body_wanted(), "searched again after the needle went");
     }
 }

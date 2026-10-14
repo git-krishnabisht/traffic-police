@@ -1,6 +1,7 @@
 package io.trafficpolice.capture.core;
 
 import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -8,7 +9,8 @@ import java.util.List;
 /**
  * The bounded queue between app threads and the writer (ARCHITECTURE.md §4.5). App threads
  * never wait: when the byte budget is exceeded the oldest events are dropped and counted, and
- * the writer reports them in a {@code dropped} event.
+ * the writer reports them in a {@code dropped} event. It also keeps the bodies that gathered
+ * short writes (Txn.Body), so that the writer sends those bytes when they are due.
  */
 final class EventQueue {
     private static final int MAX_DROPPED_TXNS = 100;
@@ -25,18 +27,27 @@ final class EventQueue {
     private final LinkedHashSet<Long> droppedTxns = new LinkedHashSet<>();
     private boolean droppedTxnsTruncated;
 
+    /** Bodies holding gathered bytes, all due when the first of them is (by the writer's clock). */
+    private final ArrayList<Txn.Body> gathering = new ArrayList<>();
+    private long gatheringDue;
+
     EventQueue(long maxBytes) {
         this.maxBytes = maxBytes;
     }
 
-    synchronized void offer(Event e) {
+    void offer(Event e) {
+        e.queued = e.size(); // sized before taking the lock, which every app thread that records takes
+        add(e);
+    }
+
+    private synchronized void add(Event e) {
         queue.addLast(e);
-        bytes += e.size();
+        bytes += e.queued;
         while (bytes > maxBytes && queue.size() > 1) {
             Event old = queue.pollFirst();
-            bytes -= old.size();
+            bytes -= old.queued;
             droppedEvents++;
-            droppedBytes += old.size();
+            droppedBytes += old.queued;
             if (old.txn != 0 && !droppedTxns.contains(old.txn)) {
                 if (droppedTxns.size() < MAX_DROPPED_TXNS) {
                     droppedTxns.add(old.txn);
@@ -52,22 +63,49 @@ final class EventQueue {
     }
 
     /**
-     * Moves every queued event to {@code out}, in order. With none queued, waits up to
-     * {@code timeoutMillis} for one, or for {@link #wake()}.
+     * A body gathered bytes (Txn.Body.GATHER_NS): they are due for the writer that long after the
+     * first body on the list started gathering. A writer that waits without a timeout is woken to
+     * take one.
      */
-    synchronized void drainTo(List<Event> out, long timeoutMillis) throws InterruptedException {
+    synchronized void gathering(Txn.Body body) {
+        gathering.add(body);
+        if (gathering.size() == 1) {
+            gatheringDue = System.nanoTime() + Txn.Body.GATHER_NS;
+            if (idle) {
+                notifyAll();
+            }
+        }
+    }
+
+    /**
+     * Moves every queued event to {@code out}, in order, and the bodies whose gathered bytes are
+     * due to {@code due}. With no event queued, waits for one, for {@link #wake()}, or until the
+     * gathered bytes are due; with none gathered, as long as it takes: an idle app's writer does
+     * not wake up at all.
+     */
+    synchronized void drainTo(List<Event> out, List<Txn.Body> due) throws InterruptedException {
         if (queue.isEmpty() && !woken) {
-            idle = true;
-            try {
-                wait(timeoutMillis);
-            } finally {
-                idle = false;
+            long millis = 0; // no timeout
+            if (!gathering.isEmpty()) {
+                millis = (gatheringDue - System.nanoTime() + 999_999) / 1_000_000;
+            }
+            if (gathering.isEmpty() || millis > 0) {
+                idle = true;
+                try {
+                    wait(millis);
+                } finally {
+                    idle = false;
+                }
             }
         }
         woken = false;
+        if (!gathering.isEmpty() && System.nanoTime() - gatheringDue >= 0) {
+            due.addAll(gathering);
+            gathering.clear();
+        }
         Event e;
         while ((e = queue.pollFirst()) != null) {
-            bytes -= e.size();
+            bytes -= e.queued;
             out.add(e);
         }
     }
@@ -76,7 +114,12 @@ final class EventQueue {
         return queue.isEmpty();
     }
 
-    /** Makes a waiting {@link #poll} return so the writer can run its tasks. */
+    /** What the queued events take, by their estimates (tests). */
+    synchronized long bytes() {
+        return bytes;
+    }
+
+    /** Makes a waiting {@link #drainTo} return so the writer can run its tasks. */
     synchronized void wake() {
         woken = true;
         notifyAll();

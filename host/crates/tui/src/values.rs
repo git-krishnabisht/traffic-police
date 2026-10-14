@@ -57,7 +57,7 @@ pub(crate) fn byte_lines(bytes: &[u8]) -> Vec<StyledLine> {
         return doc.lines.into_iter().map(|l| l.line).collect();
     }
     match std::str::from_utf8(bytes) {
-        Ok(s) => s.lines().map(StyledLine::plain).collect(),
+        Ok(s) => traffic_police_core::decode::doc::text_lines(s),
         Err(_) => (0..hex::line_count(bytes.len())).map(|r| StyledLine::plain(hex::line(bytes, r))).collect(),
     }
 }
@@ -144,7 +144,10 @@ impl App {
 
     /// A WebSocket message's whole payload (as captured): JSON pretty-printed, text, or hex.
     pub fn open_ws_message(&mut self, txn: TxnIdx, i: usize) {
-        let Some(m) = self.view_store().txn(txn).ws.get(i).cloned() else { return };
+        let store = self.view_store();
+        let t = store.txn(txn);
+        let Some(m) = t.ws.messages.get(i).cloned() else { return };
+        let data = store.ws_payload(t, &m);
         let dir = if m.out { "sent" } else { "received" };
         let mut lines = Vec::new();
         if m.op == "close" {
@@ -156,12 +159,12 @@ impl App {
         } else {
             if m.truncated {
                 lines.push(StyledLine::styled(
-                    format!("the first {} of {} bytes (the capture cap)", m.data.len(), m.size),
+                    format!("the first {} of {} bytes (the capture cap)", data.len(), m.size),
                     Tok::Meta,
                 ));
                 lines.push(StyledLine::new());
             }
-            lines.extend(byte_lines(&m.data));
+            lines.extend(byte_lines(&data));
         }
         let title = format!("message {} · {dir} {} · {}", i + 1, m.op, traffic_police_core::fmt::bytes(m.size));
         self.open_decoded(title, lines);

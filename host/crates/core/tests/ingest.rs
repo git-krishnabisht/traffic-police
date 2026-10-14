@@ -39,7 +39,7 @@ fn wire(first: u64, count: u64) -> BytesMut {
                 "protocol": "h2", "headers": [["Content-Type", "application/json"], ["Content-Length", body.len().to_string()]]}),
         ];
         for m in &msgs {
-            encode_json(m.to_string().as_bytes(), &mut out);
+            encode_json(m.to_string().as_bytes(), &mut out).unwrap();
         }
         encode_body(
             &BodyChunk {
@@ -51,13 +51,14 @@ fn wire(first: u64, count: u64) -> BytesMut {
                 data: body.clone(),
             },
             &mut out,
-        );
+        )
+        .unwrap();
         for m in [
             json!({"t": "body_end", "seq": seq + 4, "ts": ts + 1_100_000, "txn": i + 1, "dir": "response",
                 "bytes": body.len(), "captured": body.len(), "state": "complete"}),
             json!({"t": "done", "seq": seq + 5, "ts": ts + 1_100_000, "txn": i + 1}),
         ] {
-            encode_json(m.to_string().as_bytes(), &mut out);
+            encode_json(m.to_string().as_bytes(), &mut out).unwrap();
         }
     }
     out

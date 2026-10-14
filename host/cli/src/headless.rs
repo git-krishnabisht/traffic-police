@@ -16,7 +16,7 @@ use traffic_police_adb::Adb;
 use traffic_police_backends::{DemoConfig, DeviceTarget, run_device};
 use traffic_police_core::SessionEvent;
 use traffic_police_core::backend::{BackendCommand, ConnectionStatus};
-use traffic_police_core::export::har::har;
+use traffic_police_core::export::har::write_har;
 use traffic_police_core::export::tail::{finished, json_line, text_line};
 use traffic_police_core::filter::{BodySearch, Filter};
 use traffic_police_core::fmt::Ts;
@@ -206,8 +206,9 @@ impl Capture {
     }
 
     /// Runs until Ctrl+C, the duration, the backend's end, or `each` returning false; `each`
-    /// sees the store after every batch. Connection changes are reported on stderr.
-    async fn run(&mut self, duration: Option<Duration>, mut each: impl FnMut(&SessionStore) -> bool) -> Stop {
+    /// has the store after every batch (to let go of what it is done with). Connection changes
+    /// are reported on stderr.
+    async fn run(&mut self, duration: Option<Duration>, mut each: impl FnMut(&mut SessionStore) -> bool) -> Stop {
         let deadline = duration.map(|d| tokio::time::Instant::now() + d);
         let mut status_open = true;
         let mut last = String::new();
@@ -223,7 +224,7 @@ impl Capture {
                     Some(b) => {
                         self.store.apply_all(b);
                         self.report_rules_ack();
-                        if !each(&self.store) {
+                        if !each(&mut self.store) {
                             return Stop::Done;
                         }
                     }
@@ -300,15 +301,42 @@ impl Capture {
 
     /// Ends the capture: the backend says goodbye to the app (which removes our forward, and
     /// records the end in a session), and the last events are applied. `each` sees them too.
-    async fn stop(mut self, mut each: impl FnMut(&SessionStore) -> bool) -> SessionStore {
+    async fn stop(mut self, mut each: impl FnMut(&mut SessionStore) -> bool) -> SessionStore {
         self.commands = None;
         let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
         while let Ok(Some(batch)) = tokio::time::timeout_at(deadline, self.events.recv()).await {
             self.store.apply_all(batch);
-            each(&self.store);
+            each(&mut self.store);
         }
         let _ = tokio::time::timeout_at(deadline, &mut self.backend).await;
         self.store
+    }
+}
+
+/// The requests of a capture that finished since it last looked, in the order they came: `tail`
+/// prints them and `record` judges them, and then the store lets them go
+/// ([`SessionStore::forget`]), so a run of a day does not keep a day of requests.
+#[derive(Default)]
+struct Finishing {
+    /// Requests seen so far.
+    seen: usize,
+    /// Those not finished yet.
+    open: Vec<TxnIdx>,
+}
+
+impl Finishing {
+    fn take(&mut self, store: &SessionStore) -> Vec<TxnIdx> {
+        self.open.extend((self.seen..store.len()).map(|i| i as TxnIdx));
+        self.seen = store.len();
+        let mut done = Vec::new();
+        self.open.retain(|&i| {
+            let end = finished(store.txn(i));
+            if end {
+                done.push(i);
+            }
+            !end
+        });
+        done
     }
 }
 
@@ -412,34 +440,36 @@ pub async fn tail(
     if let TailFormat::Events { bodies } = format {
         let sink = Arc::new(EventLines { lines: lines.clone(), bodies });
         let mut cap = Capture::start(source, Some(sink)).await?;
-        cap.run(duration, |_| !lines.is_closed()).await;
+        // the lines come from the frames: the store needs no request once it has finished
+        let mut finishing = Finishing::default();
+        let mut each = |store: &mut SessionStore| {
+            for i in finishing.take(store) {
+                store.forget(i);
+            }
+            !lines.is_closed()
+        };
+        cap.run(duration, &mut each).await;
         let failed = cap.failed();
-        cap.stop(|_| true).await;
+        cap.stop(&mut each).await;
         if failed {
             bail!("the capture failed");
         }
         return Ok(());
     }
     let mut cap = Capture::start(source, None).await?;
-    // requests not printed yet (unfinished)
-    let mut open: Vec<TxnIdx> = Vec::new();
-    let mut seen = 0usize;
-    let mut print = |store: &SessionStore| {
-        open.extend((seen..store.len()).map(|i| i as TxnIdx));
-        seen = store.len();
+    let mut finishing = Finishing::default();
+    let mut print = |store: &mut SessionStore| {
         let now = store.latest();
-        open.retain(|&i| {
-            if !finished(store.txn(i)) {
-                return true;
-            }
+        for i in finishing.take(store) {
             if passes(store, i, filter.as_ref(), now) {
                 match format {
                     TailFormat::Json { bodies } => lines.write(&json_line(store, i, now, bodies)),
                     _ => lines.write(&text_line(store, i, now)),
                 }
             }
-            false
-        });
+            // printed, or left out: the store needs it no more
+            store.forget(i);
+        }
         !lines.is_closed()
     };
     cap.run(duration, &mut print).await;
@@ -468,29 +498,49 @@ pub async fn record(
     });
     let mut cap = Capture::start(source, Some(log.clone() as Arc<dyn StreamSink>)).await?;
     let mut reported = 0usize;
-    let stop = cap
-        .run(duration, |store| {
-            if store.len() >= reported + 50 {
-                reported = store.len() / 50 * 50;
-                note(format_args!("{} requests so far", store.len()));
+    // a request is let go once it has finished (the log has its frames already); with a filter,
+    // first judged, and remembered when it matches, with when it ran (for the device's log)
+    let mut finishing = Finishing::default();
+    let mut keep: HashSet<TxnKey> = HashSet::new();
+    let mut span: (Ts, Ts) = (Ts::MAX, 0);
+    let mut judge = |store: &SessionStore, i: TxnIdx, f: &Filter, now: Ts| {
+        if passes(store, i, Some(f), now) {
+            let t = store.txn(i);
+            keep.insert(t.key);
+            span = (span.0.min(t.start), span.1.max(t.end.unwrap_or(t.start)));
+        }
+    };
+    let mut each = |store: &mut SessionStore| {
+        if store.len() >= reported + 50 {
+            reported = store.len() / 50 * 50;
+            note(format_args!("{} requests so far", store.len()));
+        }
+        let now = store.latest();
+        for i in finishing.take(store) {
+            if let Some(f) = &filter {
+                judge(store, i, f, now);
             }
-            true
-        })
-        .await;
+            store.forget(i);
+        }
+        true
+    };
+    let stop = cap.run(duration, &mut each).await;
     let failed = cap.failed();
-    let store = cap.stop(|_| true).await;
+    let store = cap.stop(&mut each).await;
     match &filter {
         None => {
             log.finish(&store).with_context(|| format!("cannot finish {}", out.display()))?;
             note(format_args!("{}; recorded {} requests to {}", stop.text(), store.len(), out.display()));
         }
         Some(f) => {
+            // those still open at the end are judged as they are
             let now = store.latest();
-            let keep: HashSet<TxnKey> = (0..store.len() as TxnIdx)
-                .filter(|&i| passes(&store, i, Some(f), now))
-                .map(|i| store.txn(i).key)
-                .collect();
-            let n = log.export(&store, out, Some(&keep)).with_context(|| format!("cannot write {}", out.display()))?;
+            for &i in &finishing.open {
+                judge(&store, i, f, now);
+            }
+            let n = log
+                .export_spanning(&store, out, Some(&keep), Some(span), &|| false)
+                .with_context(|| format!("cannot write {}", out.display()))?;
             note(format_args!(
                 "{}; recorded {n} of {} requests (those matching {:?}) to {}",
                 stop.text(),
@@ -534,9 +584,16 @@ pub async fn export_har(out: &Path, input: ExportInput<'_>, filter: Option<Filte
     let mut txns: Vec<TxnIdx> =
         (0..store.len() as TxnIdx).filter(|&i| passes(&store, i, filter.as_ref(), now)).collect();
     txns.sort_by_key(|&i| store.txn(i).start);
-    let doc = har(&store, &txns, now);
-    let bytes = serde_json::to_vec_pretty(&doc)?;
-    std::fs::write(out, bytes).with_context(|| format!("cannot write {}", out.display()))?;
+    // an entry at a time, so a big session's document is never all in memory (until 2026-10-14
+    // it was built whole first: 50,000 requests made 110 MB of text and a tree of values several
+    // times that); a file that is there is not replaced, and one half written is removed
+    let file = std::fs::File::create_new(out).with_context(|| format!("cannot write {}", out.display()))?;
+    let mut w = std::io::BufWriter::new(file);
+    if let Err(e) = write_har(&store, &txns, now, &mut w, &|| false).and_then(|()| w.flush()) {
+        drop(w);
+        let _ = std::fs::remove_file(out);
+        return Err(e).with_context(|| format!("cannot write {}", out.display()));
+    }
     note(format_args!("wrote {} of {} requests to {}", txns.len(), store.len(), out.display()));
     Ok(())
 }
@@ -544,18 +601,21 @@ pub async fn export_har(out: &Path, input: ExportInput<'_>, filter: Option<Filte
 /// A saved session or HAR file, read into a store.
 fn open_file(path: &Path) -> anyhow::Result<SessionStore> {
     let mut store = SessionStore::new();
-    let opened = traffic_police_core::import::open(path, &store.source_ids())
+    // the events go into the store as the file is read, so its bodies can spill to disk
+    let ids = store.source_ids();
+    let opened = traffic_police_core::import::open_into(path, &ids, &mut |batch| store.apply_all(batch))
         .map_err(|e| anyhow::anyhow!("cannot open {}: {e}", path.display()))?;
     for s in &opened.skipped {
         note(format_args!("{}: left out {s}", path.display()));
     }
-    store.apply_all(opened.events);
     for key in opened.pins {
         if let Some(i) = store.find(key) {
             store.set_pinned(i, true);
         }
     }
-    if opened.truncated {
+    if opened.too_large {
+        note(format_args!("{} holds more than 4 GB once inflated; exporting its first 4 GB", path.display()));
+    } else if opened.truncated {
         note(format_args!("{} was cut short; exporting what it holds", path.display()));
     }
     Ok(store)
@@ -627,6 +687,34 @@ mod tests {
         assert_eq!(rows[0]["hello"]["t"], "hello");
         assert!(rows.iter().any(|r| r["type"] == "event" && r["msg"]["t"] == "req"), "{text}");
         assert!(rows.iter().any(|r| r["type"] == "body" && r.get("base64").is_none()), "{text}");
+    }
+
+    /// What `tail` and `record` do with the store: each request is let go once it has finished,
+    /// so the store keeps only the requests still open (and a slot each for the others).
+    #[tokio::test]
+    async fn finished_requests_are_let_go() {
+        let mut cap = Capture::start(demo(), None).await.unwrap();
+        let mut finishing = Finishing::default();
+        let mut finished = 0;
+        let mut each = |store: &mut SessionStore| {
+            for i in finishing.take(store) {
+                finished += 1;
+                store.forget(i);
+            }
+            true
+        };
+        cap.run(Some(Duration::from_millis(800)), &mut each).await;
+        let store = cap.stop(&mut each).await;
+        let kept: Vec<TxnIdx> = (0..store.len() as TxnIdx).filter(|&i| !store.is_forgotten(i)).collect();
+        assert!(finished >= 3 && finished + kept.len() == store.len(), "{finished} + {kept:?} of {}", store.len());
+        assert!(kept.iter().all(|&i| store.txn(i).state.is_open()), "only open ones are kept");
+        let held: u64 = kept
+            .iter()
+            .flat_map(|&i| [&store.txn(i).req_body, &store.txn(i).resp_body])
+            .filter_map(|m| m.id)
+            .map(|id| store.bodies().held(id))
+            .sum();
+        assert_eq!(store.bodies().mem_bytes(), held, "the bodies of the others went with them");
     }
 
     #[tokio::test]

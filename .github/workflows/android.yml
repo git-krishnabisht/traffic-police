@@ -48,12 +48,28 @@ jobs:
           fi
           others=$(grep -o "<artifactId>[^<]*</artifactId>" $repo/capture/*/capture-*.pom | grep -v -e ">capture<" -e ">capture-core<" || true)
           if [ -n "$others" ]; then echo "capture depends on: $others"; exit 1; fi
+      # The release build is minified, as apps' are, and R8 renames what no rule keeps: so besides
+      # the names in its dex, R8's mapping (every class kept, under its own name) is read, and
+      # both must find capture in nondebuggable, a minified build that ships it on purpose.
       - name: Release builds carry no capture code, and the plain build none of ours at all
         run: |
-          apk=sample-app/build/outputs/apk/release/sample-app-release.apk
-          unzip -q -o "$apk" 'classes*.dex' -d release-dex
-          if grep -a -q "Lio/trafficpolice/capture/" release-dex/classes*.dex; then
+          in_dex() {
+            apk=sample-app/build/outputs/apk/$1/sample-app-$1.apk
+            if [ ! -s "$apk" ]; then echo "no $1 APK"; exit 1; fi
+            rm -rf "$1-dex"
+            unzip -q -o "$apk" 'classes*.dex' -d "$1-dex"
+            grep -a -q "Lio/trafficpolice/capture/" "$1"-dex/classes*.dex
+          }
+          in_mapping() {
+            mapping=sample-app/build/outputs/mapping/$1/mapping.txt
+            if [ ! -s "$mapping" ]; then echo "no R8 mapping for $1: not minified?"; exit 1; fi
+            grep -q "^io\.trafficpolice\.\(capture\|internal\)\." "$mapping"
+          }
+          if in_dex release || in_mapping release; then
             echo "the release APK contains capture classes"; exit 1
+          fi
+          if ! in_dex nondebuggable || ! in_mapping nondebuggable; then
+            echo "the test does not find the capture classes nondebuggable has"; exit 1
           fi
           apk=sample-app/build/outputs/apk/plain/sample-app-plain.apk
           unzip -q -o "$apk" 'classes*.dex' -d plain-dex
@@ -70,7 +86,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        api: [26, 36]
+        # 27-29 launch with `am start --attach-agent` (30+ with a startup agent, 26 not at all),
+        # so they get their own runs; API 27 has no x86_64 image with Google APIs
+        api: [26, 27, 28, 29, 36]
+        include:
+          - api: 27
+            target: default
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -102,7 +123,7 @@ jobs:
         with:
           api-level: ${{ matrix.api }}
           arch: x86_64
-          target: google_apis
+          target: ${{ matrix.target || 'google_apis' }}
           # 4 GB rather than the image's default: on API 36 adb lost the emulator in the middle
           # of the attach test in about half the runs (2026-10-04 to 10-10), and memory is the
           # first suspect
@@ -115,8 +136,10 @@ jobs:
           # job for it. Each line runs on its own, so the marks are files. After a failed
           # end-to-end test the device's logs are kept (all of logcat's buffers, the kernel's
           # log, tombstones, the adb server's own log) for the artifact below; the device may be
-          # coming back from a reconnect, so it is waited for first.
+          # coming back from a reconnect, so it is waited for first. logcat keeps 16 MB, so the attach
+          # test's lines are still there when a later test fails.
           script: |
+            adb logcat -G 16M || true
             adb install -r -t ../android/capture/build/outputs/apk/androidTest/debug/capture-debug-androidTest.apk
             adb shell am instrument -w io.trafficpolice.test/androidx.test.runner.AndroidJUnitRunner > instrumented.txt; cat instrumented.txt; grep -q "^OK (" instrumented.txt || touch instrumented.failed
             adb install -r ../android/sample-app/build/outputs/apk/debug/sample-app-debug.apk

@@ -56,17 +56,33 @@ final class TeeRequestBody extends RequestBody {
             delegate.writeTo(tee);
             tee.emit();
         } catch (IOException e) {
-            txn.request.end("error");
+            end(txn, "error", false);
             throw e;
         } catch (RuntimeException e) {
-            txn.request.end("error");
+            end(txn, "error", false);
             throw e;
         }
         if (!duplex) {
-            txn.request.end("complete");
-            if (marks) {
+            end(txn, "complete", marks);
+        }
+    }
+
+    /** Ends the body; never throws (the app's own exception, if any, stays the one it gets). */
+    private static void end(Txn txn, String state, boolean mark) {
+        try {
+            txn.request.end(state);
+            if (mark) {
                 txn.mark("req_body_end");
             }
+        } catch (Throwable t) {
+            internal(t);
+        }
+    }
+
+    private static void internal(Throwable t) {
+        CaptureRuntime rt = CaptureRuntime.current();
+        if (rt != null) {
+            rt.internalError("okhttp.requestTee", t);
         }
     }
 
@@ -103,10 +119,7 @@ final class TeeRequestBody extends RequestBody {
                         txn.request.skip(byteCount);
                     }
                 } catch (Throwable t) {
-                    CaptureRuntime rt = CaptureRuntime.current();
-                    if (rt != null) {
-                        rt.internalError("okhttp.requestTee", t);
-                    }
+                    internal(t);
                 }
             }
             super.write(source, byteCount);
@@ -116,7 +129,7 @@ final class TeeRequestBody extends RequestBody {
         public void close() throws IOException {
             super.close();
             if (duplex) {
-                txn.request.end("complete");
+                end(txn, "complete", false);
             }
         }
     }

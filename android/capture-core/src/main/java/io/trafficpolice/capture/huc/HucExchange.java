@@ -124,6 +124,9 @@ final class HucExchange {
                     rules.beforeRequest(txn, null);
                 } catch (IOException e) {
                     ruleFailure = e;
+                } catch (Throwable t) {
+                    // ours: the request goes out as without rules
+                    internal("rules", t);
                 }
             }
         }
@@ -276,7 +279,13 @@ final class HucExchange {
             txn.response.write(original, 0, original.length);
             txn.response.end("complete");
         }
-        delivered = rules.editResponse(code, message, headers, original, txn);
+        try {
+            delivered = rules.editResponse(code, message, headers, original, txn);
+        } catch (Throwable t) {
+            // ours: the app gets the response as it came (its body as read, when it was)
+            internal("rules.edit", t);
+            delivered = null;
+        }
         if (delivered == null) {
             // nothing changed after all (a replace that found nothing): the original, as it came
             delivered = RuleRun.Delivered.unchanged(code, message, headers);

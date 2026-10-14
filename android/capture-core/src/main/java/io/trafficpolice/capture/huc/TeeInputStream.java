@@ -32,7 +32,7 @@ final class TeeInputStream extends FilterInputStream {
         if (b < 0) {
             eof();
         } else {
-            record(new byte[] {(byte) b}, 0, 1);
+            record(b);
         }
         return b;
     }
@@ -56,25 +56,49 @@ final class TeeInputStream extends FilterInputStream {
 
     @Override
     public long skip(long n) throws IOException {
-        // skipped bytes still passed through the app's stream
-        long skipped = in.skip(n);
+        long skipped;
+        try {
+            skipped = in.skip(n);
+        } catch (IOException e) {
+            failed(e);
+            throw e;
+        }
         if (skipped > 0) {
-            txn.response.skip(skipped);
+            try {
+                // skipped bytes still passed through the app's stream
+                txn.response.skip(skipped);
+            } catch (Throwable t) {
+                internal(t);
+            }
         }
         return skipped;
     }
 
+    private void started() {
+        if (first) {
+            first = false;
+            txn.mark("resp_body_start");
+        }
+    }
+
     private void record(byte[] b, int off, int len) {
         try {
-            if (first) {
-                first = false;
-                txn.mark("resp_body_start");
-            }
+            started();
             if (txn.response.wantsBytes()) {
                 txn.response.write(b, off, len);
             } else {
                 txn.response.skip(len);
             }
+        } catch (Throwable t) {
+            internal(t);
+        }
+    }
+
+    /** One byte ({@code read()}): gathered with the bytes around it, captured or not. */
+    private void record(int b) {
+        try {
+            started();
+            txn.response.write(b);
         } catch (Throwable t) {
             internal(t);
         }

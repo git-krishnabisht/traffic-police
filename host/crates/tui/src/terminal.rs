@@ -4,11 +4,13 @@
 //! redraws with frame pacing: at most `[ui] fps` frames a second, whether input, data or the
 //! clock changed the picture, and none while it stands still.
 
+use std::cell::Cell;
 use std::io::{self, Stdout};
 use std::mem::ManuallyDrop;
 use std::ops::{Deref, DerefMut};
 use std::path::Path;
-use std::sync::Once;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, Once};
 use std::time::{Duration, Instant};
 
 use crossterm::event::{
@@ -68,9 +70,25 @@ impl DerefMut for Term {
 
 impl Drop for Term {
     fn drop(&mut self) {
-        restore_terminal();
+        // not again after a panic's hook did it: leaving the alternate screen twice puts the
+        // cursor back at the top, where the shell would then write over the panic's message
+        if TERMINAL_OWNED.swap(false, Ordering::Relaxed) {
+            restore_terminal();
+        }
+        OWNS_TERMINAL.set(false);
     }
 }
+
+thread_local! {
+    /// This thread owns the terminal: the UI's, while a [`Term`] lives on it.
+    static OWNS_TERMINAL: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Some thread owns the terminal, so a panic on another must not write over the screen.
+static TERMINAL_OWNED: AtomicBool = AtomicBool::new(false);
+
+/// What the latest panic on a worker said, for the UI to show ([`take_worker_panic`]).
+static WORKER_PANIC: Mutex<Option<String>> = Mutex::new(None);
 
 /// Redraw pacing: at most `fps` frames a second, and the first one without waiting.
 ///
@@ -118,6 +136,43 @@ impl Pacer {
 /// lets frames through.
 const WAITING_INPUT: usize = 256;
 
+/// The longest a turn of the loop takes in data before it reads input and draws again
+/// (ARCHITECTURE.md §5.2). What is left waits in the channel for the next turn, which comes at
+/// once, so the data keeps its pace; up to 0.5.1 a turn took every batch waiting, and while a
+/// backend kept the channel full (a replay, a busy app after a reconnect) keys and frames waited.
+pub const INGEST_PER_TURN: Duration = Duration::from_millis(8);
+
+/// What [`ingest_waiting`] took in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Ingested {
+    pub batches: usize,
+    pub events: usize,
+    /// The backend is gone: its channel closed.
+    pub closed: bool,
+}
+
+/// Applies the batches of data already waiting, without waiting for more, until `budget` is
+/// spent; always at least one, so the data moves on whatever the budget.
+pub fn ingest_waiting(events: &mut mpsc::Receiver<Vec<SessionEvent>>, app: &mut App, budget: Duration) -> Ingested {
+    let started = Instant::now();
+    let mut taken = Ingested::default();
+    while taken.batches == 0 || started.elapsed() < budget {
+        match events.try_recv() {
+            Ok(batch) => {
+                taken.batches += 1;
+                taken.events += batch.len();
+                app.ingest(batch);
+            }
+            Err(mpsc::error::TryRecvError::Empty) => break,
+            Err(mpsc::error::TryRecvError::Disconnected) => {
+                taken.closed = true;
+                break;
+            }
+        }
+    }
+    taken
+}
+
 /// Ctrl+C typed in an editor reaches this process as well, possibly just after the editor has
 /// exited because of it; an interrupt this soon after the editor is the editor's.
 const EDITOR_INTERRUPT: Duration = Duration::from_secs(1);
@@ -137,17 +192,86 @@ pub fn restore_terminal() {
     );
 }
 
-/// Restore the terminal before the default panic message is printed, so it stays readable.
+/// What the panic hook does: a panic on the thread that owns the terminal ends the program (the UI
+/// unwinds, the backend says goodbye, then the process ends), so the terminal is put back before
+/// the message is printed, so that it can be read. A panic on another thread, while the UI runs,
+/// is a worker's (a body decode, a search, jq, an export, a backend's task): tokio catches it and
+/// the UI goes on, so the terminal and the spilled bodies stay, the message goes to the log
+/// instead of over the screen, and the footer says a background task failed. Up to 0.5.1 every
+/// panic put the terminal back and removed the spill directories, so after a worker's the UI went
+/// on with raw mode off and its spilled bodies gone. Spill directories go when the process ends
+/// (the binary removes them after its runtime), or here when a panic aborts the process.
 pub fn install_panic_hook() {
     static ONCE: Once = Once::new();
     ONCE.call_once(|| {
         let previous = std::panic::take_hook();
         std::panic::set_hook(Box::new(move |info| {
-            restore_terminal();
-            traffic_police_core::store::spill::remove_all();
-            previous(info);
+            let what = panic_text(info);
+            // built with panic = "abort", every panic ends the process right after this
+            let owns = OWNS_TERMINAL.try_with(Cell::get).unwrap_or(false);
+            let plan = PanicPlan::new(owns, TERMINAL_OWNED.load(Ordering::Relaxed), cfg!(panic = "abort"));
+            if plan.restore {
+                restore_terminal();
+                TERMINAL_OWNED.store(false, Ordering::Relaxed);
+            }
+            tracing::error!("{what}");
+            if plan.remove_spill {
+                traffic_police_core::store::spill::remove_all();
+            }
+            if plan.print {
+                previous(info);
+            } else {
+                *WORKER_PANIC.lock().unwrap_or_else(|e| e.into_inner()) = Some(what);
+            }
         }));
     });
+}
+
+/// What the panic hook does with a panic ([`install_panic_hook`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PanicPlan {
+    /// Put the terminal back first, so the message can be read.
+    restore: bool,
+    /// Remove the spill directories: the process ends now (panic = "abort").
+    remove_spill: bool,
+    /// Print the message (else it is logged and the footer says a background task failed).
+    print: bool,
+}
+
+impl PanicPlan {
+    /// `owns`: the panic is on the thread that owns the terminal; `owned`: some thread does;
+    /// `aborts`: the process ends with the hook.
+    fn new(owns: bool, owned: bool, aborts: bool) -> PanicPlan {
+        let ends = owns || aborts;
+        PanicPlan { restore: ends && owned, remove_spill: aborts, print: ends || !owned }
+    }
+}
+
+/// `thread 'name' panicked at file:line: message`, for the log.
+fn panic_text(info: &std::panic::PanicHookInfo<'_>) -> String {
+    let thread = std::thread::current();
+    let name = thread.name().unwrap_or("unnamed");
+    let payload = info.payload();
+    let message = payload
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+        .unwrap_or("(no message)");
+    match info.location() {
+        Some(at) => format!("thread '{name}' panicked at {at}: {message}"),
+        None => format!("thread '{name}' panicked: {message}"),
+    }
+}
+
+/// The latest panic on a worker since the last call, as the log has it.
+pub fn take_worker_panic() -> Option<String> {
+    WORKER_PANIC.lock().unwrap_or_else(|e| e.into_inner()).take()
+}
+
+/// Runs a worker's job. A panic in it (a bug) is caught here, so that the job can report that it
+/// failed instead of leaving the UI waiting for it; the panic hook has logged it.
+pub(crate) fn contained<T>(job: impl FnOnce() -> T) -> Option<T> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(job)).ok()
 }
 
 pub(crate) fn setup() -> io::Result<Term> {
@@ -158,7 +282,11 @@ pub(crate) fn setup() -> io::Result<Term> {
         return Err(e);
     }
     match Terminal::new(Screen::new(out)) {
-        Ok(t) => Ok(Term(ManuallyDrop::new(t))),
+        Ok(t) => {
+            OWNS_TERMINAL.set(true);
+            TERMINAL_OWNED.store(true, Ordering::Relaxed);
+            Ok(Term(ManuallyDrop::new(t)))
+        }
         Err(e) => {
             restore_terminal();
             Err(e)
@@ -208,7 +336,12 @@ pub async fn run(mut app: App, mut events: mpsc::Receiver<Vec<SessionEvent>>, op
     };
     app.switch_apps = opts.switch.is_some();
     // dropping `term` puts the terminal back
-    event_loop(&mut term, &mut app, &mut events, opts.status, opts.switch).await
+    let end = event_loop(&mut term, &mut app, &mut events, opts.status, opts.switch).await;
+    // what still runs on workers for the UI is not wanted any more: searches, and files that
+    // quitting did not wait for (a signal, a second quit, the terminal gone), which are removed
+    app.stop_searches();
+    app.stop_exports();
+    end
 }
 
 /// An editor started from the Call Stack tab; the loop keeps ingesting events while it runs.
@@ -245,8 +378,9 @@ async fn event_loop(
     let mut editor_ended: Option<Instant> = None;
     let (jq_tx, mut jq_rx) = mpsc::unbounded_channel::<(JqJob, JqResult)>();
     let (body_tx, mut body_rx) = mpsc::unbounded_channel::<(BodyJob, BodyView)>();
-    let (search_tx, mut search_rx) = mpsc::unbounded_channel::<(crate::app::SearchJob, bool)>();
+    let (search_tx, mut search_rx) = mpsc::unbounded_channel::<Vec<crate::app::SearchResult>>();
     let (rules_tx, mut rules_rx) = mpsc::unbounded_channel::<traffic_police_core::rules::RulesFile>();
+    let (export_tx, mut export_rx) = mpsc::unbounded_channel::<(std::path::PathBuf, Result<String, String>)>();
     // started once there is a rules file to watch (r can create it while the UI runs)
     let mut watcher = AbortOnDrop(None);
     let mut backend_open = true;
@@ -302,12 +436,16 @@ async fn event_loop(
                 app.finish_body(job, view);
                 dirty = true;
             }
-            Some((job, hit)) = search_rx.recv() => {
-                app.finish_search(&job, hit);
+            Some(results) = search_rx.recv() => {
+                app.finish_searches(&results);
                 dirty = true;
             }
             Some(f) = rules_rx.recv() => {
                 app.rules_reloaded(f);
+                dirty = true;
+            }
+            Some((path, result)) = export_rx.recv() => {
+                app.finish_export(&path, result);
                 dirty = true;
             }
             signal = stop.recv() => {
@@ -319,22 +457,28 @@ async fn event_loop(
                 if let Some(Editor { mut child, .. }) = editor.take() {
                     let _ = child.kill().await;
                 }
-                traffic_police_core::store::spill::remove_all();
                 return Ok(());
             }
             _ = async { tokio::time::sleep_until(wake.expect("guarded")).await }, if wake.is_some() => {}
         }
-        // Whatever this turn woke for, the input and data waiting now go in before the next frame.
-        // When frames take longer than the frame time (a slow terminal, SSH), the frame timer is
-        // ready at every turn and wins most of them, and each turn draws a frame: keys taken only
-        // when their branch won would wait many frames each.
+        // Whatever this turn woke for, the input and data waiting now go in before the next frame
+        // (the data for at most INGEST_PER_TURN). When frames take longer than the frame time (a
+        // slow terminal, SSH), the frame timer is ready at every turn and wins most of them, and
+        // each turn draws a frame: keys taken only when their branch won would wait many frames
+        // each.
         if let Some(stream) = input.as_mut()
             && let Some(end) = take_waiting_input(stream, app, &mut dirty).await
         {
             return end;
         }
-        while backend_open && let Ok(b) = events.try_recv() {
-            app.ingest(b);
+        if backend_open {
+            let taken = ingest_waiting(events, app, INGEST_PER_TURN);
+            dirty |= taken.batches > 0;
+            backend_open = !taken.closed;
+        }
+        if let Some(what) = take_worker_panic() {
+            let what = what.split_once(": ").map_or(what.as_str(), |(_, m)| m).to_string();
+            app.flash(format!("a background task failed (a bug; details in the log): {what}"));
             dirty = true;
         }
         if app.should_quit {
@@ -347,6 +491,16 @@ async fn event_loop(
             watcher.0 = Some(tokio::spawn(crate::rules::watch(path, rules_tx.clone())));
         }
         dispatch_jobs(app, &body_tx, &jq_tx, &search_tx);
+        for job in app.take_export_jobs() {
+            let tx = export_tx.clone();
+            tokio::task::spawn_blocking(move || {
+                let path = job.path.clone();
+                let result = contained(|| job.run()).unwrap_or_else(|| {
+                    Err(format!("{} could not be written: an internal error (details in the log)", path.display()))
+                });
+                let _ = tx.send((path, result));
+            });
+        }
         if std::mem::take(&mut app.switch_request)
             && let Some(sw) = &switch
         {
@@ -445,12 +599,12 @@ fn dispatch_jobs(
     app: &mut App,
     body_tx: &mpsc::UnboundedSender<(BodyJob, BodyView)>,
     jq_tx: &mpsc::UnboundedSender<(JqJob, JqResult)>,
-    search_tx: &mpsc::UnboundedSender<(crate::app::SearchJob, bool)>,
+    search_tx: &mpsc::UnboundedSender<Vec<crate::app::SearchResult>>,
 ) {
     for job in app.take_body_jobs() {
         let tx = body_tx.clone();
         tokio::task::spawn_blocking(move || {
-            let view = job.run();
+            let view = contained(|| job.run()).unwrap_or_else(failed_view);
             let _ = tx.send((job, view));
         });
     }
@@ -458,23 +612,22 @@ fn dispatch_jobs(
         let runner = app.jq_runner;
         let tx = jq_tx.clone();
         tokio::task::spawn_blocking(move || {
-            let result = runner(&job.filter, &job.bytes);
+            let result = contained(|| runner(&job.filter, &job.bytes))
+                .unwrap_or_else(|| Err("the filter stopped with an internal error (details in the log)".into()));
             let _ = tx.send((job, result));
         });
     }
-    let searches = app.take_search_jobs();
-    if !searches.is_empty() {
-        // one blocking task works through a batch, so a big session does not flood the pool
+    for batch in app.take_search_jobs() {
         let tx = search_tx.clone();
-        tokio::task::spawn_blocking(move || {
-            for job in searches {
-                let hit = job.search.run();
-                if tx.send((job, hit)).is_err() {
-                    return;
-                }
-            }
-        });
+        tokio::task::spawn_blocking(move || batch.run(|results| tx.send(results).is_ok()));
     }
+}
+
+/// What the body box shows for a body whose decoding failed with a bug.
+fn failed_view() -> BodyView {
+    let mut view = BodyView::build(bytes::Bytes::new(), None);
+    view.note = Some("this body could not be shown: an internal error (details in the log)".into());
+    view
 }
 
 /// Give the terminal to `$VISUAL`/`$EDITOR`, opened at `path:line`.
@@ -655,6 +808,55 @@ mod tests {
         assert!(matches!(take_waiting_input(&mut ended, &mut app, &mut false).await, Some(Ok(()))));
         let mut failed = waiting([Err(io::Error::other("the terminal went away"))]);
         assert!(matches!(take_waiting_input(&mut failed, &mut app, &mut false).await, Some(Err(_))));
+    }
+
+    #[test]
+    fn a_panic_in_the_ui_ends_it_one_in_a_worker_leaves_the_terminal_and_the_spilled_bodies() {
+        // the UI's: the terminal goes back so the message can be read; spill goes at the end
+        let ui = PanicPlan::new(true, true, false);
+        assert_eq!(ui, PanicPlan { restore: true, remove_spill: false, print: true });
+        // a worker's while the UI runs: nothing of the UI's is touched, the message is logged
+        let worker = PanicPlan::new(false, true, false);
+        assert_eq!(worker, PanicPlan { restore: false, remove_spill: false, print: false });
+        // no UI (before it starts, after it ends): the message as usual
+        assert_eq!(PanicPlan::new(false, false, false), PanicPlan { restore: false, remove_spill: false, print: true });
+        // with panic = "abort" any panic ends the process: everything at once
+        assert_eq!(PanicPlan::new(false, true, true), PanicPlan { restore: true, remove_spill: true, print: true });
+    }
+
+    #[tokio::test]
+    async fn a_worker_job_that_panics_reports_a_failure() {
+        let job = tokio::task::spawn_blocking(|| contained(|| -> bool { panic!("a bug in a decoder") }));
+        assert_eq!(job.await.expect("the worker's task ends normally"), None);
+        assert_eq!(contained(|| 7), Some(7));
+        let view = failed_view();
+        assert!(view.note.as_deref().is_some_and(|n| n.contains("internal error")), "{:?}", view.note);
+    }
+
+    #[test]
+    fn a_turn_takes_in_data_for_its_budget_and_leaves_the_rest_waiting() {
+        let mut app = App::new(SessionStore::new(), Theme::default());
+        let (tx, mut rx) = mpsc::channel(256);
+        let note = |i: u64| traffic_police_core::SessionEvent::Marker {
+            source: None,
+            at: i,
+            kind: traffic_police_core::event::MarkerKind::Note,
+            label: String::new(),
+        };
+        for i in 0..100 {
+            tx.try_send(vec![note(i), note(i)]).unwrap();
+        }
+        // no time at all: one batch, so the data still moves on
+        assert_eq!(
+            ingest_waiting(&mut rx, &mut app, Duration::ZERO),
+            Ingested { batches: 1, events: 2, closed: false }
+        );
+        // time enough: all that waits, and not a moment's wait for more
+        let rest = ingest_waiting(&mut rx, &mut app, Duration::from_secs(60));
+        assert_eq!(rest, Ingested { batches: 99, events: 198, closed: false });
+        assert_eq!(app.store.markers().len(), 200);
+        drop(tx);
+        assert!(ingest_waiting(&mut rx, &mut app, Duration::from_secs(60)).closed);
     }
 
     #[test]

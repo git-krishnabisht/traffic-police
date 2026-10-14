@@ -1,15 +1,22 @@
 //! Getting data out: the clipboard, the copy menu (`y`), saving a body (`w`), and the export
-//! menu (`e`) (ARCHITECTURE.md §5.10).
+//! menu (`e`) (ARCHITECTURE.md §5.10). Files are written on a worker ([`ExportJob`]).
 
+use std::collections::HashSet;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use base64::Engine;
+use traffic_police_core::SessionStore;
 use traffic_police_core::decode::decode_body;
 use traffic_police_core::export::curl::{CurlBody, curl};
-use traffic_police_core::export::har::har;
-use traffic_police_core::model::{BodyDir, TxnIdx, header};
+use traffic_police_core::export::har::write_har;
+use traffic_police_core::fmt::Ts;
+use traffic_police_core::model::{BodyDir, Headers, TxnIdx, TxnKey, header};
+use traffic_police_core::session::SessionLog;
+use traffic_police_core::store::BodyPieces;
 use tui_input::Input;
 
 use crate::app::{App, Focus, Overlay, Tab};
@@ -183,6 +190,91 @@ pub struct Prompt {
     pub label: &'static str,
     pub input: Input,
     pub action: PromptAction,
+}
+
+/// A file to write off the UI task, with a snapshot of what it needs, so that the UI and the
+/// capture go on meanwhile: up to 0.5.1 a HAR or session file of a big session was made on the UI
+/// task, which stood still for seconds (50,000 requests: 0.6 to 3.4 s for a HAR), and so did
+/// the reading of the backends' events.
+pub struct ExportJob {
+    pub path: PathBuf,
+    what: Export,
+    /// Stops the export (quitting before it ends); the file is then removed.
+    pub cancel: Arc<AtomicBool>,
+}
+
+enum Export {
+    /// A body, decoded, from where its bytes are (read on the worker).
+    Body { raw: BodyPieces, headers: Option<Headers> },
+    /// These requests as HAR, from a copy of the store (the transactions are shared, and the
+    /// bodies' bytes too).
+    Har { store: Box<SessionStore>, txns: Vec<TxnIdx>, now: Ts },
+    /// A session file of the stream so far, only `keep`'s requests when given.
+    Session { log: Arc<SessionLog>, store: Box<SessionStore>, keep: Option<HashSet<TxnKey>> },
+}
+
+/// The file an export writes, removed when this is dropped before [`Written::keep`]: the export
+/// failed, was stopped, or panicked, and leaves no half-written file.
+struct Written<'a>(Option<&'a Path>);
+
+impl Written<'_> {
+    fn keep(mut self) {
+        self.0 = None;
+    }
+}
+
+impl Drop for Written<'_> {
+    fn drop(&mut self) {
+        if let Some(p) = self.0 {
+            let _ = std::fs::remove_file(p);
+        }
+    }
+}
+
+impl ExportJob {
+    /// Writes the file. Returns what the footer says (`wrote 12 requests`), or why it could not be
+    /// written. A file that is there already is not overwritten.
+    pub fn run(self) -> Result<String, String> {
+        let stop = || self.cancel.load(Ordering::Relaxed);
+        let path = self.path.as_path();
+        let new_file = || std::fs::File::create_new(path).map(std::io::BufWriter::new);
+        let written = Written(Some(path));
+        let result = match self.what {
+            Export::Body { raw, headers } => {
+                let d = decode_body(raw.bytes(), headers.as_ref(), 256 << 20);
+                if stop() {
+                    Err(std::io::Error::from(std::io::ErrorKind::Interrupted))
+                } else {
+                    new_file()
+                        .and_then(|mut out| out.write_all(&d.bytes).and_then(|_| out.flush()))
+                        .map(|_| format!("saved {} bytes", d.bytes.len()))
+                }
+            }
+            Export::Har { store, txns, now } => new_file()
+                .and_then(|mut out| write_har(&store, &txns, now, &mut out, &stop).and_then(|_| out.flush()))
+                .map(|_| format!("wrote {} requests", txns.len())),
+            Export::Session { log, store, keep } => {
+                if path.exists() {
+                    Err(std::io::Error::from(std::io::ErrorKind::AlreadyExists))
+                } else {
+                    log.export_until(&store, path, keep.as_ref(), &stop)
+                        .map(|n| format!("saved a session of {n} requests"))
+                }
+            }
+        };
+        match result {
+            Ok(what) => {
+                written.keep();
+                Ok(what)
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                written.keep();
+                Err(format!("{} exists; nothing written", path.display()))
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => Err(format!("{} stopped", path.display())),
+            Err(e) => Err(format!("cannot write {}: {e}", path.display())),
+        }
+    }
 }
 
 /// A file name from the last URL segment, safe on every platform.
@@ -576,7 +668,8 @@ impl App {
         Ok(curl(&t, CurlBody::File(&name)))
     }
 
-    /// Runs the prompt's action with the path typed.
+    /// Runs the prompt's action with the path typed: the file is written on a worker, from a
+    /// snapshot taken now, and the footer says how it went when it is done.
     pub fn finish_prompt(&mut self) {
         let Some(p) = self.prompt.take() else { return };
         self.overlay = Overlay::None;
@@ -584,48 +677,83 @@ impl App {
         if path.as_os_str().is_empty() {
             return self.flash("no file name given");
         }
-        if path.exists() {
+        if path.exists() || self.exports.iter().any(|e| e.path == path) {
             self.prompt = Some(p);
             self.overlay = Overlay::Prompt;
             return self.flash(format!("{} exists; choose another name", path.display()));
         }
-        let result = match p.action {
+        let store = self.view_store();
+        let (what, size) = match p.action {
             PromptAction::SaveBody(txn, dir) => {
-                let t = self.view_store().txn(txn);
+                let t = store.txn(txn);
                 let (meta, headers) = match dir {
                     BodyDir::Request => (Some(&t.req_body), Some(&t.req_headers)),
                     BodyDir::Response => (Some(&t.resp_body), t.resp.as_ref().map(|r| &r.headers)),
                     BodyDir::Delivered => (t.delivered_body.as_ref(), t.delivered.as_ref().map(|d| &d.headers)),
                 };
-                match meta {
-                    Some(m) => {
-                        let headers = self.view_store().decoding_headers(t, headers);
-                        let d = decode_body(self.view_store().body_bytes(m), headers.as_deref(), 256 << 20);
-                        std::fs::write(&path, &d.bytes).map(|_| format!("saved {} bytes", d.bytes.len()))
-                    }
-                    None => Ok("nothing to save".into()),
-                }
+                let Some(m) = meta else { return self.flash("nothing to save") };
+                let headers = store.decoding_headers(t, headers).map(std::borrow::Cow::into_owned);
+                (Export::Body { raw: store.body_pieces(m), headers }, "the body".to_string())
             }
             PromptAction::Har(txns) => {
-                let doc = har(self.view_store(), &txns, self.now());
-                serde_json::to_vec_pretty(&doc)
-                    .map_err(std::io::Error::other)
-                    .and_then(|bytes| std::fs::write(&path, bytes))
-                    .map(|_| format!("wrote {} requests", txns.len()))
+                let n = txns.len();
+                (Export::Har { store: Box::new(store.clone()), txns, now: self.now() }, format!("{n} requests"))
             }
-            PromptAction::Session(keep) => match self.session_log.clone() {
-                Some(log) => {
-                    let store = self.view_store();
-                    let keep: Option<std::collections::HashSet<_>> =
-                        keep.map(|v| v.iter().map(|&i| store.txn(i).key).collect());
-                    log.export(store, &path, keep.as_ref()).map(|n| format!("saved a session of {n} requests"))
-                }
-                None => Ok("this session has no recording to save".into()),
-            },
+            PromptAction::Session(keep) => {
+                let Some(log) = self.session_log.clone() else {
+                    return self.flash("this session has no recording to save");
+                };
+                let keep: Option<HashSet<_>> = keep.map(|v| v.iter().map(|&i| store.txn(i).key).collect());
+                let n = keep.as_ref().map_or(store.len(), HashSet::len);
+                (Export::Session { log, store: Box::new(store.clone()), keep }, format!("a session of {n} requests"))
+            }
         };
+        let cancel = Arc::new(AtomicBool::new(false));
+        self.exports.push(crate::app::Exporting { path: path.clone(), cancel: cancel.clone() });
+        self.export_jobs.push(ExportJob { path: path.clone(), what, cancel });
+        self.flash(format!("writing {size} to {} in the background", path.display()));
+    }
+
+    /// Files queued by the prompt, for the event loop to write on workers.
+    pub fn take_export_jobs(&mut self) -> Vec<ExportJob> {
+        std::mem::take(&mut self.export_jobs)
+    }
+
+    /// An export ended: the footer says how. When quitting waits for the exports, the last one
+    /// to end lets it quit, unless one failed: that is said first, and quitting again quits.
+    pub fn finish_export(&mut self, path: &Path, result: Result<String, String>) {
+        self.exports.retain(|e| e.path != path);
+        let waiting = self.quit_when_written && !self.should_quit;
         match result {
             Ok(what) => self.flash(format!("{what} to {}", path.display())),
-            Err(e) => self.flash(format!("cannot write {}: {e}", path.display())),
+            Err(e) if waiting => {
+                self.flash(format!("{e} · so not quitting yet"));
+                self.quit_when_written = false;
+                return;
+            }
+            Err(e) => self.flash(e),
+        }
+        if self.quit_when_written && self.exports.is_empty() {
+            self.should_quit = true;
+        }
+    }
+
+    /// What is being written, for the footer: `writing all.har…`.
+    pub fn exporting(&self) -> Option<String> {
+        let name = |e: &crate::app::Exporting| {
+            e.path.file_name().map_or_else(|| e.path.display().to_string(), |n| n.to_string_lossy().into_owned())
+        };
+        match self.exports.as_slice() {
+            [] => None,
+            [one] => Some(format!("writing {}…", name(one))),
+            more => Some(format!("writing {} files…", more.len())),
+        }
+    }
+
+    /// Stops the exports still running; their files are removed.
+    pub fn stop_exports(&mut self) {
+        for e in &self.exports {
+            e.cancel.store(true, Ordering::Relaxed);
         }
     }
 }

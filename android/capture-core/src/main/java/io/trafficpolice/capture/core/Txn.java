@@ -1,5 +1,6 @@
 package io.trafficpolice.capture.core;
 
+import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /** One HTTP exchange on the network (PROTOCOL.md §1 {@code txn}). Thread-safe. */
@@ -31,6 +32,7 @@ public final class Txn {
 
     public void response(int status, String message, String protocol, String[] headers, ConnInfo conn) {
         responded = true;
+        request.flush(); // the request's last gathered bytes come before the response
         rec.emit(new Event.Resp(rec.now(), id, status, message, protocol, headers, conn));
     }
 
@@ -56,6 +58,7 @@ public final class Txn {
     /** Completes the transaction with its trailers and a gRPC status (either may be null). */
     public void done(String[] trailers, GrpcStatus grpc) {
         if (finished.compareAndSet(false, true)) {
+            flushBodies();
             rec.emit(new Event.Done(rec.now(), id, trailers, grpc));
         }
     }
@@ -68,7 +71,21 @@ public final class Txn {
     /** Fails the transaction (once), with the trailers and gRPC status known (either may be null). */
     public void fail(String phase, boolean canceled, Throwable error, ConnInfo conn, String[] trailers, GrpcStatus grpc) {
         if (finished.compareAndSet(false, true)) {
+            flushBodies();
             rec.emit(new Event.Fail(rec.now(), id, phase, canceled, false, error, conn, trailers, grpc));
+        }
+    }
+
+    /** Sends what the bodies gathered, so that it comes before the transaction's end. */
+    private void flushBodies() {
+        request.flush();
+        response.flush();
+        Body d;
+        synchronized (this) {
+            d = delivered;
+        }
+        if (d != null) {
+            d.flush();
         }
     }
 
@@ -88,6 +105,7 @@ public final class Txn {
     /** Fails the transaction (once) with a failure a rule made. */
     void failSimulated(String phase, Throwable error) {
         if (finished.compareAndSet(false, true)) {
+            flushBodies();
             rec.emit(new Event.Fail(rec.now(), id, phase, false, true, error, null, null, null));
         }
     }
@@ -127,19 +145,46 @@ public final class Txn {
         rec.emit(new Event.Ws(rec.now(), id, out, op, size, kept, text, truncated, code, reason));
     }
 
-    /** One direction's body: teed bytes are captured up to the cap and always counted. */
+    /**
+     * One direction's body: teed bytes are captured up to the cap and always counted. Writes
+     * shorter than a chunk's own header are gathered into one chunk (see {@link #GATHER_BELOW}).
+     */
     public static final class Body {
         private static final long PROG_INTERVAL_NS = 100_000_000L; // at most 10 prog events per second
+        /**
+         * Writes shorter than this (a chunk's header) are gathered with the ones around them:
+         * byte-at-a-time I/O ({@code read()}, {@code write(int)}, DataInputStream) would make an
+         * event and a 40-byte frame of every byte. Longer writes are sent as they come, as before.
+         */
+        static final int GATHER_BELOW = Frames.BODY_HEADER;
+        /** Gathered bytes go out as one chunk of at most this many... */
+        static final int GATHER_MAX = 8 * 1024;
+        /**
+         * ...that has waited at most about this long: a write that comes later sends them first,
+         * and the writer sends them once they have waited this long (EventQueue), so a stream that
+         * stalls after a byte still shows it. The end of the body, of the transaction (done, fail)
+         * and of the request (the response) send them too.
+         */
+        static final long GATHER_NS = 50_000_000L;
 
         private final Txn txn;
         private final int dir;
         private final boolean capture;
         private final long cap;
         private long total;
+        /** Bytes taken for capture: sent as chunks, or gathered. */
         private long captured;
         private long lastProg;
         private boolean started;
         private boolean ended;
+        /** Gathered bytes not sent yet: the last {@code heldLen} of those captured, read from {@code heldTs} on. */
+        private byte[] held;
+        private int heldLen;
+        private long heldTs;
+        /** Whether the writer has this body on its list of those gathering (EventQueue). */
+        private boolean listed;
+        private byte[] one;
+        private boolean capNoted;
 
         Body(Txn txn, int dir, boolean capture, long cap) {
             this.txn = txn;
@@ -162,11 +207,19 @@ public final class Txn {
         }
 
         /** Bytes that were not captured because the cap was reached: counted, and reported once. */
-        public void skipOverCap(long len) {
+        public synchronized void skipOverCap(long len) {
             if (capture && len > 0) {
-                txn.rec.capReached();
+                capReached();
             }
             skip(len);
+        }
+
+        /** Capture stopped at the cap: reported (once per process, Recorder.capReached). */
+        private void capReached() {
+            if (!capNoted) {
+                capNoted = true;
+                txn.rec.capReached();
+            }
         }
 
         /** Bytes that passed through but are not captured: counted and reported as progress. */
@@ -176,8 +229,12 @@ public final class Txn {
             }
             started = true;
             total += len;
+            if (capture && captured >= cap) {
+                capReached();
+            }
             long now = txn.rec.now();
             if (now - lastProg >= PROG_INTERVAL_NS) {
+                sendHeld();
                 lastProg = now;
                 txn.rec.emit(new Event.Prog(now, txn.id, dir, total));
             }
@@ -192,25 +249,89 @@ public final class Txn {
             started = true;
             if (capture && captured < cap) {
                 int take = (int) Math.min(len, cap - captured);
-                for (int done = 0; done < take; ) {
-                    int n = Math.min(Frames.MAX_CHUNK, take - done);
-                    byte[] copy = new byte[n];
-                    System.arraycopy(b, off + done, copy, 0, n);
-                    txn.rec.emit(new Event.Chunk(now, txn.id, dir, captured, copy));
-                    captured += n;
-                    done += n;
+                if (take < GATHER_BELOW) {
+                    gather(b, off, take, now);
+                } else {
+                    sendHeld();
+                    for (int done = 0; done < take; ) {
+                        int n = Math.min(Frames.MAX_CHUNK, take - done);
+                        byte[] copy = new byte[n];
+                        System.arraycopy(b, off + done, copy, 0, n);
+                        txn.rec.emit(new Event.Chunk(now, txn.id, dir, captured, copy));
+                        captured += n;
+                        done += n;
+                    }
+                }
+                if (captured == cap) {
+                    sendHeld(); // nothing more will be captured
                 }
                 if (take < len) {
-                    txn.rec.capReached();
+                    capReached();
                 }
+            } else if (capture) {
+                // past the cap: a write that met it exactly did not pass it (byte by byte, none does)
+                capReached();
             }
             total += len;
             // bytes not sent as chunks (over the cap, or capture off) are still reported, so sizes
             // and the captured-traffic graph stay right
             if (total > captured && now - lastProg >= PROG_INTERVAL_NS) {
+                sendHeld();
                 lastProg = now;
                 txn.rec.emit(new Event.Prog(now, txn.id, dir, total));
             }
+        }
+
+        /** One byte the app wrote or read ({@code write(int)}, {@code read()}): gathered. */
+        public synchronized void write(int b) {
+            if (one == null) {
+                one = new byte[1];
+            }
+            one[0] = (byte) b;
+            write(one, 0, 1);
+        }
+
+        /** Adds a short write to the gathered bytes, sending them first when it would not fit or they are old. */
+        private void gather(byte[] b, int off, int len, long now) {
+            if (heldLen > 0 && (heldLen + len > GATHER_MAX || now - heldTs >= GATHER_NS)) {
+                sendHeld();
+            }
+            if (held == null) {
+                held = new byte[256];
+            } else if (heldLen + len > held.length) {
+                held = Arrays.copyOf(held, Math.min(GATHER_MAX, held.length * 2));
+            }
+            if (heldLen == 0) {
+                heldTs = now;
+            }
+            System.arraycopy(b, off, held, heldLen, len);
+            heldLen += len;
+            captured += len;
+            if (heldLen == GATHER_MAX) {
+                sendHeld();
+            } else if (!listed) {
+                listed = true;
+                txn.rec.gathering(this);
+            }
+        }
+
+        /** The gathered bytes as one chunk, at the time the first of them came. */
+        private void sendHeld() {
+            if (heldLen > 0) {
+                txn.rec.emit(new Event.Chunk(heldTs, txn.id, dir, captured - heldLen, Arrays.copyOf(held, heldLen)));
+                heldLen = 0;
+            }
+        }
+
+        /** Sends what was gathered: before an event that must come after it. */
+        synchronized void flush() {
+            sendHeld();
+        }
+
+        /** The writer: what was gathered has waited long enough ({@link #GATHER_NS}). */
+        synchronized void sendDue() {
+            listed = false;
+            sendHeld();
         }
 
         /**
@@ -222,6 +343,8 @@ public final class Txn {
             if (ended) {
                 return false;
             }
+            sendHeld();
+            held = null;
             ended = true;
             String s = state;
             if ("none".equals(state)) {

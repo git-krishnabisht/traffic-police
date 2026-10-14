@@ -381,9 +381,19 @@ public final class RuleRun {
                         if (a.regex != null) {
                             Matcher m = a.regex.matcher(text);
                             StringBuffer sb = new StringBuffer(text.length());
-                            while (m.find()) {
-                                n++;
-                                m.appendReplacement(sb, a.with);
+                            try {
+                                while (m.find()) {
+                                    n++;
+                                    m.appendReplacement(sb, a.with);
+                                }
+                            } catch (IllegalArgumentException | IndexOutOfBoundsException e) {
+                                // "$" without a group after it, or a group the pattern does not have
+                                skipped(r, "its replacement does not fit the pattern: " + e.getMessage());
+                                break;
+                            } catch (StackOverflowError e) {
+                                // java.util.regex recurses, e.g. (a|b)* once per character
+                                skipped(r, "the pattern needs more stack than the app's thread has on this body");
+                                break;
                             }
                             m.appendTail(sb);
                             edited = sb.toString();

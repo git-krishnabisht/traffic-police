@@ -14,6 +14,7 @@
 #include <mutex>
 #include <pthread.h>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "slicer/instrumentation.h"
@@ -120,6 +121,35 @@ std::atomic<bool> g_initialized{false};
 std::atomic<bool> g_runtime_active{false};
 std::atomic<bool> g_other_loader_reported{false};
 std::atomic<bool> g_other_grpc_loader_reported{false};
+// When Agent_OnAttach ran, for the log lines that time initialization
+std::chrono::steady_clock::time_point g_attach_time;
+// The classes hooked so far, by descriptor and defining loader (null: the boot loader). The pass
+// after the runtime starts leaves them alone: retransforming them again changes nothing, and on a
+// slow device it only delays the socket.
+std::mutex g_hooked_mutex;
+std::vector<std::pair<std::string, jweak>> g_hooked;
+
+long long MillisSince(std::chrono::steady_clock::time_point since) {
+  return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - since).count();
+}
+
+void RememberHooked(JNIEnv* env, const std::string& descriptor, jobject loader) {
+  jweak weak = loader != nullptr ? env->NewWeakGlobalRef(loader) : nullptr;
+  if (loader != nullptr && weak == nullptr) return;
+  std::lock_guard<std::mutex> lock(g_hooked_mutex);
+  g_hooked.emplace_back(descriptor, weak);
+}
+
+bool AlreadyHooked(JNIEnv* env, const std::string& descriptor, jobject loader) {
+  std::lock_guard<std::mutex> lock(g_hooked_mutex);
+  for (const auto& [hooked, weak] : g_hooked) {
+    if (hooked != descriptor) continue;
+    if (weak == nullptr ? loader == nullptr : loader != nullptr && env->IsSameObject(weak, loader) == JNI_TRUE) {
+      return true;
+    }
+  }
+  return false;
+}
 
 // The Java callbacks catch their own errors, so an exception that still arrives is a bug: log it.
 void ClearCallbackException(JNIEnv* env, const char* callback) {
@@ -371,6 +401,7 @@ bool InstrumentClass(JNIEnv* env, const char* class_name, jobject loader, jint d
   }
   *new_data_len = static_cast<jint>(output_size);
   *new_data = output;
+  RememberHooked(env, descriptor, loader);
   return true;
 }
 
@@ -504,21 +535,51 @@ void ReportAll(JNIEnv* env) {
   for (const Hook& hook : snapshot) NotifyHook(env, hook);
 }
 
+// The classes loaded before the agent that it hooks and has not hooked yet: OkHttp's and gRPC's
+// in an app that was running already. A class defined since the load hook was set up was hooked
+// then, and java.net.URL just before this (HookUrlFirst).
 void RetransformLoadedClasses(JNIEnv* env) {
+  const auto begin = std::chrono::steady_clock::now();
   jint count = 0;
   jclass* classes = nullptr;
   if (g_jvmti->GetLoadedClasses(&count, &classes) != JVMTI_ERROR_NONE || classes == nullptr) return;
+  int retransformed = 0;
   for (jint i = 0; i < count; ++i) {
     std::string descriptor;
     jobject loader = nullptr;
     if (ClassDescriptor(env, classes[i], &descriptor, &loader) && !SitesForClass(descriptor).empty() &&
-        AcceptLoader(env, descriptor, loader)) {
+        !AlreadyHooked(env, descriptor, loader) && AcceptLoader(env, descriptor, loader)) {
       Retransform(env, classes[i]);
+      ++retransformed;
     }
     if (loader != nullptr) env->DeleteLocalRef(loader);
     env->DeleteLocalRef(classes[i]);
   }
   g_jvmti->Deallocate(reinterpret_cast<unsigned char*>(classes));
+  Log(ANDROID_LOG_INFO, "hooked " + std::to_string(retransformed) + " of " + std::to_string(count) +
+                            " loaded classes in " + std::to_string(MillisSince(begin)) + " ms");
+}
+
+// java.net.URL is a boot class, loaded long before any agent, so its hooks (HttpURLConnection)
+// need a retransform; it comes as soon as the runtime captures, before the pass over the other
+// loaded classes. Until 0.5.1 it waited for that pass, and on a slow device (CI's API 36
+// emulator, 5 s and more after the app started) the app's first HttpURLConnection requests went
+// by unhooked, while OkHttp's, hooked as their classes were defined, were captured. It does not
+// come before the runtime starts either: the retransform alone can take seconds (1.1 to 2.9 s on
+// CI's API 36 emulator, 34 ms on an API 31 one), and until the runtime installs its handler the
+// trampoline lets every call through uncaptured, OkHttp's too (on 2026-10-14 that lost the
+// `:worker` process's one request, made as it starts).
+void HookUrlFirst(JNIEnv* env) {
+  const auto begin = std::chrono::steady_clock::now();
+  jclass url = env->FindClass("java/net/URL");
+  if (url == nullptr) {
+    if (env->ExceptionCheck()) env->ExceptionClear();
+    Log(ANDROID_LOG_WARN, "java.net.URL not found; it is hooked with the other loaded classes");
+    return;
+  }
+  Retransform(env, url);
+  env->DeleteLocalRef(url);
+  Log(ANDROID_LOG_INFO, "java.net.URL hooked in " + std::to_string(MillisSince(begin)) + " ms");
 }
 
 bool ReadAgentConfig(const char* key, std::string* value) {
@@ -717,7 +778,10 @@ void* InitializeOnAgentThread(void*) {
     g_vm->DetachCurrentThread();
     return nullptr;
   }
+  Log(ANDROID_LOG_INFO,
+      "runtime capturing " + std::to_string(MillisSince(g_attach_time)) + " ms after the agent loaded");
   if (g_runtime_active.load(std::memory_order_acquire)) {
+    HookUrlFirst(env);
     RetransformLoadedClasses(env);
     ReportAll(env);
   }
@@ -731,7 +795,12 @@ void* InitializeOnAgentThread(void*) {
     return nullptr;
   }
   env->CallStaticVoidMethod(entry_class, listen);
-  if (env->ExceptionCheck()) LogJavaFailure(env, "opening the capture socket");
+  if (env->ExceptionCheck()) {
+    LogJavaFailure(env, "opening the capture socket");
+  } else {
+    Log(ANDROID_LOG_INFO,
+        "socket open " + std::to_string(MillisSince(g_attach_time)) + " ms after the agent loaded");
+  }
   g_vm->DetachCurrentThread();
   return nullptr;
 }
@@ -776,6 +845,7 @@ jint Attach(JavaVM* vm, char* options) {
     return JNI_OK;
   }
   g_vm = vm;
+  g_attach_time = std::chrono::steady_clock::now();
   g_runtime_dir = NormalizeOptions(options, &g_package_name, &g_startup_agent);
   // A startup agent stays in code_cache/startup_agents until it is deleted (a host that crashed
   // cannot), so a stale one must leave the process untouched: no boot dex, no load hook.

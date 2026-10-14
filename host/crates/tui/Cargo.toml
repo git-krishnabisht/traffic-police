@@ -30,4 +30,5 @@ bytes.workspace = true
 
 [dev-dependencies]
 traffic-police-backends.workspace = true
+traffic-police-fakeadb.workspace = true
 insta.workspace = true

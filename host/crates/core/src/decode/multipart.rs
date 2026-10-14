@@ -31,16 +31,24 @@ fn find(hay: &[u8], needle: &[u8], from: usize) -> Option<usize> {
     hay[from..].windows(needle.len()).position(|w| w == needle).map(|p| p + from)
 }
 
-/// Split a body on `--boundary` delimiters. Returns `None` if no delimiter is found.
-pub fn parse(body: &Bytes, boundary: &str) -> Option<Vec<Part>> {
-    let delim = format!("--{boundary}");
-    let d = delim.as_bytes();
-    let mut pos = find(body, d, 0)?;
-    let mut parts = Vec::new();
-    loop {
-        let after = pos + d.len();
+/// The parts of a body split on `--boundary` delimiters, one at a time (a body of tiny parts
+/// would make millions of them).
+pub struct Parts {
+    body: Bytes,
+    delim: Vec<u8>,
+    /// Where the next part's delimiter starts; `None` once the parts are over.
+    pos: Option<usize>,
+}
+
+impl Iterator for Parts {
+    type Item = Part;
+
+    fn next(&mut self) -> Option<Part> {
+        let (body, d) = (&self.body, self.delim.as_slice());
+        let after = self.pos? + d.len();
         if body[after..].starts_with(b"--") {
-            break; // closing delimiter
+            self.pos = None;
+            return None; // closing delimiter
         }
         // skip the line break after the delimiter
         let content_start = if body[after..].starts_with(b"\r\n") {
@@ -70,13 +78,21 @@ pub fn parse(body: &Bytes, boundary: &str) -> Option<Vec<Part>> {
             .lines()
             .filter_map(|l| l.split_once(':').map(|(k, v)| (k.trim().to_string(), v.trim().to_string())))
             .collect();
-        parts.push(Part { headers, body: content.slice(body_start..) });
-        if next >= body.len() {
-            break;
-        }
-        pos = next;
+        self.pos = (next < body.len()).then_some(next);
+        Some(Part { headers, body: content.slice(body_start..) })
     }
-    Some(parts)
+}
+
+/// The parts of a body split on `--boundary` delimiters; `None` if no delimiter is found.
+pub fn parts(body: &Bytes, boundary: &str) -> Option<Parts> {
+    let delim = format!("--{boundary}").into_bytes();
+    let pos = find(body, &delim, 0)?;
+    Some(Parts { body: body.clone(), delim, pos: Some(pos) })
+}
+
+/// Split a body on `--boundary` delimiters. Returns `None` if no delimiter is found.
+pub fn parse(body: &Bytes, boundary: &str) -> Option<Vec<Part>> {
+    parts(body, boundary).map(Iterator::collect)
 }
 
 #[cfg(test)]

@@ -491,7 +491,8 @@ impl DemoDevice {
                     BodyDir::Delivered => {}
                 }
                 self.seq += 1;
-                frame::encode_body(&BodyChunk { seq: self.seq, txn, dir, ts: at, offset, data }, out);
+                frame::encode_body(&BodyChunk { seq: self.seq, txn, dir, ts: at, offset, data }, out)
+                    .expect("a chunk of at most 64 KiB");
             }
         }
     }

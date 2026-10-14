@@ -136,6 +136,72 @@ public final class HucCaptureTest {
         assertEquals("{\"a\":1}", server.takeRequest().getBody().readUtf8());
     }
 
+    /**
+     * A request written with write(int) and a response read with read(): every byte captured, in
+     * chunks of up to 8 KiB, not one chunk (and a 40-byte frame) per byte.
+     */
+    @Test
+    public void byteAtATimeBodiesBecomeFewChunks() throws Exception {
+        StringBuilder text = new StringBuilder();
+        for (int i = 0; text.length() < 200_000; i++) {
+            text.append("line ").append(i).append('\n');
+        }
+        String response = text.toString();
+        String request = response.substring(0, 20_000);
+        server.enqueue(new MockResponse().setBody(response));
+        HttpURLConnection c = open("/huc/bytes");
+        c.setDoOutput(true);
+        OutputStream out = c.getOutputStream();
+        for (byte b : request.getBytes(UTF_8)) {
+            out.write(b);
+        }
+        out.close();
+        InputStream in = c.getInputStream();
+        ByteArrayOutputStream got = new ByteArrayOutputStream();
+        for (int b; (b = in.read()) != -1; ) {
+            got.write(b);
+        }
+        in.close();
+        assertEquals(response, new String(got.toByteArray(), UTF_8));
+        TestHost.Msg req = reqFor("/huc/bytes");
+        assertEquals("done", end(req.txn).t());
+        List<TestHost.Msg> msgs = host.ofTxn(req.txn);
+        assertEquals(request, body(msgs, 0));
+        assertEquals(response, body(msgs, 1));
+        int[] chunks = new int[2];
+        for (TestHost.Msg m : msgs) {
+            if (m.data != null) {
+                chunks[m.dir]++;
+            }
+        }
+        // 3 and 25 full ones, and a few the writer sent after they had waited 50 ms
+        assertTrue(chunks[0] + " request chunks", chunks[0] >= 3 && chunks[0] <= 15);
+        assertTrue(chunks[1] + " response chunks", chunks[1] >= 25 && chunks[1] <= 60);
+        assertEquals("complete", bodyEnd(msgs, "response").str("state"));
+    }
+
+    /** A body shorter than its fixed length cannot be closed: the app gets the JDK's exception, the body ends as error. */
+    @Test
+    public void aRequestBodyThatFailsToCloseEndsAsAnError() throws Exception {
+        HttpURLConnection c = open("/huc/short");
+        c.setDoOutput(true);
+        c.setFixedLengthStreamingMode(10);
+        OutputStream out = c.getOutputStream();
+        out.write("12345".getBytes(UTF_8));
+        try {
+            out.close();
+            fail("closing a body shorter than its length fails");
+        } catch (IOException expected) {
+            assertTrue(expected.getMessage(), expected.getMessage().contains("insufficient data written"));
+        }
+        TestHost.Msg req = reqFor("/huc/short");
+        TestHost.Msg end = host.await(m -> "body_end".equals(m.t()) && m.txn == req.txn, 10_000);
+        assertEquals("request", end.str("dir"));
+        assertEquals("error", end.str("state"));
+        assertEquals(5, end.num("bytes"));
+        c.disconnect();
+    }
+
     @Test
     public void errorStatusKeepsHeadersAndErrorBody() throws Exception {
         server.enqueue(new MockResponse().setResponseCode(404).setBody("{\"error\":\"missing\"}"));

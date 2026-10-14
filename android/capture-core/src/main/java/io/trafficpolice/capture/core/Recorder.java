@@ -67,6 +67,11 @@ public final class Recorder {
         rt.queue.offer(e);
     }
 
+    /** A body holds gathered bytes: the writer sends them when they are due. */
+    void gathering(Txn.Body body) {
+        rt.queue.gathering(body);
+    }
+
     void capReached() {
         rt.diagOnce("body_cap_reached", "info",
                 "a body exceeded the capture cap; its size is still counted (set_config body_cap to raise it)");

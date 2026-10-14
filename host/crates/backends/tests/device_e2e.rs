@@ -366,12 +366,14 @@ fn check_main_run(r: &mut Report, store: &SessionStore, source: SourceId, run: &
     if let Some(t) = one(r, "/live") {
         r.check(status(t) == 101 && t.is_websocket(), || format!("{run}: /live {}", status(t)));
         let got: Vec<String> =
-            t.ws.iter()
+            t.ws.messages
+                .iter()
                 .map(|m| {
+                    let data = store.ws_payload(t, m);
                     let what = match m.op.as_str() {
                         "close" => m.code.map(|c| c.to_string()).unwrap_or_default(),
-                        "text" => String::from_utf8_lossy(&m.data).into_owned(),
-                        _ => m.data.iter().map(|b| format!("{b:02x}")).collect(),
+                        "text" => String::from_utf8_lossy(&data).into_owned(),
+                        _ => data.iter().map(|b| format!("{b:02x}")).collect(),
                     };
                     format!("{} {} {what}", if m.out { "out" } else { "in" }, m.op)
                 })
@@ -595,14 +597,18 @@ async fn sample_app_end_to_end() {
     // run 1 is still there, untouched
     check_main_run(&mut report, &session.store, main1, "run 1 after the relaunch");
 
-    // another uid (here: the app itself, as another app would) is refused without a byte
-    adb.shell(id, "logcat -c").await.unwrap();
+    // another uid (here: the app itself, as another app would) is refused without a byte. Only the
+    // log after a mark counts: clearing it (until 2026-10-14) also lost the attach test's lines,
+    // which a failed run's device-logs artifact is for
+    let mark = format!("e2e security check {}", std::process::id());
+    adb.shell(id, &format!("log -t TrafficPoliceSample '{mark}'")).await.unwrap();
     adb.shell(id, "am start -n io.trafficpolice.sample/.MainActivity --es run security").await.unwrap();
     let mut verdict = String::new();
     for _ in 0..20 {
         tokio::time::sleep(Duration::from_millis(500)).await;
         let log = adb.shell(id, "logcat -d -s TrafficPoliceSample").await.unwrap().stdout_text();
-        if let Some(line) = log.lines().find(|l| l.contains("security:") || l.contains("SECURITY FAILURE")) {
+        let after = log.rsplit_once(mark.as_str()).map_or("", |(_, rest)| rest);
+        if let Some(line) = after.lines().find(|l| l.contains("security:") || l.contains("SECURITY FAILURE")) {
             verdict = line.to_string();
             break;
         }

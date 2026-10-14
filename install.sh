@@ -100,8 +100,23 @@ spin() {
     return "$status"
 }
 
-mb() { awk -v b="$1" 'BEGIN { printf "%.1f", b / 1048576 }'; }
-rate() { awk -v b="$1" -v s="$2" 'BEGIN { if (s < 1) s = 1; r = b / s; if (r >= 1048576) printf "%.1f MB/s", r / 1048576; else printf "%.0f KB/s", r / 1024 }'; }
+# bytes as MB with one decimal, and bytes over seconds as a speed: in the shell's own arithmetic,
+# since the progress bar asks ten times a second (each awk was a process)
+mb() {
+    mb_tenths=$((($1 * 10 + 524288) / 1048576))
+    printf '%d.%d' $((mb_tenths / 10)) $((mb_tenths % 10))
+}
+rate() {
+    rate_secs=$2
+    if [ "$rate_secs" -lt 1 ]; then rate_secs=1; fi
+    rate_bytes=$(($1 / rate_secs))
+    if [ "$rate_bytes" -ge 1048576 ]; then
+        mb "$rate_bytes"
+        printf ' MB/s'
+    else
+        printf '%d KB/s' $(((rate_bytes + 512) / 1024))
+    fi
+}
 took() {
     if [ "$1" -ge 60 ]; then printf '%dm %02ds' $(($1 / 60)) $(($1 % 60)); else printf '%ds' "$1"; fi
 }
@@ -288,15 +303,20 @@ fetch() {
 }
 
 # bytes of the binary so far: the file once it is there (whole, when it came in parts), else its
-# parts. A size it cannot read counts as nothing: the progress bar must not stop the install.
+# parts, all in one wc (with two files or more, its last line is their total). A file it cannot
+# read counts as nothing: the progress bar must not stop the install.
 got_bytes() {
     if [ -f "$tmp/$asset" ]; then set -- "$tmp/$asset"; else set -- "$tmp/$asset".part*; fi
-    n=0
-    for f in "$@"; do
-        b=$({ wc -c <"$f" | tr -d ' '; } 2>/dev/null)
-        n=$((n + ${b:-0}))
-    done
-    say "$n"
+    wc -c "$@" 2>/dev/null | {
+        n=0
+        while read -r b _; do
+            case "$b" in
+                "" | *[!0-9]*) ;;
+                *) n=$b ;;
+            esac
+        done
+        say "$n"
+    }
 }
 
 sha256() {
@@ -381,12 +401,14 @@ if [ "$fancy" = 1 ]; then
     set -- $frames
     n=$#
     i=0
+    total_mb=""
+    if [ -n "$total" ] && [ "$total" -gt 0 ]; then total_mb=$(mb "$total"); fi
     while kill -0 "$bg" 2>/dev/null; do
         i=$((i % n + 1))
         eval "f=\${$i}"
         got=$(got_bytes)
         secs=$(($(date +%s) - start))
-        if [ -n "$total" ] && [ "$total" -gt 0 ]; then
+        if [ -n "$total_mb" ]; then
             pct=$((got * 100 / total))
             filled=$((pct / 5))
             bar=""
@@ -396,7 +418,7 @@ if [ "$fancy" = 1 ]; then
                 k=$((k + 1))
             done
             printf '\r  %s%s%s %s%-10s%s %s%s%s %3d%%  %s / %s MB  %s' "$cyan" "$f" "$reset" "$bold" Download \
-                "$reset" "$cyan" "$bar" "$reset" "$pct" "$(mb "$got")" "$(mb "$total")" "$(rate "$got" "$secs")"
+                "$reset" "$cyan" "$bar" "$reset" "$pct" "$(mb "$got")" "$total_mb" "$(rate "$got" "$secs")"
         else
             printf '\r  %s%s%s %s%-10s%s %s MB  %s' "$cyan" "$f" "$reset" "$bold" Download "$reset" \
                 "$(mb "$got")" "$(rate "$got" "$secs")"

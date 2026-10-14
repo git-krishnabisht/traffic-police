@@ -830,6 +830,51 @@ fn body_filters_fill_in_from_the_background() {
     assert!(paths.iter().all(|p| *p == "/api/v1/sessions"), "{paths:?}");
 }
 
+/// Typing goes on while the searches of what was typed before run: what they found is not taken
+/// for the new text (up to 0.5.1 it was, by the needle's place, so the requests that have
+/// "darkmode" showed for "darkmodex"), the ones still to run stop, and the new text's wait for
+/// typing to pause.
+#[test]
+fn searches_of_an_earlier_keystroke_do_not_fill_in_the_list() {
+    let mut app = app_at(40.0);
+    let mut term = Terminal::new(TestBackend::new(MEDIUM.0, MEDIUM.1)).unwrap();
+    // drawn as the live loop draws: the searches are not run in line
+    let mut draw = |app: &mut App| {
+        term.draw(|f| ui::draw(f, app)).unwrap();
+    };
+    for k in traffic_police_tui::parse_keys("/body:darkmode<Enter>").unwrap() {
+        app.handle_key(k);
+    }
+    draw(&mut app);
+    let batches = app.take_search_jobs();
+    assert!(!batches.is_empty(), "Enter starts the searches at once");
+    let mut found = Vec::new();
+    for b in batches.clone() {
+        b.run(|r| {
+            found.extend(r);
+            true
+        });
+    }
+    assert!(found.iter().any(|r| r.hit), "some requests have \"darkmode\"");
+    // the results come in after one more key
+    app.handle_key(key('/'));
+    app.handle_key(key('x'));
+    assert!(batches.iter().all(|b| b.ticket.cancelled()), "the searches for \"darkmode\" stop");
+    app.finish_searches(&found);
+    draw(&mut app);
+    assert_eq!(app.view_rows().len(), 0, "no request has \"darkmodex\"");
+    let mut late = Vec::new();
+    batches[0].clone().run(|r| {
+        late.extend(r);
+        true
+    });
+    assert!(late.is_empty(), "a stopped search sends nothing");
+    // while typing, the new text's searches wait
+    assert!(app.take_search_jobs().is_empty());
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert!(!app.take_search_jobs().is_empty());
+}
+
 #[test]
 fn search_in_the_detail_pane_steps_through_matches() {
     let mut app = app_at(40.0);
@@ -883,6 +928,8 @@ fn save_a_body_and_export_har() {
     let body = dir.join("sessions.json");
     app.prompt.as_mut().unwrap().input = tui_input::Input::new(body.display().to_string());
     app.finish_prompt();
+    // written on a worker by the live loop; here in line
+    app.run_jobs_inline();
     let saved = std::fs::read_to_string(&body).unwrap();
     assert!(saved.contains("\"sessionId\""), "{saved}");
 
@@ -891,6 +938,7 @@ fn save_a_body_and_export_har() {
     let har = dir.join("all.har");
     app.prompt.as_mut().unwrap().input = tui_input::Input::new(har.display().to_string());
     app.finish_prompt();
+    app.run_jobs_inline();
     let doc: serde_json::Value = serde_json::from_slice(&std::fs::read(&har).unwrap()).unwrap();
     let entries = doc["log"]["entries"].as_array().unwrap();
     assert_eq!(entries.len(), app.view_store().len());
@@ -899,6 +947,71 @@ fn save_a_body_and_export_har() {
     assert!(init["request"]["postData"]["text"].as_str().unwrap().starts_with('{'));
     assert!(init["_trafficPolice"]["thread"]["name"].is_string());
     assert!(init["timings"]["wait"].as_f64().unwrap() >= 0.0);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// A HAR or session file is written in the background: the UI goes on, and the footer says what
+/// is being written and then how it went. Quitting waits for it; quitting again stops it, and
+/// what it wrote is removed.
+#[test]
+fn exports_are_written_in_the_background_and_quitting_waits_for_them() {
+    let dir = std::env::temp_dir().join(format!("tp-export-test-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut app = app_at(40.0);
+    render_text(&mut app, MEDIUM.0, MEDIUM.1);
+    let keys = |app: &mut App, keys: &str| {
+        // keys only, as the live loop takes them: jobs run on workers there, not in line
+        for k in traffic_police_tui::parse_keys(keys).unwrap() {
+            app.handle_key(k);
+        }
+    };
+    let export_to = |app: &mut App, keys_typed: &str, path: &std::path::Path| {
+        keys(app, keys_typed);
+        app.prompt.as_mut().unwrap().input = tui_input::Input::new(path.display().to_string());
+        app.finish_prompt();
+    };
+    let har = dir.join("all.har");
+    export_to(&mut app, "ea", &har);
+    assert!(!har.exists(), "not written on the UI task");
+    assert!(app.current_message().unwrap_or_default().contains("in the background"), "{:?}", app.current_message());
+    assert_eq!(app.exporting().as_deref(), Some("writing all.har…"));
+    // the same file again, while it is written: not taken
+    export_to(&mut app, "ea", &har);
+    assert!(app.current_message().unwrap_or_default().contains("exists"), "{:?}", app.current_message());
+    app.prompt = None;
+    app.overlay = Overlay::None;
+    // :q waits for it
+    keys(&mut app, ":q<Enter>");
+    assert!(!app.should_quit);
+    assert!(app.current_message().unwrap_or_default().starts_with("quitting once "), "{:?}", app.current_message());
+    app.run_jobs_inline();
+    assert!(app.should_quit, "quits once it is written");
+    let doc: serde_json::Value = serde_json::from_slice(&std::fs::read(&har).unwrap()).unwrap();
+    assert_eq!(doc["log"]["entries"].as_array().unwrap().len(), app.view_store().len());
+    assert!(app.current_message().unwrap_or_default().starts_with("wrote "), "{:?}", app.current_message());
+
+    // quitting twice stops it: no file
+    let mut app = app_at(40.0);
+    let stopped = dir.join("stopped.har");
+    export_to(&mut app, "ea", &stopped);
+    keys(&mut app, ":q<Enter>:q<Enter>");
+    assert!(app.should_quit);
+    app.run_jobs_inline();
+    assert!(!stopped.exists(), "a stopped export leaves no file");
+    assert!(app.current_message().unwrap_or_default().contains("stopped"), "{:?}", app.current_message());
+
+    // one that fails says why, and when quitting waited for it, it does not quit yet
+    let mut app = app_at(40.0);
+    export_to(&mut app, "ea", &dir.join("no/such/dir/x.har"));
+    keys(&mut app, ":q<Enter>");
+    app.run_jobs_inline();
+    let said = app.current_message().unwrap_or_default().to_string();
+    assert!(said.starts_with("cannot write") && said.ends_with("so not quitting yet"), "{said:?}");
+    assert!(!app.should_quit);
+    assert_eq!(app.exporting(), None);
+    keys(&mut app, ":q<Enter>");
+    assert!(app.should_quit, "quitting again quits");
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
@@ -1003,6 +1116,78 @@ fn the_body_box_shows_the_request_body_on_its_second_tab() {
     click(&mut app, r.x + 1, r.y);
     assert_eq!(app.explorer.tab, BodyTab::Response);
     assert_eq!(app.focus, Focus::Preview);
+}
+
+/// The Overview looks for JWTs in bodies that decode to at most 256 KiB. Up to 0.5.1 only the
+/// captured size was checked, so a small gzip that decodes to more was copied and scanned whole,
+/// every frame.
+#[test]
+fn the_overview_looks_for_tokens_in_small_decoded_bodies_only() {
+    use traffic_police_backends::demo::content::gzip;
+    use traffic_police_core::SessionEvent;
+    use traffic_police_core::event::{RequestStarted, ResponseStarted};
+    use traffic_police_core::model::TxnKey;
+    use traffic_police_proto::BodyDir;
+    use traffic_police_tui::detail;
+    let mut app = app_at(5.0);
+    let source = app.store.current_source().unwrap().id;
+    let at = app.store.latest();
+    let jwt = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1XzEifQ.c2ln";
+    let mut request = |txn: u64, body: bytes::Bytes, gzipped: bool| {
+        let key = TxnKey { source, txn };
+        let mut headers = vec![("content-type".to_string(), "application/json".to_string())];
+        if gzipped {
+            headers.push(("content-encoding".into(), "gzip".into()));
+        }
+        let len = body.len() as u64;
+        app.ingest(vec![
+            SessionEvent::Request(Box::new(RequestStarted {
+                key,
+                at,
+                call: None,
+                hop: 0,
+                method: "GET".into(),
+                url: format!("https://api.example.app/token/{txn}"),
+                headers: Vec::new(),
+                client: None,
+                thread: None,
+                stack: Vec::new(),
+                stack_truncated: false,
+                body: None,
+                marks: Vec::new(),
+                conn: None,
+            })),
+            SessionEvent::Response(Box::new(ResponseStarted {
+                key,
+                at,
+                status: 200,
+                message: "OK".into(),
+                protocol: None,
+                headers,
+                conn: None,
+            })),
+            SessionEvent::Body { key, dir: BodyDir::Response, at, offset: 0, bytes: body },
+            SessionEvent::BodyEnd {
+                key,
+                dir: BodyDir::Response,
+                at,
+                total: len,
+                captured: len,
+                state: "complete".into(),
+                decoded: false,
+            },
+            SessionEvent::Completed { key, at },
+        ]);
+        app.store.find(key).unwrap()
+    };
+    let small = request(900_001, format!("{{\"token\":\"{jwt}\"}}").into(), false);
+    let padded = format!("{{\"token\":\"{jwt}\",\"pad\":\"{}\"}}", "a".repeat(300 << 10));
+    let big = request(900_002, gzip(padded.as_bytes()), true);
+    assert!(app.store.txn(big).resp_body.captured < 4 << 10, "small as captured");
+    for (txn, found) in [(small, 1), (big, 0), (small, 1)] {
+        app.select_txn(txn);
+        assert_eq!(detail::build_doc(&mut app).tokens.len(), found, "request {txn}");
+    }
 }
 
 #[test]
@@ -1465,11 +1650,12 @@ fn a_websocket_lists_its_messages_and_enter_opens_one() {
     assert!(has("↓ +", &["text", "\"state\":\"delivered\""]), "{lines:#?}");
     assert!(has("↑ +", &["close", "1000 left the orders screen"]), "{lines:#?}");
     assert!(has("↓ +", &["close", "1000 bye"]), "{lines:#?}");
-    assert_eq!(doc.messages.len(), 8);
+    // the rows after the headers are the messages
+    assert!(doc.messages && doc.body_len == 8);
+    let row = doc.head.len();
+    assert!(matches!(doc.row(row), Some(traffic_police_tui::detail::DocRow::Message(0))));
 
     // Enter on the first message (the subscription the app sent) opens its payload
-    let (row, i) = doc.messages[0];
-    assert_eq!(i, 0);
     let text = press(&mut app, MEDIUM, &format!("g{}<Enter>", "j".repeat(row)));
     assert_eq!(app.overlay, Overlay::Decoded, "{text}");
     assert!(text.contains("message 1 · sent text"), "{text}");

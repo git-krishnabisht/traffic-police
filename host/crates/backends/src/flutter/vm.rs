@@ -1,9 +1,15 @@
 //! The Dart VM service's JSON-RPC 2.0 over [`super::ws`]: calls with string ids, and the
 //! `streamNotify` events that arrive between replies, kept for the caller.
+//!
+//! A message is first read for what it is (its method, id and error, the rest skipped), and only
+//! a call's own reply is read whole, by the caller's reader: a reply can hold a body of tens of
+//! megabytes as an array of numbers, which as JSON values (with `preserve_order`, about 80
+//! bytes each) would take gigabytes.
 
 use std::collections::VecDeque;
 use std::time::Duration;
 
+use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::ws::{Connected, WebSocket};
@@ -29,6 +35,30 @@ impl std::fmt::Display for RpcError {
             RpcError::Io(e) => write!(f, "{e}"),
         }
     }
+}
+
+/// What a message is: an event, or the reply to a call (what it holds is not read).
+#[derive(Deserialize)]
+struct Envelope {
+    #[serde(default)]
+    method: Option<String>,
+    #[serde(default)]
+    id: Option<Value>,
+    #[serde(default)]
+    error: Option<Value>,
+}
+
+impl Envelope {
+    fn is_event(&self) -> bool {
+        self.method.as_deref() == Some("streamNotify")
+    }
+}
+
+/// A reply's result, read as `T`.
+#[derive(Deserialize)]
+struct Reply<T> {
+    #[serde(default = "Option::default")]
+    result: Option<T>,
 }
 
 /// One connection to the VM service (or to DDS in front of it).
@@ -80,6 +110,21 @@ impl Vm {
 
     /// Calls `method`; events that arrive meanwhile are kept (see [`Vm::take_events`]).
     pub async fn call(&mut self, method: &str, params: Value, timeout: Duration) -> Result<Value, RpcError> {
+        self.call_with(method, params, timeout, |reply| {
+            serde_json::from_str::<Reply<Value>>(reply).map(|r| r.result.unwrap_or(Value::Null))
+        })
+        .await
+    }
+
+    /// Calls `method`, reading its reply (the whole message, `{"jsonrpc", "id", "result"}`)
+    /// with `read`; events that arrive meanwhile are kept.
+    pub async fn call_with<T>(
+        &mut self,
+        method: &str,
+        params: Value,
+        timeout: Duration,
+        read: impl FnOnce(&str) -> serde_json::Result<T>,
+    ) -> Result<T, RpcError> {
         let id = format!("tp{}", self.next_id);
         self.next_id += 1;
         let request = json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params });
@@ -92,23 +137,26 @@ impl Vm {
                 Ok(Ok(None)) => return Err(RpcError::Closed),
                 Ok(Ok(Some(t))) => t,
             };
-            let Ok(v) = serde_json::from_str::<Value>(&text) else { continue };
-            if v.get("method").and_then(Value::as_str) == Some("streamNotify") {
-                self.events.push_back(v);
+            let Ok(m) = serde_json::from_str::<Envelope>(&text) else { continue };
+            if m.is_event() {
+                if let Ok(v) = serde_json::from_str::<Value>(&text) {
+                    self.events.push_back(v);
+                }
                 continue;
             }
             // a late reply to a call that timed out is dropped
-            if v.get("id").and_then(Value::as_str) != Some(id.as_str()) {
+            if m.id.as_ref().and_then(Value::as_str) != Some(id.as_str()) {
                 continue;
             }
-            if let Some(e) = v.get("error") {
+            if let Some(e) = m.error {
                 return Err(RpcError::Rpc(
                     e["code"].as_i64().unwrap_or(0),
                     e["message"].as_str().unwrap_or("error").to_string(),
                     e["data"]["details"].as_str().map(str::to_string),
                 ));
             }
-            return Ok(v.get("result").cloned().unwrap_or(Value::Null));
+            // JSON-RPC's code for a reply that does not parse
+            return read(&text).map_err(|e| RpcError::Rpc(-32700, format!("the reply did not read: {e}"), None));
         }
     }
 
@@ -121,8 +169,9 @@ impl Vm {
             Err(_) => Ok(None),
             Ok(Err(e)) => Err(RpcError::Io(e.to_string())),
             Ok(Ok(None)) => Err(RpcError::Closed),
-            Ok(Ok(Some(t))) => match serde_json::from_str::<Value>(&t) {
-                Ok(v) if v.get("method").and_then(Value::as_str) == Some("streamNotify") => Ok(Some(v)),
+            // anything else is a late reply, read no further
+            Ok(Ok(Some(t))) => match serde_json::from_str::<Envelope>(&t) {
+                Ok(m) if m.is_event() => Ok(serde_json::from_str::<Value>(&t).ok()),
                 _ => Ok(None),
             },
         }

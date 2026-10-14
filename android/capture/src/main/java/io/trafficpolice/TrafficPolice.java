@@ -68,7 +68,6 @@ public final class TrafficPolice {
         return WebSockets.newWebSocket(client, request, listener);
     }
 
-    /** Records this connection's exchange; returns it unchanged when capture is not running. */
     /**
      * gRPC (grpc-java 1.21 and newer): add it to a channel first, so it runs last and sees the
      * headers the channel's other interceptors add. Each call is one row: its messages as the
@@ -78,6 +77,7 @@ public final class TrafficPolice {
         return io.trafficpolice.capture.grpc.CaptureClientInterceptor.INSTANCE;
     }
 
+    /** Records this connection's exchange; returns it unchanged when capture is not running. */
     public static HttpURLConnection wrap(HttpURLConnection connection) {
         return Huc.wrap(connection);
     }
@@ -99,5 +99,15 @@ public final class TrafficPolice {
     /** Whether capture is running in this process. */
     public static boolean isActive() {
         return CaptureRuntime.current() != null;
+    }
+
+    /**
+     * How much the runtime keeps for a traffic-police that connects later: the last
+     * {@code requests} requests, in at most {@code bytes} of memory (by default 1,000 and 32 MB;
+     * {@code buffer(0, 0)} keeps none). Call it first in {@code Application.onCreate} (in other
+     * processes, before {@link #start}); what was kept before goes down to the new limits.
+     */
+    public static void buffer(int requests, long bytes) {
+        AndroidRuntime.buffer(requests, bytes);
     }
 }

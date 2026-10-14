@@ -60,14 +60,7 @@ public final class CaptureInterceptor implements Interceptor {
         StudioDetector.sample(rt);
         if (!rt.recorder().recording()) {
             // paused: rules still apply (PROTOCOL.md §6); nothing is recorded
-            if (rules == null) {
-                return chain.proceed(request);
-            }
-            rules.beforeRequest(null, OkHttpRules.cancel(chain.call()));
-            Response response = chain.proceed(request);
-            return rules.editsResponse() && !isUpgrade(request, response)
-                    ? OkHttpRules.apply(rules, request, response, null, chain.call(), false)
-                    : response;
+            return rules == null ? chain.proceed(request) : paused(rt, rules, chain, request);
         }
         CallState state = null;
         Txn txn = null;
@@ -98,6 +91,9 @@ public final class CaptureInterceptor implements Interceptor {
                 // a simulated failure is recorded already; a delay cut short by a cancel is not
                 fail(rt, state, txn, chain, e);
                 throw e;
+            } catch (Throwable t) {
+                // ours: the request goes out as without rules
+                rt.internalError("okhttp.rules", t);
             }
         }
         Response response;
@@ -124,6 +120,39 @@ public final class CaptureInterceptor implements Interceptor {
                 // failing anyway
             }
             fail(rt, state, txn, chain, e);
+            throw e;
+        } catch (Throwable t) {
+            rt.internalError("okhttp.response", t);
+            return response;
+        }
+    }
+
+    /**
+     * A paused request with rules: their delay or failure, then their response actions, recording
+     * nothing. Only a rule's failure and the network's own exceptions reach the app; a failure of
+     * ours is reported and the request goes on as without rules (as when recording).
+     */
+    private static Response paused(CaptureRuntime rt, RuleRun rules, Chain chain, Request request)
+            throws IOException {
+        try {
+            rules.beforeRequest(null, OkHttpRules.cancel(chain.call()));
+        } catch (IOException e) {
+            throw e; // the rule's failure, or a delay cut short by a cancel
+        } catch (Throwable t) {
+            rt.internalError("okhttp.rules", t);
+        }
+        Response response = chain.proceed(request);
+        try {
+            return rules.editsResponse() && !isUpgrade(request, response)
+                    ? OkHttpRules.apply(rules, request, response, null, chain.call(), false)
+                    : response;
+        } catch (IOException e) {
+            // reading the original body for a rule failed: the app sees it as the network's failure
+            try {
+                response.close();
+            } catch (Throwable ignored) {
+                // failing anyway
+            }
             throw e;
         } catch (Throwable t) {
             rt.internalError("okhttp.response", t);

@@ -8,8 +8,10 @@
 //! (`getHttpProfileRequest`) and sent, then `done` or `fail`.
 
 use std::collections::{HashMap, HashSet};
+use std::fmt;
 
 use bytes::Bytes;
+use serde::de::{self, DeserializeSeed, Deserializer, IgnoredAny, MapAccess, SeqAccess, Visitor};
 use serde_json::Value;
 use traffic_police_proto::BodyDir;
 use traffic_police_proto::frame::{BodyChunk, Frame, MAX_CHUNK_BYTES};
@@ -29,6 +31,145 @@ struct Entry {
     /// Its bodies were asked for; it is finished once they are in.
     ending: bool,
     finished: bool,
+}
+
+/// A body as `getHttpProfileRequest` sends it, a JSON array of byte values, read straight into
+/// bytes: the first `cap` kept, all of them counted. Up to 0.5.1 the array was read into JSON
+/// values first (about 80 bytes a byte with `preserve_order`) and copied once more before the
+/// cap applied, so a 30 MB download took gigabytes of the host's memory.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Body {
+    /// The bytes kept (at most the cap).
+    pub bytes: Vec<u8>,
+    /// How many the body has.
+    pub len: u64,
+}
+
+/// An entry as `getHttpProfileRequest` returns it: the entry (as JSON) without its bodies, and
+/// the bodies.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Full {
+    pub entry: Value,
+    pub request_body: Body,
+    pub response_body: Body,
+}
+
+impl Full {
+    /// An entry whose bodies could not be fetched.
+    pub fn without_bodies(entry: &Value) -> Full {
+        Full { entry: entry.clone(), ..Full::default() }
+    }
+}
+
+/// Reads `getHttpProfileRequest`'s reply (`{"jsonrpc", "id", "result": {…}}`), keeping at most
+/// `caps` bytes of the request and of the response body; `None` without a result.
+pub fn read_full(reply: &str, caps: (usize, usize)) -> serde_json::Result<Option<Full>> {
+    let mut de = serde_json::Deserializer::from_str(reply);
+    let full = ReplySeed(caps).deserialize(&mut de)?;
+    de.end()?;
+    Ok(full)
+}
+
+/// The reply: its `result`, the rest skipped.
+struct ReplySeed((usize, usize));
+
+impl<'de> DeserializeSeed<'de> for ReplySeed {
+    type Value = Option<Full>;
+
+    fn deserialize<D: Deserializer<'de>>(self, d: D) -> Result<Self::Value, D::Error> {
+        d.deserialize_map(self)
+    }
+}
+
+impl<'de> Visitor<'de> for ReplySeed {
+    type Value = Option<Full>;
+
+    fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("a JSON-RPC reply")
+    }
+
+    fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+        let mut full = None;
+        while let Some(key) = map.next_key::<String>()? {
+            if key == "result" {
+                full = Some(map.next_value_seed(EntrySeed(self.0))?);
+            } else {
+                map.next_value::<IgnoredAny>()?;
+            }
+        }
+        Ok(full)
+    }
+}
+
+/// The entry: `requestBody` and `responseBody` as [`Body`]s, the rest as JSON.
+struct EntrySeed((usize, usize));
+
+impl<'de> DeserializeSeed<'de> for EntrySeed {
+    type Value = Full;
+
+    fn deserialize<D: Deserializer<'de>>(self, d: D) -> Result<Self::Value, D::Error> {
+        d.deserialize_map(self)
+    }
+}
+
+impl<'de> Visitor<'de> for EntrySeed {
+    type Value = Full;
+
+    fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("an HTTP profile entry")
+    }
+
+    fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+        let (request_cap, response_cap) = self.0;
+        let mut entry = serde_json::Map::new();
+        let mut full = Full::default();
+        while let Some(key) = map.next_key::<String>()? {
+            match key.as_str() {
+                "requestBody" => full.request_body = map.next_value_seed(BodySeed(request_cap))?,
+                "responseBody" => full.response_body = map.next_value_seed(BodySeed(response_cap))?,
+                _ => {
+                    let v = map.next_value::<Value>()?;
+                    entry.insert(key, v);
+                }
+            }
+        }
+        full.entry = Value::Object(entry);
+        Ok(full)
+    }
+}
+
+/// A body's array of byte values (or null), the first `.0` kept.
+struct BodySeed(usize);
+
+impl<'de> DeserializeSeed<'de> for BodySeed {
+    type Value = Body;
+
+    fn deserialize<D: Deserializer<'de>>(self, d: D) -> Result<Self::Value, D::Error> {
+        d.deserialize_any(self)
+    }
+}
+
+impl<'de> Visitor<'de> for BodySeed {
+    type Value = Body;
+
+    fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("an array of byte values")
+    }
+
+    fn visit_unit<E: de::Error>(self) -> Result<Body, E> {
+        Ok(Body::default())
+    }
+
+    fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Body, A::Error> {
+        let mut body = Body { bytes: Vec::with_capacity(seq.size_hint().unwrap_or(0).min(self.0)), len: 0 };
+        while let Some(b) = seq.next_element::<u64>()? {
+            if body.bytes.len() < self.0 {
+                body.bytes.push(b as u8);
+            }
+            body.len += 1;
+        }
+        Ok(body)
+    }
 }
 
 /// Turns profile entries into frames.
@@ -283,6 +424,14 @@ impl Translator {
         ended
     }
 
+    /// What of each body (request, response) a fetch keeps: the capture cap, or nothing for a
+    /// direction not captured (its size is still counted).
+    pub fn body_caps(&self) -> (usize, usize) {
+        let cap = usize::try_from(self.capture.body_cap).unwrap_or(usize::MAX);
+        let of = |on: bool| if on { cap } else { 0 };
+        (of(self.capture.capture_request_bodies), of(self.capture.capture_response_bodies))
+    }
+
     /// The bytes of one body as frames: in the capture cap, the rest counted. Returns what was
     /// captured.
     fn body(&mut self, txn: u64, dir: BodyDir, ts: u64, bytes: &[u8], capture: bool, out: &mut Vec<Frame>) -> u64 {
@@ -337,9 +486,10 @@ impl Translator {
         }))
     }
 
-    /// The entry as `getHttpProfileRequest` returns it (with `requestBody` and `responseBody`):
-    /// its bodies, then `done` or `fail`. `full` may lack the bodies (they could not be fetched).
-    pub fn finish(&mut self, full: &Value, out: &mut Vec<Frame>) {
+    /// The entry as `getHttpProfileRequest` returns it, with its bodies (see [`read_full`]):
+    /// its bodies, then `done` or `fail`. The bodies may be missing (they could not be fetched).
+    pub fn finish(&mut self, f: &Full, out: &mut Vec<Frame>) {
+        let full = &f.entry;
         let (Some(isolate), Some(id)) = (full["isolateId"].as_str(), full["id"].as_str()) else { return };
         let key = (isolate.to_string(), id.to_string());
         let Some(en) = self.entries.get(&key) else { return };
@@ -356,13 +506,9 @@ impl Translator {
         let response = &full["response"];
         let start = full["startTime"].as_i64().unwrap_or(0);
         let req_at = self.ts(full["endTime"].as_i64().unwrap_or(start));
-        let bytes = |v: &Value| -> Vec<u8> {
-            v.as_array().map(|a| a.iter().filter_map(|b| b.as_u64().map(|b| b as u8)).collect()).unwrap_or_default()
-        };
-        let req_body = bytes(&full["requestBody"]);
         let capture_req = self.capture.capture_request_bodies;
-        let got = self.body(txn, BodyDir::Request, req_at, &req_body, capture_req, out);
-        let end = self.body_end(txn, BodyDir::Request, req_at, req_body.len() as u64, got, capture_req, false);
+        let got = self.body(txn, BodyDir::Request, req_at, &f.request_body.bytes, capture_req, out);
+        let end = self.body_end(txn, BodyDir::Request, req_at, f.request_body.len, got, capture_req, false);
         out.push(end);
 
         let resp_at = self.ts(response["endTime"].as_i64().or(response["startTime"].as_i64()).unwrap_or(start));
@@ -372,13 +518,11 @@ impl Translator {
         let upgraded = response["statusCode"].as_u64() == Some(101)
             && response_error.as_deref().is_some_and(|e| e.contains("detached") || e.contains("upgraded"));
         if response["statusCode"].as_u64().is_some() {
-            let resp_body = bytes(&full["responseBody"]);
             let capture_resp = self.capture.capture_response_bodies;
-            let got = self.body(txn, BodyDir::Response, resp_at, &resp_body, capture_resp, out);
+            let got = self.body(txn, BodyDir::Response, resp_at, &f.response_body.bytes, capture_resp, out);
             let state = response["compressionState"].as_str().unwrap_or_default();
             let decoded = state.ends_with("decompressed");
-            let end =
-                self.body_end(txn, BodyDir::Response, resp_at, resp_body.len() as u64, got, capture_resp, decoded);
+            let end = self.body_end(txn, BodyDir::Response, resp_at, f.response_body.len, got, capture_resp, decoded);
             out.push(end);
         }
         let seq = self.next_seq();
@@ -423,6 +567,12 @@ mod tests {
     use super::*;
     use serde_json::json;
     use traffic_police_proto::msg::parse_device;
+
+    /// `entry` as `getHttpProfileRequest` would return it, read as the backend reads it.
+    fn fetched(t: &Translator, entry: &Value) -> Full {
+        let reply = json!({ "jsonrpc": "2.0", "id": "tp7", "result": entry }).to_string();
+        read_full(&reply, t.body_caps()).unwrap().expect("a result")
+    }
 
     fn msgs(frames: &[Frame]) -> Vec<String> {
         frames
@@ -501,7 +651,7 @@ mod tests {
         let mut full = answered.clone();
         full["requestBody"] = json!([]);
         full["responseBody"] = json!([123, 34, 105, 100, 34, 58, 49, 125]);
-        t.finish(&full, &mut out);
+        t.finish(&fetched(&t, &full), &mut out);
         assert_eq!(
             msgs(&out),
             ["body_end \"request\" none 0", "chunk Response 8", "body_end \"response\" complete 8", "done"]
@@ -520,7 +670,7 @@ mod tests {
             "request": { "error": "SocketException: Failed host lookup: 'nope.invalid'" } });
         let mut out = Vec::new();
         assert!(t.update(&failed, &mut out));
-        t.finish(&failed, &mut out);
+        t.finish(&Full::without_bodies(&failed), &mut out);
         assert_eq!(msgs(&out), ["req", "mark req_body_end", "body_end \"request\" none 0", "fail"]);
         let Frame::Json(j) = out.last().unwrap() else { panic!() };
         let DeviceMsg::Fail(f) = parse_device(j).unwrap() else { panic!() };
@@ -531,7 +681,7 @@ mod tests {
             "response": { "statusCode": 101, "startTime": 1800, "endTime": 1900, "error": "Socket has been detached", "headers": {} } });
         out.clear();
         assert!(t.update(&upgrade, &mut out));
-        t.finish(&upgrade, &mut out);
+        t.finish(&fetched(&t, &upgrade), &mut out);
         assert_eq!(msgs(&out).last().unwrap(), "done");
     }
 
@@ -547,7 +697,7 @@ mod tests {
         let mut out = Vec::new();
         assert!(t.update(&e, &mut out));
         out.clear();
-        t.finish(&e, &mut out);
+        t.finish(&fetched(&t, &e), &mut out);
         assert_eq!(
             msgs(&out),
             [
@@ -558,5 +708,28 @@ mod tests {
                 "done"
             ]
         );
+    }
+
+    /// A body arrives as an array of numbers, about four bytes of JSON a byte: it is read straight
+    /// into bytes up to the cap and counted past it, and nothing of it stays in the entry.
+    #[test]
+    fn bodies_are_read_as_bytes_up_to_the_cap() {
+        let cfg = CaptureConfig { body_cap: 1 << 20, capture_request_bodies: false, ..CaptureConfig::default() };
+        let t = Translator::new(0, cfg, None);
+        let body: Vec<u8> = (0..3 << 20).map(|i: u32| (i % 251) as u8).collect();
+        let entry = json!({ "id": "9", "isolateId": "isolates/1", "method": "POST", "uri": "http://10.0.2.2:8080/up",
+            "requestBody": [1, 2, 3], "responseBody": body, "response": { "statusCode": 200 } });
+        let full = fetched(&t, &entry);
+        assert_eq!(full.response_body.len, 3 << 20);
+        assert_eq!(full.response_body.bytes.len(), 1 << 20);
+        assert_eq!(full.response_body.bytes[..], body[..1 << 20]);
+        assert_eq!(full.request_body, Body { bytes: Vec::new(), len: 3 }, "not captured, still counted");
+        assert!(full.entry.get("responseBody").is_none() && full.entry["response"]["statusCode"] == 200);
+        // null bodies, no result, and a body that is no array of numbers
+        let reply = r#"{"jsonrpc":"2.0","id":"tp1","result":{"id":"1","requestBody":null}}"#;
+        assert_eq!(read_full(reply, (10, 10)).unwrap().unwrap().request_body, Body::default());
+        assert_eq!(read_full(r#"{"jsonrpc":"2.0","id":"tp1"}"#, (10, 10)).unwrap(), None);
+        assert!(read_full(r#"{"result":{"responseBody":["x"]}}"#, (10, 10)).is_err());
+        assert!(read_full(r#"{"result":{"responseBody":[1]}} x"#, (10, 10)).is_err());
     }
 }

@@ -128,6 +128,7 @@ Shared value types:
 ```
 
 - Chunks of one body are sent in increasing `offset` order. A gap (the next `offset` is larger than the bytes received so far) means chunks were dropped on the device; the host marks the body with a gap.
+- A chunk may hold the bytes of several short writes: the device gathers writes shorter than this header (byte-at-a-time reads, say) into chunks of up to 8 KiB, for about 50 ms at most. Its `ts` is then when the first of them was written or read.
 - `dir = 0` bytes are exactly what went to the wire as the request body: what the `RequestBody` wrote for OkHttp (compressed only if the app opted in, e.g. OkHttp 5's `Request.Builder.gzip()`, in which case the request headers carry `Content-Encoding` and the host decodes it), and what the app wrote to the output stream for HttpURLConnection.
 - `dir = 1` bytes are the response body **as it came off the wire for OkHttp** (still Content-Encoded, because network interceptors run below OkHttp's transparent gzip), and **as returned by the input stream for HttpURLConnection** (which already removed its own transparent gzip). The host decodes according to the headers of the same direction.
 - `dir = 2` bytes are the rewritten body the app actually received. It is never Content-Encoded (the rule engine removes `Content-Encoding`, §8.4).
@@ -158,11 +159,11 @@ host                                   device
 ```
 
 - The device sends `hello` immediately after accepting. The host MUST answer with `hello_ack` within 10 s or the device closes the connection.
-- **Replay.** The device keeps a ring buffer of recent events (default: the last 1,000 transactions or 32 MiB of body bytes, whichever limit is reached first; whole transactions are evicted, oldest first). After `hello_ack`, it sends `replay { phase: "begin" }`, every buffered event with `seq > resume_after_seq` in original order, then `replay { phase: "end" }`, then live events. Replayed frames keep their original `seq` and `ts`.
+- **Replay.** The device keeps a ring buffer of recent events (default: the last 1,000 transactions or 32 MiB of memory, whichever limit is reached first; whole transactions are evicted, oldest first; the app can set other limits, and `hello.buffer` has them). The memory counted is every kept frame's bytes, headers and stack frames included, plus a fixed overhead per frame and per transaction (until 0.5.1 only body bytes counted, so a body read one byte at a time took about 100 times the limit). After `hello_ack`, it sends `replay { phase: "begin" }`, every buffered event with `seq > resume_after_seq` in original order, then `replay { phase: "end" }`, then live events. Replayed frames keep their original `seq` and `ts`.
 - **Resume.** A host reconnecting to the same `instance` sets `resume_after_seq` to the last `seq` it stored, so only newer events are replayed. The host still discards any event whose `seq` it has already applied.
 - **Partial transactions.** Because eviction happens per transaction, a host can still receive events for a transaction whose `req` it never saw (evicted before it connected, or dropped). The host MUST create a placeholder ("start not captured") rather than discard them.
 - **Keep-alive.** The host sends `ping` every 5 s. If no frame at all arrives for 15 s after a ping, the host treats the connection as dead (a stuck forward) and reconnects. The device needs no keep-alive.
-- **Backpressure and loss.** App threads never block on the socket. Events go into a bounded queue (default 8 MiB) drained by one writer thread; on overflow the oldest queued events are dropped and counted, and a `dropped` event is sent when the writer catches up. Events that reached the ring buffer are never reported as dropped; eviction from the ring is normal ageing.
+- **Backpressure and loss.** App threads never block on the socket. Events go into a bounded queue (default 8 MiB, by each event's estimated memory: what it holds, headers, stack frames and bytes included) drained by one writer thread; on overflow the oldest queued events are dropped and counted, and a `dropped` event is sent when the writer catches up. Events that reached the ring buffer are never reported as dropped; eviction from the ring is normal ageing.
 - **Recording paused** (`set_config { recording: false }`): the runtime stops creating transactions. Transactions already in flight finish normally. Rules keep applying.
 - **Closing.** Either side MAY send `bye` before closing. The device keeps capturing into the ring buffer after a client disconnects. The rules that connection sent stop applying, so the app behaves normally again once traffic-police quits; when another host has taken over, its rules stay.
 
@@ -409,6 +410,8 @@ Codes defined in v1: `started`, `hook_installed`, `hook_failed`, `hook_other_loa
 }
 ```
 
+`buffer` is the replay ring (§6): its limits (`max_txns`; `max_body_bytes`, the memory limit, which counts frames and their overhead), how many transactions it keeps, and their body bytes (`body_bytes`, never more than `max_body_bytes`).
+
 Hook `status` values (attach mode): `installed` (class instrumented), `pending` (class not loaded yet; the load hook will instrument it), `class_not_found`, `method_not_found` (typically R8-renamed OkHttp), `failed` (retransform error; `detail` has the JVMTI error name), `other_loader` (a copy in a second class loader was left alone). `hits` counts calls through the hook, which tells "installed but never used" apart from "not installed". Updates after `hello` arrive as `diag` events with codes `hook_installed` / `hook_failed`.
 
 Capabilities in v1:
@@ -556,7 +559,7 @@ id = "stub-config"
   content_type = "application/json"      # optional; replaces Content-Type when given
 ```
 
-The host checks the file before it sends anything, and reports each problem with its line: `version` must be 1; keys it does not know, and fields that belong to another action type, are mistakes; ids are unique; `delay` takes 0 to 600,000 ms; `status` takes 100 to 599, and without `reason` the standard phrase is used (empty when the code has none); header names are tokens and values printable ASCII (OkHttp refuses others); a body has exactly one of `text`, `base64` and `file`; `replace` needs a non-empty `find`, and a `regex` one must compile (§8.3). A file with problems is not used: the rules that were active stay active. A `file` is read when the rules are, and inlined (as text when it is UTF-8, else base64); traffic-police watches it with `rules.toml`, in the UI and in `tail`, `record` and `export --live`, so saving either sends the rules again (ARCHITECTURE.md §5.11).
+The host checks the file before it sends anything, and reports each problem with its line: `version` must be 1; keys it does not know, and fields that belong to another action type, are mistakes; ids are unique; `delay` takes 0 to 600,000 ms; `status` takes 100 to 599, and without `reason` the standard phrase is used (empty when the code has none); header names are tokens and values printable ASCII (OkHttp refuses others); a body has exactly one of `text`, `base64` and `file`; `replace` needs a non-empty `find`, and a `regex` one must compile (§8.3); and the rules, with their bodies inlined, come to at most 15 MiB, since they travel in one frame (§3: 16 MiB). A file with problems is not used: the rules that were active stay active. A `file` is read when the rules are, and inlined (as text when it is UTF-8, else base64); traffic-police watches it with `rules.toml`, in the UI and in `tail`, `record` and `export --live`, so saving either sends the rules again (ARCHITECTURE.md §5.11).
 
 ### 8.2 Wire form
 
@@ -665,12 +668,13 @@ Frame types inside the gzip stream:
 | 17 | JSON `{"t":"source", "source":N, "device":{"label":…, "serial":…}, "hello":{…the hello as received…}, "resumed":false}` — source N starts: a process the host connected to. `"resumed":true` means the host reconnected to the same process (same `instance`) and kept the source; the frames that follow continue it. The short form `{"t":"source", "source":N}` switches back to a source already started. Device frames belong to the source of the latest type-17 frame |
 | 18 | JSON `{"t":"source_end", "source":N, "ts":…, "reason":"the app exited"}` — `reason` is text for people |
 | 19 | JSON `{"t":"annotations", "pins":[{"source":N,"txn":T}], "markers":[{"at":…,"kind":"pause","label":…}], "notes":{}}` — written when a recording finishes; may repeat, and the last one wins. Marker kinds: `pause`, `resume`, `note` |
-| 20 | JSON `{"t":"log", "info":{"device":…, "package":…, "uid":…, "processes":[[pid, name], …]}, "lines":[[ts, wall_ms, pid, tid, uid, level, buffer, tag, message], …]}` — the device's log (Logdawg, ARCHITECTURE.md 5.17), before the annotations: `info` in the first frame, then lines in batches of up to 2,000. `ts` is the device time of the requests, `uid` may be null, `level` is logcat's letter (`V` … `A`), `buffer` logcat's id. Readers skip a line that is not one; readers before type 20 skip the frames |
+| 20 | JSON `{"t":"log", "info":{"device":…, "package":…, "uid":…, "processes":[[pid, name], …]}, "lines":[[ts, wall_ms, pid, tid, uid, level, buffer, tag, message], …]}` — the device's log (Logdawg, ARCHITECTURE.md 5.17), before the annotations: `info` in the first frame, then lines in batches of up to 2,000 lines and 4 MiB. `ts` is the device time of the requests, `uid` may be null, `level` is logcat's letter (`V` … `A`), `buffer` logcat's id. Readers skip a line that is not one; readers before type 20 skip the frames |
 
 - Source numbers are the writing host's; a reader gives sources its own numbers (pins are mapped along).
 - The log (type 20) comes from the UI's `e` menu: all of it, or with some requests the lines from the first one's start to the last one's end.
 - A file saved from the UI's `e` menu, or by `traffic-police record --filter`, may hold only some requests: it keeps every source record and every frame that belongs to no request (clock, traffic, diagnostics), and only the chosen requests' frames.
 - A reader keeps everything before a truncated gzip stream or frame, and says the recording was cut short (a crash, or a full disk).
+- traffic-police reads the stream a piece at a time and stops after 4 GiB of it inflated (gzip can inflate a thousand times, so a small file could hold far more), keeping what came before and saying the file holds more.
 - Nothing is redacted: session files hold exactly what was captured (ARCHITECTURE.md 9.2).
 - Writers flush the gzip stream at least every 5 s during `traffic-police record`, so a crash loses little.
 - HAR files are imported by a separate reader that synthesizes the same events for a `har` source; threads, stacks and failures come back only from the `_trafficPolice` fields traffic-police writes (ARCHITECTURE.md 5.10).
