@@ -233,9 +233,10 @@ over, and the first shows DETACHED.
 
 **What you see:** every OkHttp request that reaches the network, with the headers as sent on
 the wire (including the ones OkHttp adds), bodies as transferred (gzip, brotli and zstd are
-decoded for display), one row per network attempt (a redirect is two rows, the second marked
-`↪`), the timing phases, and the thread and call stack that made the call; plus the
-HttpURLConnection connections you wrap, and the WebSockets you open with
+decoded for display; of a body longer than 32 MB decoded, or of more than a million lines, the
+start is shown, and `w` saves all of it), one row per network attempt (a redirect is two rows,
+the second marked `↪`), the timing phases, and the thread and call stack that made the call;
+plus the HttpURLConnection connections you wrap, and the WebSockets you open with
 `TrafficPolice.newWebSocket` (a `ws` row: the Response tab lists every message, and Enter opens
 one). **Not captured in library mode:** responses OkHttp serves from its cache (they never reach
 the network), other HTTP stacks (Cronet, Ktor engines other than OkHttp, ...), gRPC channels

@@ -1,7 +1,8 @@
 //! Frame time with 50,000 transactions (ARCHITECTURE.md §6: at most 33 ms on average, target
 //! under 8 ms, and no frame over [`WORST_FRAME`]): the views, groups of up to 50,000 repeats, a
 //! `body:` filter typed while its searches run, a HAR written in the background, data coming in;
-//! and with half a million lines of the device's log in Logdawg.
+//! with half a million lines of the device's log in Logdawg; and with bodies that are large or
+//! decode large.
 //!
 //! Ignored by default because it is only meaningful in release builds:
 //! `cargo test --release -p traffic-police-tui --test perf -- --ignored --nocapture`
@@ -17,11 +18,11 @@ use traffic_police_backends::demo::DemoSession;
 use traffic_police_core::SessionEvent;
 use traffic_police_core::event::{RequestStarted, ResponseStarted};
 use traffic_police_core::fmt::{NS_PER_MS, NS_PER_SEC};
-use traffic_police_core::model::TxnKey;
+use traffic_police_core::model::{TxnIdx, TxnKey};
 use traffic_police_core::rows::Row;
 use traffic_police_proto::BodyDir;
 use traffic_police_proto::msg::{ClientInfo, StackFrame, ThreadInfo};
-use traffic_police_tui::app::SearchResult;
+use traffic_police_tui::app::{Focus, SearchResult, Tab};
 use traffic_police_tui::terminal::{INGEST_PER_TURN, ingest_waiting};
 use traffic_police_tui::{App, parse_keys, render_keys, render_text, ui};
 
@@ -437,6 +438,7 @@ fn ingest_through_the_ui_while_it_draws() {
 fn logdawg_with_500k_lines() {
     let _alone = alone();
     use traffic_police_core::logdawg::{Level, LogLine};
+    let _alone = alone();
     const LINES: u64 = 500_000;
     const APP_UID: u32 = 10_234;
     let tags = [
@@ -538,4 +540,145 @@ fn logdawg_with_500k_lines() {
     render_keys(&mut app, 200, 50, &parse_keys("<C-u><C-u>kkk").unwrap());
     results.push(time_frames("Logdawg not following, 20 new lines a frame", &mut app, 200, &mut feed));
     results.iter().for_each(Frames::check);
+}
+
+/// A zstd frame of `blocks` RLE blocks, each 128 KB of `byte` from 4 bytes.
+fn zstd_rle(byte: u8, blocks: usize) -> Vec<u8> {
+    // the magic number, a header without a content size, a 128 KB window
+    let mut frame = vec![0x28, 0xb5, 0x2f, 0xfd, 0x00, 7 << 3];
+    for i in 0..blocks {
+        let header = (128u32 << 10) << 3 | 1 << 1 | u32::from(i + 1 == blocks);
+        frame.extend_from_slice(&header.to_le_bytes()[..3]);
+        frame.push(byte);
+    }
+    frame
+}
+
+/// A finished GET whose response is `body`, sent with `headers`; returns its index.
+fn add_response(app: &mut App, txn: u64, headers: Vec<(String, String)>, body: Bytes) -> TxnIdx {
+    let source = app.store.current_source().expect("demo source").id;
+    let key = TxnKey { source, txn };
+    let at = app.store.latest() + NS_PER_MS;
+    let len = body.len() as u64;
+    app.ingest(vec![
+        SessionEvent::Request(Box::new(RequestStarted {
+            key,
+            at,
+            call: None,
+            hop: 0,
+            method: "GET".into(),
+            url: format!("https://api.example.app/big/{txn}"),
+            headers: Vec::new(),
+            client: None,
+            thread: None,
+            stack: Vec::new(),
+            stack_truncated: false,
+            body: None,
+            marks: Vec::new(),
+            conn: None,
+        })),
+        SessionEvent::Response(Box::new(ResponseStarted {
+            key,
+            at: at + NS_PER_MS,
+            status: 200,
+            message: "OK".into(),
+            protocol: None,
+            headers,
+            conn: None,
+        })),
+        SessionEvent::Body { key, dir: BodyDir::Response, at: at + 2 * NS_PER_MS, offset: 0, bytes: body },
+        SessionEvent::BodyEnd {
+            key,
+            dir: BodyDir::Response,
+            at: at + 3 * NS_PER_MS,
+            total: len,
+            captured: len,
+            state: "complete".into(),
+            decoded: false,
+        },
+        SessionEvent::Completed { key, at: at + 3 * NS_PER_MS },
+    ]);
+    app.now_override = Some(app.store.latest());
+    app.store.find(key).expect("added")
+}
+
+/// One frame as the UI task draws it, without running what it queues for a worker.
+fn draw_once(app: &mut App) -> Duration {
+    let (w, h) = common::LARGE;
+    let mut term = Terminal::new(TestBackend::new(w, h)).expect("test backend");
+    let t = Instant::now();
+    term.draw(|f| traffic_police_tui::ui::draw(f, app)).expect("draw");
+    t.elapsed()
+}
+
+/// Bodies that are large, or small and decode large (ARCHITECTURE.md §5.9): the frame that
+/// opens one (the UI task's part), the build (a worker's), what the view holds, and frames with
+/// it open. Up to 0.5.1 a body of up to 256 KB as captured was built on the UI task however
+/// large it decoded, and formatted whole: 200 KB of gzip took seconds and gigabytes there.
+#[test]
+#[ignore = "run in release: cargo test --release -p traffic-police-tui --test perf -- --ignored --nocapture"]
+fn large_and_compressed_bodies() {
+    use traffic_police_backends::demo::content::gzip;
+    let _alone = alone();
+    let typed = |ct: &str, enc: Option<&str>| {
+        let mut h = vec![("Content-Type".to_string(), ct.to_string())];
+        if let Some(e) = enc {
+            h.push(("Content-Encoding".to_string(), e.to_string()));
+        }
+        h
+    };
+    let json = |items: usize| {
+        let item = r#"{"id":12345,"name":"Ada Lovelace","tags":["a","b"],"ok":true},"#;
+        Bytes::from(format!("[{}{{}}]", item.repeat(items)))
+    };
+    // what it is, its headers, the body, and whether it is built on a worker
+    type Case = (&'static str, Vec<(String, String)>, Bytes, bool);
+    let cases: Vec<Case> = vec![
+        ("JSON, 10 MB", typed("application/json", None), json(10 << 20 >> 6), true),
+        ("gzip text, 200 KB to 200 MB", typed("text/plain", Some("gzip")), gzip(&vec![b'a'; 200 << 20]), true),
+        ("zstd text, 8 KB to 250 MB", typed("text/plain", Some("zstd")), Bytes::from(zstd_rle(b'a', 2000)), true),
+        ("HTML, 255 KB of <a> never closed", typed("text/html", None), Bytes::from("<a>".repeat(85_000)), false),
+        (
+            "HTML, 30 MB of <li> never closed",
+            typed("text/html", None),
+            Bytes::from("<li>item ".repeat(30 << 20 >> 3)),
+            true,
+        ),
+    ];
+    let mut app = common::app_at(2.0);
+    let mut frames = Vec::new();
+    for (n, (label, headers, body, worker)) in cases.into_iter().enumerate() {
+        let sent = body.len();
+        let txn = add_response(&mut app, 90_000 + n as u64, headers, body);
+        render_text(&mut app, 200, 50);
+        app.select_txn(txn);
+        app.detail_open = true;
+        app.focus = Focus::Detail;
+        app.detail.tab = Tab::Response;
+        let first = draw_once(&mut app);
+        assert_eq!(app.body_decoding(txn, BodyDir::Response), worker, "{label}: built on a worker");
+        let t = Instant::now();
+        app.run_jobs_inline();
+        let build = t.elapsed();
+        let view = app.body_view(txn, BodyDir::Response).expect("built");
+        let (decoded, held, lines, partial) =
+            (view.decoded.bytes.len(), view.mem_bytes(), view.len(true), view.partial);
+        println!(
+            "{label:<44} sent {:>7}, decoded {:>7}: first frame {:>8.2?}, build {:>8.2?}, view {:>7} in {lines} lines{}",
+            traffic_police_core::fmt::bytes(sent as u64),
+            traffic_police_core::fmt::bytes(decoded as u64),
+            first,
+            build,
+            traffic_police_core::fmt::bytes(held as u64),
+            if partial { " (the start)" } else { "" },
+        );
+        assert!(first < BUDGET, "{label}: the frame that opened it took {first:?}");
+        assert!(build < Duration::from_secs(5), "{label}: the build took {build:?}");
+        // the decoded bytes (256 MB at most) and what is formatted of them (bounded)
+        assert!(held < decoded + (200 << 20), "{label}: the view holds {held} bytes");
+        frames.push(time_frames("  then frames with it open", &mut app, 50, |_, _| {}));
+    }
+    for f in frames {
+        f.check();
+    }
 }

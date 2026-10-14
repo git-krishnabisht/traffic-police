@@ -7,17 +7,26 @@ use super::doc::{Budget, StyledLine, Tok, cut_line};
 
 const MAX_NESTING: usize = 32;
 
-fn varint(b: &[u8], i: &mut usize) -> Option<u64> {
+/// Why bytes are no field.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Fail {
+    /// The field goes on past the end of the bytes.
+    Short,
+    /// Not protobuf.
+    Bad,
+}
+
+fn varint(b: &[u8], i: &mut usize) -> Result<u64, Fail> {
     let mut v = 0u64;
     for shift in (0..64).step_by(7) {
-        let byte = *b.get(*i)?;
+        let byte = *b.get(*i).ok_or(Fail::Short)?;
         *i += 1;
         v |= u64::from(byte & 0x7f) << shift;
         if byte & 0x80 == 0 {
-            return Some(v);
+            return Ok(v);
         }
     }
-    None
+    Err(Fail::Bad)
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -32,62 +41,63 @@ enum Field<'a> {
     End,
 }
 
-/// The field at `i`, moving past it; `None` when the bytes are no protobuf there.
-fn field<'a>(b: &'a [u8], i: &mut usize) -> Option<(u64, Field<'a>)> {
+/// The field at `i`, moving past it, or why the bytes are no field there.
+fn field<'a>(b: &'a [u8], i: &mut usize) -> Result<(u64, Field<'a>), Fail> {
     let key = varint(b, i)?;
     let (num, wt) = (key >> 3, key & 7);
     if num == 0 || num > (1 << 29) - 1 {
-        return None;
+        return Err(Fail::Bad);
     }
     let f = match wt {
         0 => Field::Varint(varint(b, i)?),
         1 => {
-            let v = u64::from_le_bytes(b.get(*i..*i + 8)?.try_into().ok()?);
+            let v = u64::from_le_bytes(b.get(*i..*i + 8).ok_or(Fail::Short)?.try_into().expect("8 bytes"));
             *i += 8;
             Field::Fixed64(v)
         }
         2 => {
-            let len = usize::try_from(varint(b, i)?).ok()?;
-            let s = b.get(*i..i.checked_add(len)?)?;
+            let len = usize::try_from(varint(b, i)?).map_err(|_| Fail::Bad)?;
+            let s = b.get(*i..i.checked_add(len).ok_or(Fail::Bad)?).ok_or(Fail::Short)?;
             *i += len;
             Field::Bytes(s)
         }
         3 => Field::Group,
         4 => Field::End,
         5 => {
-            let v = u32::from_le_bytes(b.get(*i..*i + 4)?.try_into().ok()?);
+            let v = u32::from_le_bytes(b.get(*i..*i + 4).ok_or(Fail::Short)?.try_into().expect("4 bytes"));
             *i += 4;
             Field::Fixed32(v)
         }
-        _ => return None,
+        _ => return Err(Fail::Bad),
     };
-    Some((num, f))
+    Ok((num, f))
 }
 
-/// Whether `b` from `i` on is a whole message (`end_group`: the body of that group, up to its
-/// end), keeping nothing.
-fn scan(b: &[u8], i: &mut usize, depth: usize, end_group: Option<u64>) -> bool {
+/// Checks the fields of `b` from `i` on (`end_group`: the body of that group, up to its end),
+/// keeping nothing. A failure leaves `i` where the field that failed starts.
+fn scan(b: &[u8], i: &mut usize, depth: usize, end_group: Option<u64>) -> Result<(), Fail> {
     if depth > MAX_NESTING {
-        return false;
+        return Err(Fail::Bad);
     }
     while *i < b.len() {
+        let start = *i;
         match field(b, i) {
-            None => return false,
-            Some((num, Field::Group)) => {
-                if !scan(b, i, depth + 1, Some(num)) {
-                    return false;
-                }
+            Err(e) => {
+                *i = start;
+                return Err(e);
             }
-            Some((num, Field::End)) => return end_group == Some(num),
-            Some(_) => {}
+            Ok((num, Field::Group)) => scan(b, i, depth + 1, Some(num))?,
+            Ok((num, Field::End)) => return if end_group == Some(num) { Ok(()) } else { Err(Fail::Bad) },
+            Ok(_) => {}
         }
     }
-    end_group.is_none()
+    // a group open at the end goes on past it
+    if end_group.is_none() { Ok(()) } else { Err(Fail::Short) }
 }
 
 /// Whether `b` is a message (its fields, nested `depth` deep).
 fn is_message(b: &[u8], depth: usize) -> bool {
-    scan(b, &mut 0, depth, None)
+    scan(b, &mut 0, depth, None).is_ok()
 }
 
 fn printable(s: &str) -> bool {
@@ -159,17 +169,28 @@ fn closing(depth: usize) -> StyledLine {
     close
 }
 
-/// Shows the fields of a message checked by [`scan`], from `i` up to its end (or the end of the
-/// group they are in); false once the budget is spent.
-fn emit(b: &[u8], i: &mut usize, depth: usize, out: &mut Out<'_>) -> bool {
+/// How showing fields ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Shown {
+    /// The message's (or the group's) last field was shown.
+    Whole,
+    /// The bytes ended inside a group: the message was cut there.
+    Open,
+    /// The budget is spent.
+    Full,
+}
+
+/// Shows the fields of a message checked by [`scan`], from `i` up to its end (`in_group`: up
+/// to the end of the group they are in).
+fn emit(b: &[u8], i: &mut usize, depth: usize, in_group: bool, out: &mut Out<'_>) -> Shown {
     while *i < b.len() {
-        let Some((num, f)) = field(b, i) else { return true };
+        let Ok((num, f)) = field(b, i) else { return Shown::Whole };
         let mut line = StyledLine::new();
         line.indent(depth);
         line.push(&num.to_string(), Tok::Field);
         let fits = match f {
             // the group's end ([`scan`] checked that it is this group's)
-            Field::End => return true,
+            Field::End => return Shown::Whole,
             Field::Varint(v) => {
                 line.push(": ", Tok::Punct);
                 line.push(&v.to_string(), Tok::Num);
@@ -187,7 +208,13 @@ fn emit(b: &[u8], i: &mut usize, depth: usize, out: &mut Out<'_>) -> bool {
             }
             Field::Group => {
                 line.push(" {", Tok::Punct);
-                out.push(line) && emit(b, i, depth + 1, out) && out.push(closing(depth))
+                if !out.push(line) {
+                    return Shown::Full;
+                }
+                match emit(b, i, depth + 1, true, out) {
+                    Shown::Whole => out.push(closing(depth)),
+                    other => return other,
+                }
             }
             Field::Bytes(s) => {
                 let as_str = std::str::from_utf8(s).ok();
@@ -199,7 +226,7 @@ fn emit(b: &[u8], i: &mut usize, depth: usize, out: &mut Out<'_>) -> bool {
                     }
                 } else if !s.is_empty() && is_message(s, depth + 1) {
                     line.push(" {", Tok::Punct);
-                    out.push(line) && emit(s, &mut 0, depth + 1, out) && out.push(closing(depth))
+                    out.push(line) && emit(s, &mut 0, depth + 1, false, out) == Shown::Whole && out.push(closing(depth))
                 } else {
                     out.room_for(4 * s.len() + 2) && {
                         line.push(": ", Tok::Punct);
@@ -213,24 +240,30 @@ fn emit(b: &[u8], i: &mut usize, depth: usize, out: &mut Out<'_>) -> bool {
             }
         };
         if !fits {
-            return false;
+            return Shown::Full;
         }
     }
-    true
+    if in_group { Shown::Open } else { Shown::Whole }
 }
 
 /// Decode a protobuf message without a schema, within the default [`Budget`].
 pub fn decode_raw(b: &[u8]) -> Result<Vec<StyledLine>, String> {
-    decode_raw_in(b, &mut Budget::default())
+    decode_raw_in(b, &mut Budget::default(), false)
 }
 
-/// [`decode_raw`] within `budget`: past it the last line says the rest is not shown.
-pub fn decode_raw_in(b: &[u8], budget: &mut Budget) -> Result<Vec<StyledLine>, String> {
-    if !is_message(b, 0) {
-        return Err("not a valid protobuf message".to_string());
-    }
+/// [`decode_raw`] within `budget`: past it the last line says the rest is not shown. `cut` says
+/// `b` is the start of a longer message: a field that goes on past its end is where it was cut,
+/// and the fields before it are shown (when there are any: bytes that are no protobuf can look
+/// like a field that goes on, too).
+pub fn decode_raw_in(b: &[u8], budget: &mut Budget, cut: bool) -> Result<Vec<StyledLine>, String> {
+    let mut end = 0;
+    let b = match scan(b, &mut end, 0, None) {
+        Ok(()) => b,
+        Err(Fail::Short) if cut && end > 0 => &b[..end],
+        Err(_) => return Err("not a valid protobuf message".to_string()),
+    };
     let mut out = Out { lines: Vec::new(), budget };
-    if !emit(b, &mut 0, 0, &mut out) {
+    if emit(b, &mut 0, 0, false, &mut out) == Shown::Full {
         out.lines.push(cut_line());
     }
     Ok(out.lines)
@@ -290,12 +323,12 @@ mod tests {
         // a thousand varints, each a line
         let msg = [0x08u8, 0x01].repeat(1000);
         let mut budget = Budget::new(10, 1 << 20);
-        let lines = decode_raw_in(&msg, &mut budget).unwrap();
+        let lines = decode_raw_in(&msg, &mut budget, false).unwrap();
         assert_eq!(lines.len(), 11);
         assert_eq!(lines[10], cut_line());
         // nested messages and groups end where the budget does
         let nested = [0x1a, 0x04, 0x08, 0x01, 0x08, 0x02, 0x0b, 0x08, 0x03, 0x0c];
-        let lines = decode_raw_in(&nested, &mut Budget::new(3, 1 << 20)).unwrap();
+        let lines = decode_raw_in(&nested, &mut Budget::new(3, 1 << 20), false).unwrap();
         assert_eq!(text(&lines[..3]), "3 {\n  1: 1\n  1: 2");
         assert_eq!(lines[3], cut_line());
         assert_eq!(text(&decode_raw(&nested).unwrap()), "3 {\n  1: 1\n  1: 2\n}\n1 {\n  1: 3\n}");
@@ -303,8 +336,35 @@ mod tests {
         let mut blob = vec![0x12, 0xe8, 0x07];
         blob.extend(std::iter::repeat_n(0x01u8, 1000));
         let mut budget = Budget::new(10, 2000);
-        assert_eq!(decode_raw_in(&blob, &mut budget).unwrap(), vec![cut_line()]);
+        assert_eq!(decode_raw_in(&blob, &mut budget, false).unwrap(), vec![cut_line()]);
         assert_eq!(decode_raw(&blob).unwrap()[0].text.len(), 3 + 4 * 1000 + 2);
+    }
+
+    /// The start of a longer message (the viewer formats the first 32 MB): the field the cut goes
+    /// through is left out, wherever it falls; bytes that are no protobuf are still refused.
+    #[test]
+    fn a_message_cut_short_shows_the_fields_before_the_cut() {
+        let msg = [
+            0x08, 0x96, 0x01, 0x12, 0x07, b't', b'e', b's', b't', b'i', b'n', b'g', 0x0b, 0x08, 0x03, 0x0c, 0x21, 1, 0,
+            0, 0, 0, 0, 0, 0,
+        ];
+        let whole = text(&decode_raw(&msg).unwrap());
+        assert_eq!(whole, "1: 150\n2: \"testing\"\n1 {\n  1: 3\n}\n4: 0x0000000000000001");
+        for end in 3..msg.len() {
+            let lines = decode_raw_in(&msg[..end], &mut Budget::default(), true).unwrap();
+            assert!(whole.starts_with(&text(&lines)), "cut at {end}: {:?}", text(&lines));
+        }
+        // a cut through the first field leaves nothing to show
+        assert!(decode_raw_in(&msg[..2], &mut Budget::default(), true).is_err());
+        // inside the group (which is not closed) and inside the string field
+        assert!(decode_raw(&msg[..14]).is_err());
+        assert_eq!(
+            text(&decode_raw_in(&msg[..14], &mut Budget::default(), true).unwrap()),
+            "1: 150\n2: \"testing\"\n1 {"
+        );
+        assert_eq!(text(&decode_raw_in(&msg[..8], &mut Budget::default(), true).unwrap()), "1: 150");
+        assert!(decode_raw_in(&[0xff, 0xff], &mut Budget::default(), true).is_err());
+        assert!(decode_raw_in(&[0x08, 0x01, 0x07], &mut Budget::default(), true).is_err(), "wire type 7");
     }
 
     #[test]

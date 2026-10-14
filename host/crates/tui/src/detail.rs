@@ -10,6 +10,7 @@ use ratatui::text::{Line, Span};
 use traffic_police_core::fmt;
 use traffic_police_core::model::{BodyDir, BodyMeta, BodyState, Transaction, TxnIdx, TxnState, header};
 
+use crate::actions::Action;
 use crate::app::{App, Focus, Tab, Target};
 use crate::theme::Theme;
 use crate::wrap::{self, Part, Text};
@@ -223,6 +224,10 @@ fn pair_rows(theme: &Theme, rows: &mut Vec<DocRow>, what: &str, headers: &[(Stri
 fn body_rows(app: &mut App, txn: TxnIdx, dir: BodyDir, rows: &mut Vec<DocRow>) -> usize {
     let theme = app.theme.clone();
     let parsed = app.detail.parsed;
+    let save = match app.keymap.key_label(Action::Save) {
+        k if k.is_empty() => ":save".to_string(),
+        k => k,
+    };
     let (meta, state_note) = {
         let t = app.view_store().txn(txn);
         let meta = match dir {
@@ -263,6 +268,11 @@ fn body_rows(app: &mut App, txn: TxnIdx, dir: BodyDir, rows: &mut Vec<DocRow>) -
     }
     if let Some(n) = &view.note {
         rows.push(DocRow::Line(Line::styled(format!("⚠ {n}"), theme.warn())));
+    }
+    if view.partial {
+        let n =
+            format!("⚠ only the start of this body is shown (it is too long to show whole) · {save} saves all of it");
+        rows.push(DocRow::Line(Line::styled(n, theme.warn())));
     }
     if let Some(jq) = &view.jq
         && parsed

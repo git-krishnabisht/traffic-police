@@ -5,13 +5,27 @@ use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 
 use bytes::Bytes;
+use traffic_police_core::decode::encoding::{self, DecodeError};
 use traffic_police_core::model::{BodyDir, TxnIdx};
 use traffic_police_proto::Headers;
 
 use crate::bodyview::BodyView;
 
-/// Bodies up to this size (as captured) are decoded on the UI task; larger ones on a worker.
+/// Bodies up to this size, as captured and once decoded, are built on the UI task; larger ones
+/// on a worker.
 pub const INLINE_LIMIT: usize = 256 * 1024;
+
+/// Whether a body is small enough to build on the UI task: at most [`INLINE_LIMIT`] as captured
+/// and once its Content-Encoding is undone. A few KB of brotli or zstd, or 250 KB of gzip, can
+/// hold 256 MB (up to 0.5.1 such a body was decoded and formatted on the UI task); finding out
+/// decodes no more than the limit.
+pub fn builds_inline(raw: &[u8], headers: Option<&Headers>) -> bool {
+    if raw.len() > INLINE_LIMIT {
+        return false;
+    }
+    let encodings = headers.map(encoding::encodings).unwrap_or_default();
+    encodings.is_empty() || !matches!(encoding::decode(raw, &encodings, INLINE_LIMIT), Err(DecodeError::TooLarge(_)))
+}
 /// Memory budget for cached views (ARCHITECTURE.md §5.9).
 pub const BUDGET: usize = 128 << 20;
 
@@ -89,14 +103,15 @@ impl BodyCache {
         self.epoch
     }
 
-    /// Decide how to serve a view of `raw` (captured size `raw_len`). Queues a worker build for
-    /// large bodies; `make_job` is only called then.
+    /// Decide how to serve a view of a body: `inline` says whether it is small enough to build
+    /// here (see [`builds_inline`]; asked only when there is no view of it and no build).
+    /// Queues a worker build for large bodies; `make_job` is only called then.
     pub fn lookup(
         &mut self,
         txn: TxnIdx,
         dir: BodyDir,
         key: BodyKey,
-        raw_len: usize,
+        inline: impl FnOnce() -> bool,
         make_job: impl FnOnce() -> BodyJob,
     ) -> Lookup {
         let id = (txn, dir);
@@ -104,11 +119,11 @@ impl BodyCache {
         if cached == Some(key) {
             return Lookup::Current;
         }
-        if raw_len <= INLINE_LIMIT {
-            return Lookup::BuildHere;
-        }
         // one build per body at a time; a newer key is picked up when it finishes
         if let Entry::Vacant(slot) = self.in_flight.entry(id) {
+            if inline() {
+                return Lookup::BuildHere;
+            }
             slot.insert(key);
             self.queued.push(make_job());
         }
@@ -192,12 +207,12 @@ mod tests {
     #[test]
     fn small_bodies_build_here_large_ones_on_a_worker() {
         let mut c = BodyCache::new();
-        assert!(matches!(c.lookup(0, BodyDir::Response, 1, 10, || unreachable!()), Lookup::BuildHere));
+        assert!(matches!(c.lookup(0, BodyDir::Response, 1, || true, || unreachable!()), Lookup::BuildHere));
         let job = || BodyJob { epoch: 0, txn: 1, dir: BodyDir::Response, key: 7, raw: Bytes::new(), headers: None };
-        assert!(matches!(c.lookup(1, BodyDir::Response, 7, INLINE_LIMIT + 1, job), Lookup::Building { stale: false }));
-        // asking again does not queue a second build
+        assert!(matches!(c.lookup(1, BodyDir::Response, 7, || false, job), Lookup::Building { stale: false }));
+        // asking again does not queue a second build, nor look at the body again
         assert!(matches!(
-            c.lookup(1, BodyDir::Response, 8, INLINE_LIMIT + 2, || unreachable!()),
+            c.lookup(1, BodyDir::Response, 8, || unreachable!(), || unreachable!()),
             Lookup::Building { .. }
         ));
         let jobs = c.take_jobs();
@@ -206,8 +221,25 @@ mod tests {
         assert!(!c.is_building(1, BodyDir::Response));
         // the body grew meanwhile: the old view is served while the new one builds
         let job = || BodyJob { epoch: 0, txn: 1, dir: BodyDir::Response, key: 8, raw: Bytes::new(), headers: None };
-        assert!(matches!(c.lookup(1, BodyDir::Response, 8, INLINE_LIMIT + 2, job), Lookup::Building { stale: true }));
+        assert!(matches!(c.lookup(1, BodyDir::Response, 8, || false, job), Lookup::Building { stale: true }));
         assert!(c.get_mut(1, BodyDir::Response).is_some());
+    }
+
+    /// What decides: the size as captured, and as decoded (asked of no more than the limit).
+    #[test]
+    fn compressed_bodies_that_decode_large_build_on_a_worker() {
+        use traffic_police_backends::demo::content::gzip;
+        let headers = |enc: &str| Some(vec![("Content-Encoding".to_string(), enc.to_string())]);
+        assert!(builds_inline(&[b'x'; INLINE_LIMIT], None));
+        assert!(!builds_inline(&[b'x'; INLINE_LIMIT + 1], None));
+        assert!(builds_inline(&gzip(&[b'x'; INLINE_LIMIT]), headers("gzip").as_ref()));
+        // 5 KB of gzip, 5 MB once decoded
+        let bomb = gzip(&vec![0u8; 5 << 20]);
+        assert!(bomb.len() < 8 << 10, "{}", bomb.len());
+        assert!(!builds_inline(&bomb, headers("gzip").as_ref()));
+        // what does not decode is shown as captured, which is small
+        assert!(builds_inline(b"not gzip", headers("gzip").as_ref()));
+        assert!(builds_inline(b"x", headers("snappy").as_ref()));
     }
 
     #[test]

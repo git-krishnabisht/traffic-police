@@ -836,16 +836,23 @@ impl App {
         let headers = store.decoding_headers(t, headers);
         let key = body_key(meta);
         let epoch = self.bodies.epoch();
-        let lookup = self.bodies.lookup(txn, dir, key, meta.captured as usize, || BodyJob {
+        // the bytes, read (from memory or the spill file) once, and only when a view is built
+        let raw = std::cell::OnceCell::new();
+        let bytes = || raw.get_or_init(|| store.body_bytes(meta)).clone();
+        let inline = || {
+            meta.captured as usize <= crate::bodycache::INLINE_LIMIT
+                && crate::bodycache::builds_inline(&bytes(), headers.as_deref())
+        };
+        let lookup = self.bodies.lookup(txn, dir, key, inline, || BodyJob {
             epoch,
             txn,
             dir,
             key,
-            raw: store.body_bytes(meta),
+            raw: bytes(),
             headers: headers.as_deref().cloned(),
         });
         if let Lookup::BuildHere = lookup {
-            let view = BodyView::build(store.body_bytes(meta), headers.as_deref());
+            let view = BodyView::build(bytes(), headers.as_deref());
             self.bodies.insert(txn, dir, key, view);
         }
         self.bodies.get_mut(txn, dir)

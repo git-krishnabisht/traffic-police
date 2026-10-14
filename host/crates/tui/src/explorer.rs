@@ -330,6 +330,8 @@ pub fn draw(app: &mut App, r: Rect, buf: &mut Buffer) {
     };
     let len = view.len(true);
     let mut info = format!("{} · {}", view.decoded.kind.label(), fmt::bytes(view.decoded.bytes.len() as u64));
+    // the last line says what is not shown
+    let partial = view.partial;
     if let Some(img) = view.image().and_then(|i| i.image.clone()) {
         title(app, buf, labels, Some(info));
         let area = Rect { x: content.x, y: content.y, width: content.width, height: content.height };
@@ -375,7 +377,13 @@ pub fn draw(app: &mut App, r: Rect, buf: &mut Buffer) {
     title(app, buf, labels, Some(info));
     if focused {
         let (left, right) = (app.keymap.key_label(Action::Left), app.keymap.key_label(Action::Right));
-        let hint = vec![Span::styled(format!("{left} {right} the bodies · Enter fold or value"), t.faint())];
-        crate::ui::border_labels(buf, r, r.y + r.height.saturating_sub(1), true, vec![hint]);
+        let mut hints = vec![vec![Span::styled(format!("{left} {right} the bodies · Enter fold or value"), t.faint())]];
+        // a body shown in part: how to have all of it (a hint of its own, dropped when there is
+        // no room)
+        let save = app.keymap.key_label(Action::Save);
+        if partial && !save.is_empty() {
+            hints.push(vec![Span::styled(format!("{save} saves all of it"), t.faint())]);
+        }
+        crate::ui::border_labels(buf, r, r.y + r.height.saturating_sub(1), true, hints);
     }
 }
