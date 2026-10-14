@@ -764,18 +764,17 @@ fn jwts(app: &mut App, txn: TxnIdx, t: &Transaction) -> Vec<(String, String)> {
         add(format!("response header {n}"), v);
     }
     for (dir, what) in [(BodyDir::Request, "the request body"), (app.response_dir(txn), "the response body")] {
-        let small = |m: &BodyMeta| m.captured > 0 && m.captured <= 256 << 10;
+        // a body bigger than that as captured is not even decoded for this
+        let small = |m: &&BodyMeta| m.captured > 0 && m.captured <= crate::app::JWT_SCAN_LIMIT as u64;
         let meta = match dir {
             BodyDir::Request => Some(&t.req_body),
             BodyDir::Response => Some(&t.resp_body),
             BodyDir::Delivered => t.delivered_body.as_ref(),
         };
-        if meta.is_some_and(small)
-            && let Some(v) = app.body_view(txn, dir)
-            && let Ok(text) = std::str::from_utf8(&v.decoded.bytes)
+        if let Some(meta) = meta.filter(small)
+            && let Some(token) = app.body_jwt(txn, dir, meta)
         {
-            let text = text.to_string();
-            add(what.to_string(), &text);
+            add(what.to_string(), &token);
         }
     }
     out

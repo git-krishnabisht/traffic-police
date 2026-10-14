@@ -13,7 +13,7 @@ use traffic_police_core::backend::{BackendCommand, Capabilities, ConnectionStatu
 use traffic_police_core::event::MarkerKind;
 use traffic_police_core::filter::{BodySearch, Filter, ParseError};
 use traffic_police_core::fmt::{NS_PER_MS, NS_PER_SEC, Ts};
-use traffic_police_core::model::{BodyDir, TxnIdx};
+use traffic_police_core::model::{BodyDir, BodyMeta, TxnIdx};
 use traffic_police_core::rows::{Column, Row, RowModel, SearchTicket, Sort};
 use traffic_police_core::store::{GraphSource, SessionStore};
 use traffic_police_proto::msg::RuleSet;
@@ -560,6 +560,9 @@ pub struct App {
     frozen: Option<Box<Frozen>>,
     live_anchor: Option<(Ts, Instant)>,
     bodies: BodyCache,
+    /// The Overview's JWT scan of a body: the token found, by body, for the body's content then
+    /// ([`body_key`]).
+    jwt_scans: std::collections::HashMap<(TxnIdx, BodyDir), (u64, Option<String>)>,
     last_click: Option<(Instant, u16, u16)>,
     drag: Option<Drag>,
     follow_list: bool,
@@ -654,6 +657,7 @@ impl App {
             frozen: None,
             live_anchor: None,
             bodies: BodyCache::new(),
+            jwt_scans: std::collections::HashMap::new(),
             last_click: None,
             drag: None,
             follow_list: true,
@@ -830,7 +834,7 @@ impl App {
         };
         meta.id?;
         let headers = store.decoding_headers(t, headers);
-        let key = meta.captured * 16 + meta.state as u64;
+        let key = body_key(meta);
         let epoch = self.bodies.epoch();
         let lookup = self.bodies.lookup(txn, dir, key, meta.captured as usize, || BodyJob {
             epoch,
@@ -850,6 +854,32 @@ impl App {
     /// Whether a worker is decoding this body.
     pub fn body_decoding(&self, txn: TxnIdx, dir: BodyDir) -> bool {
         self.bodies.is_building(txn, dir)
+    }
+
+    /// The first JWT in a body that decodes to at most [`JWT_SCAN_LIMIT`], for the Overview,
+    /// which is drawn every frame: found once for each content of the body. Up to 0.5.1 only the
+    /// captured size was checked, and each frame copied the decoded body (a small gzip can hold
+    /// 256 MiB) into a string and scanned all of it.
+    pub(crate) fn body_jwt(&mut self, txn: TxnIdx, dir: BodyDir, meta: &BodyMeta) -> Option<String> {
+        let key = body_key(meta);
+        if let Some((k, found)) = self.jwt_scans.get(&(txn, dir))
+            && *k == key
+        {
+            return found.clone();
+        }
+        let found = self.body_view(txn, dir).and_then(|v| {
+            let bytes = &v.decoded.bytes[..];
+            let text = std::str::from_utf8(bytes).ok().filter(|_| bytes.len() <= JWT_SCAN_LIMIT)?;
+            traffic_police_core::values::find_jwt(text).map(|r| text[r].to_string())
+        });
+        // a view still being made is looked at again when it is there
+        if !self.body_decoding(txn, dir) {
+            if self.jwt_scans.len() >= 256 {
+                self.jwt_scans.clear();
+            }
+            self.jwt_scans.insert((txn, dir), (key, found.clone()));
+        }
+        found
     }
 
     /// Bodies queued for decoding, for the event loop to run.
@@ -1115,6 +1145,7 @@ impl App {
         self.detail_open = false;
         self.focus = Focus::List;
         self.bodies.clear();
+        self.jwt_scans.clear();
         self.list_cursor = 0;
         self.list_offset = 0;
         self.follow_list = true;
@@ -2490,6 +2521,15 @@ impl App {
         }
     }
 }
+
+/// A body's content at one moment: its views and scans are made again when it changes (a
+/// streaming body grows, a body completes).
+pub(crate) fn body_key(meta: &BodyMeta) -> u64 {
+    meta.captured * 16 + meta.state as u64
+}
+
+/// The Overview looks for JWTs in bodies up to this size, decoded (ARCHITECTURE.md §5.10).
+pub const JWT_SCAN_LIMIT: usize = 256 << 10;
 
 /// Files named `name` under `dir` (depth- and size-limited, skipping build and VCS directories).
 fn find_files(dir: &std::path::Path, name: &str, out: &mut Vec<PathBuf>, depth: usize, seen: &mut usize) {

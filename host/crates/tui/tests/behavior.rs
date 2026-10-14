@@ -1118,6 +1118,78 @@ fn the_body_box_shows_the_request_body_on_its_second_tab() {
     assert_eq!(app.focus, Focus::Preview);
 }
 
+/// The Overview looks for JWTs in bodies that decode to at most 256 KiB. Up to 0.5.1 only the
+/// captured size was checked, so a small gzip that decodes to more was copied and scanned whole,
+/// every frame.
+#[test]
+fn the_overview_looks_for_tokens_in_small_decoded_bodies_only() {
+    use traffic_police_backends::demo::content::gzip;
+    use traffic_police_core::SessionEvent;
+    use traffic_police_core::event::{RequestStarted, ResponseStarted};
+    use traffic_police_core::model::TxnKey;
+    use traffic_police_proto::BodyDir;
+    use traffic_police_tui::detail;
+    let mut app = app_at(5.0);
+    let source = app.store.current_source().unwrap().id;
+    let at = app.store.latest();
+    let jwt = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1XzEifQ.c2ln";
+    let mut request = |txn: u64, body: bytes::Bytes, gzipped: bool| {
+        let key = TxnKey { source, txn };
+        let mut headers = vec![("content-type".to_string(), "application/json".to_string())];
+        if gzipped {
+            headers.push(("content-encoding".into(), "gzip".into()));
+        }
+        let len = body.len() as u64;
+        app.ingest(vec![
+            SessionEvent::Request(Box::new(RequestStarted {
+                key,
+                at,
+                call: None,
+                hop: 0,
+                method: "GET".into(),
+                url: format!("https://api.example.app/token/{txn}"),
+                headers: Vec::new(),
+                client: None,
+                thread: None,
+                stack: Vec::new(),
+                stack_truncated: false,
+                body: None,
+                marks: Vec::new(),
+                conn: None,
+            })),
+            SessionEvent::Response(Box::new(ResponseStarted {
+                key,
+                at,
+                status: 200,
+                message: "OK".into(),
+                protocol: None,
+                headers,
+                conn: None,
+            })),
+            SessionEvent::Body { key, dir: BodyDir::Response, at, offset: 0, bytes: body },
+            SessionEvent::BodyEnd {
+                key,
+                dir: BodyDir::Response,
+                at,
+                total: len,
+                captured: len,
+                state: "complete".into(),
+                decoded: false,
+            },
+            SessionEvent::Completed { key, at },
+        ]);
+        app.store.find(key).unwrap()
+    };
+    let small = request(900_001, format!("{{\"token\":\"{jwt}\"}}").into(), false);
+    let padded = format!("{{\"token\":\"{jwt}\",\"pad\":\"{}\"}}", "a".repeat(300 << 10));
+    let big = request(900_002, gzip(padded.as_bytes()), true);
+    assert!(app.store.txn(big).resp_body.captured < 4 << 10, "small as captured");
+    for (txn, found) in [(small, 1), (big, 0), (small, 1)] {
+        app.select_txn(txn);
+        assert_eq!(detail::build_doc(&mut app).tokens.len(), found, "request {txn}");
+    }
+}
+
 #[test]
 fn long_rows_wrap_and_enter_still_acts_on_the_whole_row() {
     use traffic_police_tui::detail;
