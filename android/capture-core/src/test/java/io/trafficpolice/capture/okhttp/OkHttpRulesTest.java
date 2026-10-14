@@ -246,6 +246,59 @@ public final class OkHttpRulesTest {
         }
     }
 
+    /**
+     * A replacement that does not fit its pattern ("$9" names a group it does not have; a "$" at
+     * the end names none) made the replace throw inside the app's call: through the interceptor
+     * while paused, and as a consumed body while recording. The body now stays as it came, the
+     * rule's other actions still apply, and the host is told why.
+     */
+    @Test
+    public void a_replacement_that_does_not_fit_its_pattern_leaves_the_body_alone_recording_or_paused()
+            throws Exception {
+        rules("[" + rule("group9", "{\"path\":{\"exact\":\"/group9\"}}",
+                "[{\"type\":\"replace\",\"find\":\"(a)\",\"with\":\"$9\",\"regex\":true},"
+                        + "{\"type\":\"header\",\"op\":\"set\",\"name\":\"X-Seen\",\"value\":\"1\"}]") + ","
+                + rule("dollar", "{\"path\":{\"exact\":\"/dollar\"}}",
+                        "[{\"type\":\"replace\",\"find\":\"a\",\"with\":\"cost $\",\"regex\":true}]") + "]");
+        server.enqueue(new MockResponse().setBody("banana"));
+        try (Response r = get("/group9")) {
+            assertEquals("banana", r.body().string());
+            assertEquals("the header action still applies", "1", r.header("X-Seen"));
+        }
+        awaitEnd(reqFor("/group9").txn);
+        TestHost.Msg diag = host.await(m -> "rule_skipped".equals(m.str("code")) && m.str("message").contains("group9"),
+                5_000);
+        assertTrue(diag.str("message"), diag.str("message").contains("No group 9"));
+
+        host.send("{\"t\":\"set_config\",\"id\":9,\"config\":{\"recording\":false}}");
+        host.awaitType("config_ack", 5_000);
+        server.enqueue(new MockResponse().setBody("banana"));
+        try (Response r = get("/dollar")) {
+            assertEquals("banana", r.body().string());
+        }
+        host.await(m -> "rule_skipped".equals(m.str("code")) && m.str("message").contains("dollar"), 5_000);
+        server.enqueue(new MockResponse().setBody("banana"));
+        try (Response r = get("/group9")) {
+            assertEquals("paused too", "banana", r.body().string());
+            assertEquals("1", r.header("X-Seen"));
+        }
+    }
+
+    /** java.util.regex recurses once per character for (a|b)*: on a long body the stack runs out. */
+    @Test
+    public void a_pattern_that_runs_out_of_stack_leaves_the_body_alone() throws Exception {
+        rules("[" + rule("deep", "{}", "[{\"type\":\"replace\",\"find\":\"(a|b)*x\",\"with\":\"y\",\"regex\":true}]")
+                + "]");
+        byte[] body = new byte[1 << 20];
+        Arrays.fill(body, (byte) 'a');
+        server.enqueue(new MockResponse().setBody(new Buffer().write(body)));
+        try (Response r = get("/deep")) {
+            assertArrayEquals(body, r.body().bytes());
+        }
+        TestHost.Msg diag = host.await(m -> "rule_skipped".equals(m.str("code")), 5_000);
+        assertTrue(diag.str("message"), diag.str("message").contains("stack"));
+    }
+
     @Test
     public void a_replace_that_finds_nothing_delivers_the_original() throws Exception {
         rules("[" + rule("none", "{}", "[{\"type\":\"replace\",\"find\":\"zzz\",\"with\":\"y\"}]") + "]");

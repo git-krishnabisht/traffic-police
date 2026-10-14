@@ -56,10 +56,20 @@ final class TeeInputStream extends FilterInputStream {
 
     @Override
     public long skip(long n) throws IOException {
-        // skipped bytes still passed through the app's stream
-        long skipped = in.skip(n);
+        long skipped;
+        try {
+            skipped = in.skip(n);
+        } catch (IOException e) {
+            failed(e);
+            throw e;
+        }
         if (skipped > 0) {
-            txn.response.skip(skipped);
+            try {
+                // skipped bytes still passed through the app's stream
+                txn.response.skip(skipped);
+            } catch (Throwable t) {
+                internal(t);
+            }
         }
         return skipped;
     }

@@ -136,6 +136,28 @@ public final class HucCaptureTest {
         assertEquals("{\"a\":1}", server.takeRequest().getBody().readUtf8());
     }
 
+    /** A body shorter than its fixed length cannot be closed: the app gets the JDK's exception, the body ends as error. */
+    @Test
+    public void aRequestBodyThatFailsToCloseEndsAsAnError() throws Exception {
+        HttpURLConnection c = open("/huc/short");
+        c.setDoOutput(true);
+        c.setFixedLengthStreamingMode(10);
+        OutputStream out = c.getOutputStream();
+        out.write("12345".getBytes(UTF_8));
+        try {
+            out.close();
+            fail("closing a body shorter than its length fails");
+        } catch (IOException expected) {
+            assertTrue(expected.getMessage(), expected.getMessage().contains("insufficient data written"));
+        }
+        TestHost.Msg req = reqFor("/huc/short");
+        TestHost.Msg end = host.await(m -> "body_end".equals(m.t()) && m.txn == req.txn, 10_000);
+        assertEquals("request", end.str("dir"));
+        assertEquals("error", end.str("state"));
+        assertEquals(5, end.num("bytes"));
+        c.disconnect();
+    }
+
     @Test
     public void errorStatusKeepsHeadersAndErrorBody() throws Exception {
         server.enqueue(new MockResponse().setResponseCode(404).setBody("{\"error\":\"missing\"}"));

@@ -180,6 +180,22 @@ public final class HucRulesTest {
         assertEquals("{\"stub\":1}", body(msgs, 2));
     }
 
+    /** A replacement that does not fit its pattern: the app reads the body as it came, and the exchange ends. */
+    @Test
+    public void a_replacement_that_does_not_fit_its_pattern_leaves_the_body_alone() throws Exception {
+        rules("[" + rule("g", "{\"path\":{\"exact\":\"/g\"}}",
+                "[{\"type\":\"replace\",\"find\":\"(a)\",\"with\":\"$9\",\"regex\":true},{\"type\":\"status\",\"code\":202}]")
+                + "]");
+        server.enqueue(new MockResponse().setBody("banana"));
+        HttpURLConnection c = open("/g");
+        assertEquals("the status action still applies", 202, c.getResponseCode());
+        assertEquals("banana", readAll(c.getInputStream()));
+        TestHost.Msg req = reqFor("/g");
+        assertEquals("done", end(req.txn).t());
+        TestHost.Msg diag = host.await(m -> "rule_skipped".equals(m.str("code")), 5_000);
+        assertTrue(diag.str("message"), diag.str("message").contains("No group 9"));
+    }
+
     @Test
     public void delay_and_failure_happen_on_the_first_call_that_connects() throws Exception {
         rules("[" + rule("f", "{\"path\":{\"exact\":\"/f\"}}",

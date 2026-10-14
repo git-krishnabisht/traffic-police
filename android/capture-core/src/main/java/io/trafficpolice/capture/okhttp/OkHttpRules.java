@@ -1,5 +1,6 @@
 package io.trafficpolice.capture.okhttp;
 
+import io.trafficpolice.capture.core.CaptureRuntime;
 import io.trafficpolice.capture.core.RuleRun;
 import io.trafficpolice.capture.core.Txn;
 import java.io.ByteArrayInputStream;
@@ -90,8 +91,18 @@ final class OkHttpRules {
                 txn.mark("resp_body_end");
             }
         }
-        RuleRun.Delivered d = rules.editResponse(response.code(), response.message(),
-                OkHttpCompat.headers(response.headers()), original, txn);
+        RuleRun.Delivered d;
+        try {
+            d = rules.editResponse(response.code(), response.message(), OkHttpCompat.headers(response.headers()),
+                    original, txn);
+        } catch (Throwable t) {
+            // ours: the app gets the response as it came (its body as read, when it was)
+            CaptureRuntime rt = CaptureRuntime.current();
+            if (rt != null) {
+                rt.internalError("okhttp.rules.edit", t);
+            }
+            d = null;
+        }
         Response out = response;
         if (d != null) {
             Response.Builder b = response.newBuilder().code(d.code).message(d.message == null ? "" : d.message);

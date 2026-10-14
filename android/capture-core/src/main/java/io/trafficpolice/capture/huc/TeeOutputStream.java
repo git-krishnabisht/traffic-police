@@ -40,20 +40,32 @@ final class TeeOutputStream extends FilterOutputStream {
                 txn.request.skip(len);
             }
         } catch (Throwable t) {
-            CaptureRuntime rt = CaptureRuntime.current();
-            if (rt != null) {
-                rt.internalError("huc.requestTee", t);
-            }
+            internal(t);
         }
     }
 
+    private static void internal(Throwable t) {
+        CaptureRuntime rt = CaptureRuntime.current();
+        if (rt != null) {
+            rt.internalError("huc.requestTee", t);
+        }
+    }
+
+    /** A close that fails (the body could not be sent whole) ends the body as {@code error}. */
     @Override
     public void close() throws IOException {
+        boolean closed = false;
         try {
             super.close();
+            closed = true;
         } finally {
-            if (txn.request.end("complete")) {
-                txn.mark("req_body_end");
+            // the app gets close()'s own exception, never one of ours in its place
+            try {
+                if (txn.request.end(closed ? "complete" : "error") && closed) {
+                    txn.mark("req_body_end");
+                }
+            } catch (Throwable t) {
+                internal(t);
             }
         }
     }
