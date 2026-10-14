@@ -342,7 +342,11 @@ impl BodyView {
             return None;
         }
         match &self.parsed {
-            Content::Json(doc) => self.visible.get(i).map(|&l| doc.path_string(doc.lines[l as usize].path)),
+            Content::Json(doc) => {
+                let path = doc.lines[*self.visible.get(i)? as usize].path;
+                // the line after a document cut short is no value
+                (path != decode::json::NO_PATH).then(|| doc.path_string(path))
+            }
             _ => None,
         }
     }

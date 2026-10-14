@@ -1,13 +1,17 @@
 //! JSON pretty-printer with fold ranges and paths, built in one pass over the raw text.
 //!
 //! Scalars keep their exact source spelling (big integers, `1.0`, escapes), so the view shows
-//! what was sent. Nesting deeper than [`MAX_DEPTH`] is rejected rather than risking the stack.
+//! what was sent. Nesting deeper than [`MAX_DEPTH`] is rejected rather than risking the stack,
+//! and the lines stop at a [`Budget`] (a document of short values makes many lines).
 
 use std::collections::HashSet;
 
-use super::doc::{StyledLine, Tok};
+use super::doc::{Budget, StyledLine, Tok, cut_line};
 
 pub const MAX_DEPTH: usize = 512;
+
+/// The path of a line that is no value (the last line of a document cut short).
+pub const NO_PATH: u32 = u32::MAX;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JsonError {
@@ -59,6 +63,10 @@ pub struct JsonDoc {
     pub lines: Vec<JsonLine>,
     pub nodes: Vec<JsonNode>,
     paths: Vec<PathEntry>,
+    /// The document is cut short (its budget ran out, or the input was the start of a longer
+    /// one): containers still open end at the last value. When the budget ran out the last line
+    /// says so ([`cut_line`]).
+    pub cut: bool,
 }
 
 impl JsonDoc {
@@ -104,6 +112,11 @@ impl JsonDoc {
             }
         }
         out
+    }
+
+    /// Ends the document with a line that is no value (a note on what is not shown).
+    pub fn push_note(&mut self, line: StyledLine) {
+        self.lines.push(JsonLine { line, depth: 0, opens: None, path: NO_PATH });
     }
 
     /// Every container node (for "fold all").
@@ -172,16 +185,35 @@ pub fn unescape(lit: &str) -> String {
     out
 }
 
-struct Parser<'a> {
+/// Why parsing stopped before the end.
+enum Stop {
+    /// The input is not JSON.
+    Error(JsonError),
+    /// The budget ran out, or the input (the start of a longer document) ended.
+    Cut,
+}
+
+struct Parser<'a, 'b> {
     s: &'a str,
     b: &'a [u8],
     i: usize,
     doc: JsonDoc,
+    budget: &'b mut Budget,
+    /// The input is the start of a longer document: ending inside a value is where it was cut.
+    cut: bool,
 }
 
-impl<'a> Parser<'a> {
-    fn err<T>(&self, message: &str) -> Result<T, JsonError> {
-        Err(JsonError { offset: self.i, message: message.to_string() })
+impl<'a> Parser<'a, '_> {
+    fn err<T>(&self, message: &str) -> Result<T, Stop> {
+        self.err_at(self.i, message)
+    }
+
+    /// An error at `offset`; at the end of an input that was cut, the cut.
+    fn err_at<T>(&self, offset: usize, message: &str) -> Result<T, Stop> {
+        if self.cut && self.i >= self.b.len() {
+            return Err(Stop::Cut);
+        }
+        Err(Stop::Error(JsonError { offset, message: message.to_string() }))
     }
 
     fn ws(&mut self) {
@@ -199,7 +231,7 @@ impl<'a> Parser<'a> {
         (self.doc.paths.len() - 1) as u32
     }
 
-    fn string(&mut self) -> Result<&'a str, JsonError> {
+    fn string(&mut self) -> Result<&'a str, Stop> {
         let start = self.i;
         self.i += 1; // opening quote
         while let Some(c) = self.peek() {
@@ -213,10 +245,10 @@ impl<'a> Parser<'a> {
                 _ => self.i += 1,
             }
         }
-        Err(JsonError { offset: start, message: "unterminated string".into() })
+        self.err_at(start, "unterminated string")
     }
 
-    fn number(&mut self) -> Result<&'a str, JsonError> {
+    fn number(&mut self) -> Result<&'a str, Stop> {
         let start = self.i;
         if self.peek() == Some(b'-') {
             self.i += 1;
@@ -249,18 +281,26 @@ impl<'a> Parser<'a> {
         Ok(&self.s[start..self.i])
     }
 
-    fn literal(&mut self, word: &'static str) -> Result<&'a str, JsonError> {
-        if self.s[self.i..].starts_with(word) {
+    fn literal(&mut self, word: &'static str) -> Result<&'a str, Stop> {
+        let rest = &self.s[self.i..];
+        if rest.starts_with(word) {
             let start = self.i;
             self.i += word.len();
             Ok(&self.s[start..self.i])
+        } else if self.cut && word.starts_with(rest) {
+            // `tr` where the input was cut
+            Err(Stop::Cut)
         } else {
             self.err("unexpected token")
         }
     }
 
-    fn push_line(&mut self, line: StyledLine, depth: usize, opens: Option<u32>, path: u32) {
+    fn push_line(&mut self, line: StyledLine, depth: usize, opens: Option<u32>, path: u32) -> Result<(), Stop> {
+        if !self.budget.take(line.text.len()) {
+            return Err(Stop::Cut);
+        }
         self.doc.lines.push(JsonLine { line, depth: depth.min(u16::MAX as usize) as u16, opens, path });
+        Ok(())
     }
 
     fn comma_on_last_line(&mut self) {
@@ -269,7 +309,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn value(&mut self, depth: usize, key: Option<&'a str>, path: u32) -> Result<(), JsonError> {
+    fn value(&mut self, depth: usize, key: Option<&'a str>, path: u32) -> Result<(), Stop> {
         if depth > MAX_DEPTH {
             return self.err("nesting too deep");
         }
@@ -289,8 +329,7 @@ impl<'a> Parser<'a> {
                 if self.peek() == Some(close) {
                     self.i += 1;
                     line.push(if is_array { "[]" } else { "{}" }, Tok::Punct);
-                    self.push_line(line, depth, None, path);
-                    return Ok(());
+                    return self.push_line(line, depth, None, path);
                 }
                 line.push(if is_array { "[" } else { "{" }, Tok::Punct);
                 let node = self.doc.nodes.len() as u32;
@@ -301,7 +340,7 @@ impl<'a> Parser<'a> {
                     len: 0,
                     path,
                 });
-                self.push_line(line, depth, Some(node), path);
+                self.push_line(line, depth, Some(node), path)?;
                 let mut count = 0u32;
                 loop {
                     self.ws();
@@ -322,6 +361,8 @@ impl<'a> Parser<'a> {
                         self.value(depth + 1, Some(k), child)?;
                     }
                     count += 1;
+                    // kept as it grows, for a document cut short inside this container
+                    self.doc.nodes[node as usize].len = count;
                     self.ws();
                     match self.peek() {
                         Some(b',') => {
@@ -339,41 +380,34 @@ impl<'a> Parser<'a> {
                 close_line.indent(depth);
                 close_line.push(if is_array { "]" } else { "}" }, Tok::Punct);
                 let close_idx = self.doc.lines.len() as u32;
-                self.push_line(close_line, depth, None, path);
-                let n = &mut self.doc.nodes[node as usize];
-                n.close_line = close_idx;
-                n.len = count;
+                self.push_line(close_line, depth, None, path)?;
+                self.doc.nodes[node as usize].close_line = close_idx;
                 Ok(())
             }
             Some(b'"') => {
                 let s = self.string()?;
                 line.push(s, Tok::Str);
-                self.push_line(line, depth, None, path);
-                Ok(())
+                self.push_line(line, depth, None, path)
             }
             Some(b't') => {
                 let s = self.literal("true")?;
                 line.push(s, Tok::Bool);
-                self.push_line(line, depth, None, path);
-                Ok(())
+                self.push_line(line, depth, None, path)
             }
             Some(b'f') => {
                 let s = self.literal("false")?;
                 line.push(s, Tok::Bool);
-                self.push_line(line, depth, None, path);
-                Ok(())
+                self.push_line(line, depth, None, path)
             }
             Some(b'n') => {
                 let s = self.literal("null")?;
                 line.push(s, Tok::Null);
-                self.push_line(line, depth, None, path);
-                Ok(())
+                self.push_line(line, depth, None, path)
             }
             Some(b'-' | b'0'..=b'9') => {
                 let s = self.number()?;
                 line.push(s, Tok::Num);
-                self.push_line(line, depth, None, path);
-                Ok(())
+                self.push_line(line, depth, None, path)
             }
             Some(_) => self.err("unexpected character"),
             None => self.err("unexpected end of input"),
@@ -381,17 +415,45 @@ impl<'a> Parser<'a> {
     }
 }
 
-/// Parse and pretty-print one JSON document.
+/// Parse and pretty-print one JSON document, within the default [`Budget`].
 pub fn parse(input: &[u8]) -> Result<JsonDoc, JsonError> {
-    let s = std::str::from_utf8(input)
-        .map_err(|e| JsonError { offset: e.valid_up_to(), message: "not valid UTF-8".into() })?;
+    parse_in(input, &mut Budget::default(), false)
+}
+
+/// [`parse`] within `budget`. `cut` says `input` is the start of a longer document, so ending in
+/// the middle of a value is where it was cut, not an error. A document cut short (by either) is
+/// [`JsonDoc::cut`].
+pub fn parse_in(input: &[u8], budget: &mut Budget, cut: bool) -> Result<JsonDoc, JsonError> {
+    let s = match std::str::from_utf8(input) {
+        Ok(s) => s,
+        // a character cut in two at the end
+        Err(e) if cut && e.error_len().is_none() => std::str::from_utf8(&input[..e.valid_up_to()]).expect("valid"),
+        Err(e) => return Err(JsonError { offset: e.valid_up_to(), message: "not valid UTF-8".into() }),
+    };
     let s = s.strip_prefix('\u{feff}').unwrap_or(s);
-    let mut p = Parser { s, b: s.as_bytes(), i: 0, doc: JsonDoc::default() };
+    let mut p = Parser { s, b: s.as_bytes(), i: 0, doc: JsonDoc::default(), budget, cut };
     let root = p.path(0, Seg::Root);
-    p.value(0, None, root)?;
+    match p.value(0, None, root) {
+        Ok(()) => {}
+        Err(Stop::Error(e)) => return Err(e),
+        Err(Stop::Cut) => {
+            let spent = p.budget.spent();
+            let mut doc = p.doc;
+            // containers still open end with the last value shown
+            let last = doc.lines.len().saturating_sub(1) as u32;
+            for n in doc.nodes.iter_mut().filter(|n| n.close_line == 0) {
+                n.close_line = last.max(n.open_line);
+            }
+            if spent {
+                doc.push_note(cut_line());
+            }
+            doc.cut = true;
+            return Ok(doc);
+        }
+    }
     p.ws();
     if p.i != p.b.len() {
-        return p.err("unexpected data after the JSON value");
+        return Err(JsonError { offset: p.i, message: "unexpected data after the JSON value".into() });
     }
     Ok(p.doc)
 }
@@ -440,6 +502,56 @@ mod tests {
         let folded = doc.visible_lines(&HashSet::from([items_node]));
         assert_eq!(all.len(), doc.lines.len());
         assert_eq!(folded.len(), doc.lines.len() - 7);
+    }
+
+    /// Up to 0.5.1 a value 500 levels deep was indented 1,000 spaces, on every line of it.
+    #[test]
+    fn deep_values_are_indented_64_columns_at_most() {
+        let body = format!("{}{}{}", "[".repeat(500), vec!["1"; 1000].join(","), "]".repeat(500));
+        let doc = parse(body.as_bytes()).unwrap();
+        assert_eq!(doc.lines.len(), 2 * 500 + 1000);
+        assert!(doc.lines.iter().all(|l| l.line.text.chars().count() <= 64 + 2), "{:?}", doc.lines[600].line.text);
+        assert_eq!(doc.lines[600].line.text, format!("{}500› 1,", " ".repeat(59)));
+        assert_eq!(doc.lines[600].depth, 500, "the depth is kept for folding");
+    }
+
+    #[test]
+    fn lines_stop_at_the_budget_and_open_containers_end_there() {
+        let body = format!("[{}]", vec!["1"; 100].join(","));
+        let mut budget = Budget::new(10, 1 << 20);
+        let doc = parse_in(body.as_bytes(), &mut budget, false).unwrap();
+        assert!(doc.cut && budget.spent());
+        assert_eq!(doc.lines.len(), 11);
+        assert_eq!(doc.lines[10].line, cut_line());
+        assert_eq!(doc.lines[10].path, NO_PATH);
+        assert_eq!(doc.path_string(NO_PATH), "$");
+        let root = doc.nodes[0];
+        assert_eq!((root.open_line, root.close_line, root.len), (0, 9, 9));
+        // folded, the container hides its values and not the note
+        assert_eq!(doc.visible_lines(&HashSet::from([0])), vec![0, 10]);
+        // a document within its budget is whole
+        let doc = parse_in(body.as_bytes(), &mut Budget::new(102, 1 << 20), false).unwrap();
+        assert!(!doc.cut);
+        assert_eq!(doc.nodes[0].len, 100);
+    }
+
+    /// The start of a longer body (the viewer formats the first 32 MB): where it ends is a cut,
+    /// not an error, wherever it falls.
+    #[test]
+    fn an_input_cut_short_parses_up_to_the_cut() {
+        let whole = r#"{"a":[1,22,{"b":"x\u00e9y","t":true,"n":null},-1.5e3],"é":"z"}"#;
+        assert!(parse(whole.as_bytes()).is_ok());
+        for end in 0..whole.len() {
+            let doc = parse_in(&whole.as_bytes()[..end], &mut Budget::default(), true)
+                .unwrap_or_else(|e| panic!("cut at {end}: {e}"));
+            assert!(doc.cut || end == whole.len(), "cut at {end}");
+            assert!(doc.nodes.iter().all(|n| n.close_line >= n.open_line));
+            if end < whole.len() {
+                assert!(parse(&whole.as_bytes()[..end]).is_err(), "cut at {end} without saying so");
+            }
+        }
+        // what is not JSON before the cut is still an error
+        assert!(parse_in(b"[1, nope, 2", &mut Budget::default(), true).is_err());
     }
 
     #[test]
