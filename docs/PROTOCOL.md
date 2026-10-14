@@ -128,6 +128,7 @@ Shared value types:
 ```
 
 - Chunks of one body are sent in increasing `offset` order. A gap (the next `offset` is larger than the bytes received so far) means chunks were dropped on the device; the host marks the body with a gap.
+- A chunk may hold the bytes of several short writes: the device gathers writes shorter than this header (byte-at-a-time reads, say) into chunks of up to 8 KiB, for about 50 ms at most. Its `ts` is then when the first of them was written or read.
 - `dir = 0` bytes are exactly what went to the wire as the request body: what the `RequestBody` wrote for OkHttp (compressed only if the app opted in, e.g. OkHttp 5's `Request.Builder.gzip()`, in which case the request headers carry `Content-Encoding` and the host decodes it), and what the app wrote to the output stream for HttpURLConnection.
 - `dir = 1` bytes are the response body **as it came off the wire for OkHttp** (still Content-Encoded, because network interceptors run below OkHttp's transparent gzip), and **as returned by the input stream for HttpURLConnection** (which already removed its own transparent gzip). The host decodes according to the headers of the same direction.
 - `dir = 2` bytes are the rewritten body the app actually received. It is never Content-Encoded (the rule engine removes `Content-Encoding`, §8.4).

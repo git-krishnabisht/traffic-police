@@ -304,7 +304,7 @@ public final class RuntimeProtocolTest {
             assertTrue(q.bytes() <= 64 * 1024);
         }
         List<Event> queued = new ArrayList<>();
-        q.drainTo(queued);
+        q.drainTo(queued, new ArrayList<Txn.Body>());
         assertEquals(0, q.bytes());
         assertTrue(queued.size() + " queued", queued.size() <= 64 * 1024 / 65);
         assertEquals(100_000 - queued.size(), q.takeDropped(0).events);

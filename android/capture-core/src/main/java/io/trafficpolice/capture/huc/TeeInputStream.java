@@ -32,7 +32,7 @@ final class TeeInputStream extends FilterInputStream {
         if (b < 0) {
             eof();
         } else {
-            record(new byte[] {(byte) b}, 0, 1);
+            record(b);
         }
         return b;
     }
@@ -74,17 +74,31 @@ final class TeeInputStream extends FilterInputStream {
         return skipped;
     }
 
+    private void started() {
+        if (first) {
+            first = false;
+            txn.mark("resp_body_start");
+        }
+    }
+
     private void record(byte[] b, int off, int len) {
         try {
-            if (first) {
-                first = false;
-                txn.mark("resp_body_start");
-            }
+            started();
             if (txn.response.wantsBytes()) {
                 txn.response.write(b, off, len);
             } else {
                 txn.response.skip(len);
             }
+        } catch (Throwable t) {
+            internal(t);
+        }
+    }
+
+    /** One byte ({@code read()}): gathered with the bytes around it, captured or not. */
+    private void record(int b) {
+        try {
+            started();
+            txn.response.write(b);
         } catch (Throwable t) {
             internal(t);
         }

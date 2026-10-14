@@ -35,14 +35,17 @@ final class EventWriter implements Runnable {
     @Override
     public void run() {
         List<Event> batch = new ArrayList<>();
+        List<Txn.Body> due = new ArrayList<>();
         while (running) {
             runTasks();
             try {
-                // no timeout: every offer, and every task posted (attach, detach, control, stop), wakes it
-                queue.drainTo(batch);
+                // a timeout only while bodies hold gathered bytes (until they are due): every offer,
+                // and every task posted (attach, detach, control, stop), wakes it
+                queue.drainTo(batch, due);
             } catch (InterruptedException ie) {
                 break;
             }
+            sendGathered(due);
             Event.Dropped dropped = queue.takeDropped(rt.platform.nanoTime());
             if (dropped != null) {
                 emit(dropped);
@@ -69,6 +72,18 @@ final class EventWriter implements Runnable {
             }
         }
         runTasks();
+    }
+
+    /** The bytes bodies gathered that have waited long enough; their chunks go in the next round. */
+    private void sendGathered(List<Txn.Body> due) {
+        for (Txn.Body body : due) {
+            try {
+                body.sendDue();
+            } catch (Throwable t) {
+                rt.internalError("writer.gathered", t);
+            }
+        }
+        due.clear();
     }
 
     private void runTasks() {
