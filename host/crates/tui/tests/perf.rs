@@ -558,13 +558,21 @@ fn add_response(app: &mut App, txn: u64, headers: Vec<(String, String)>, body: B
     add_exchange(app, txn, 200, headers, body)
 }
 
-/// A finished GET answered with `status`, `headers` and `body`; returns its index.
+/// A finished GET answered with `status`, `headers` and `body`, which comes in chunks of 64 KiB
+/// as a device sends them (PROTOCOL.md §3); returns its index.
 fn add_exchange(app: &mut App, txn: u64, status: u16, headers: Vec<(String, String)>, body: Bytes) -> TxnIdx {
     let source = app.store.current_source().expect("demo source").id;
     let key = TxnKey { source, txn };
     let at = app.store.latest() + NS_PER_MS;
     let len = body.len() as u64;
-    app.ingest(vec![
+    let chunks = (0..body.len()).step_by(64 << 10).map(|from| SessionEvent::Body {
+        key,
+        dir: BodyDir::Response,
+        at: at + 2 * NS_PER_MS,
+        offset: from as u64,
+        bytes: body.slice(from..(from + (64 << 10)).min(body.len())),
+    });
+    let mut events = vec![
         SessionEvent::Request(Box::new(RequestStarted {
             key,
             at,
@@ -590,7 +598,9 @@ fn add_exchange(app: &mut App, txn: u64, status: u16, headers: Vec<(String, Stri
             headers,
             conn: None,
         })),
-        SessionEvent::Body { key, dir: BodyDir::Response, at: at + 2 * NS_PER_MS, offset: 0, bytes: body },
+    ];
+    events.extend(chunks);
+    events.extend([
         SessionEvent::BodyEnd {
             key,
             dir: BodyDir::Response,
@@ -602,6 +612,7 @@ fn add_exchange(app: &mut App, txn: u64, status: u16, headers: Vec<(String, Stri
         },
         SessionEvent::Completed { key, at: at + 3 * NS_PER_MS },
     ]);
+    app.ingest(events);
     app.now_override = Some(app.store.latest());
     app.store.find(key).expect("added")
 }

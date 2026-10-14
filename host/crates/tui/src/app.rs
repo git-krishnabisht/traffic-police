@@ -836,7 +836,8 @@ impl App {
         let headers = store.decoding_headers(t, headers);
         let key = body_key(meta);
         let epoch = self.bodies.epoch();
-        // the bytes, read (from memory or the spill file) once, and only when a view is built
+        // a small body's bytes, read (from memory or the spill file) once, and only when a view is
+        // built here; a worker reads a large one's
         let raw = std::cell::OnceCell::new();
         let bytes = || raw.get_or_init(|| store.body_bytes(meta)).clone();
         let inline = || {
@@ -848,7 +849,7 @@ impl App {
             txn,
             dir,
             key,
-            raw: bytes(),
+            raw: store.body_pieces(meta),
             headers: headers.as_deref().cloned(),
         });
         if let Lookup::BuildHere = lookup {

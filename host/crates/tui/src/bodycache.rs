@@ -4,9 +4,9 @@
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 
-use bytes::Bytes;
 use traffic_police_core::decode::encoding::{self, DecodeError};
 use traffic_police_core::model::{BodyDir, TxnIdx};
+use traffic_police_core::store::BodyPieces;
 use traffic_police_proto::Headers;
 
 use crate::bodyview::BodyView;
@@ -41,13 +41,16 @@ pub struct BodyJob {
     pub txn: TxnIdx,
     pub dir: BodyDir,
     pub key: BodyKey,
-    pub raw: Bytes,
+    /// Where the body's bytes are: read where the job runs, since joining a body's chunks or
+    /// reading it back from the spill file takes a while for a large one (until 2026-10-14 the UI
+    /// task read them to make the job).
+    pub raw: BodyPieces,
     pub headers: Option<Headers>,
 }
 
 impl BodyJob {
     pub fn run(&self) -> BodyView {
-        BodyView::build(self.raw.clone(), self.headers.as_ref())
+        BodyView::build(self.raw.bytes(), self.headers.as_ref())
     }
 }
 
@@ -197,6 +200,8 @@ impl BodyCache {
 
 #[cfg(test)]
 mod tests {
+    use bytes::Bytes;
+
     use super::*;
 
     fn view(n: usize) -> BodyView {
@@ -208,7 +213,8 @@ mod tests {
     fn small_bodies_build_here_large_ones_on_a_worker() {
         let mut c = BodyCache::new();
         assert!(matches!(c.lookup(0, BodyDir::Response, 1, || true, || unreachable!()), Lookup::BuildHere));
-        let job = || BodyJob { epoch: 0, txn: 1, dir: BodyDir::Response, key: 7, raw: Bytes::new(), headers: None };
+        let job =
+            || BodyJob { epoch: 0, txn: 1, dir: BodyDir::Response, key: 7, raw: BodyPieces::default(), headers: None };
         assert!(matches!(c.lookup(1, BodyDir::Response, 7, || false, job), Lookup::Building { stale: false }));
         // asking again does not queue a second build, nor look at the body again
         assert!(matches!(
@@ -220,7 +226,8 @@ mod tests {
         c.finish(&jobs[0], view(3));
         assert!(!c.is_building(1, BodyDir::Response));
         // the body grew meanwhile: the old view is served while the new one builds
-        let job = || BodyJob { epoch: 0, txn: 1, dir: BodyDir::Response, key: 8, raw: Bytes::new(), headers: None };
+        let job =
+            || BodyJob { epoch: 0, txn: 1, dir: BodyDir::Response, key: 8, raw: BodyPieces::default(), headers: None };
         assert!(matches!(c.lookup(1, BodyDir::Response, 8, || false, job), Lookup::Building { stale: true }));
         assert!(c.get_mut(1, BodyDir::Response).is_some());
     }
