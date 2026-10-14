@@ -7,7 +7,8 @@ name: release
 # installers (install.sh, install.ps1) install it.
 #
 # Nothing is built for release before every check of the host and Android workflows passes
-# (lint, tests on three systems, fuzzing, the JVM suites, the sample app), and a tag must name the
+# (lint, tests on three systems, fuzzing, the JVM suites, the sample app) and the advisories
+# check finds no known security problem in the host's dependencies, and a tag must name the
 # version that the code says (until 2026-10-09 a release ran no tests).
 on:
   workflow_dispatch:
@@ -20,6 +21,10 @@ jobs:
 
   android-checks:
     uses: ./.github/workflows/android.yml
+
+  # the advisories as of today: the last change to Cargo.lock may be weeks old
+  advisories:
+    uses: ./.github/workflows/advisories.yml
 
   # a tag names the version of the host crates and of the Android libraries, and has notes
   version:
@@ -68,7 +73,7 @@ jobs:
           if-no-files-found: error
 
   host:
-    needs: [host-checks, android-checks, version, agent]
+    needs: [host-checks, android-checks, advisories, version, agent]
     strategy:
       fail-fast: false
       matrix:

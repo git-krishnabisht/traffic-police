@@ -2,15 +2,20 @@ name: advisories
 
 # Known security problems in the host's dependencies (the RustSec advisory database, through
 # cargo-deny's defaults: vulnerabilities, unsound and unmaintained crates). On changes to the
-# dependencies, and weekly, since new advisories appear without any change here.
+# dependencies, every day, since new advisories appear without any change here, and before
+# every release (until 2026-10-14 a release was checked only when its commit changed Cargo.lock:
+# 0.5.1's version change did, and so RUSTSEC-2026-0344, published after that week's check, was
+# found before it shipped).
 on:
   push:
     paths: ["host/Cargo.lock", "host/**/Cargo.toml", ".github/workflows/advisories.yml"]
   pull_request:
     paths: ["host/Cargo.lock", "host/**/Cargo.toml", ".github/workflows/advisories.yml"]
   schedule:
-    - cron: "41 4 * * 1"
+    - cron: "41 4 * * *"
   workflow_dispatch:
+  # release.yml runs it before it builds a release
+  workflow_call:
 
 defaults:
   run:
