@@ -5,7 +5,9 @@ import android.content.pm.ApplicationInfo;
 import android.util.Log;
 import io.trafficpolice.capture.core.CaptureRuntime;
 import io.trafficpolice.capture.core.SocketNames;
+import io.trafficpolice.capture.grpc.GrpcDetect;
 import io.trafficpolice.capture.okhttp.OkHttpDetect;
+import java.util.Map;
 
 /** Starts the runtime in an Android process (library mode). */
 public final class AndroidRuntime {
@@ -45,13 +47,22 @@ public final class AndroidRuntime {
             options.ringTxns = bufferTxns;
             options.ringBytes = bufferBytes;
         }
-        boolean okhttp = OkHttpDetect.present();
+        final boolean okhttp = OkHttpDetect.present();
         boolean supported = okhttp && OkHttpDetect.supported();
         options.okhttp = supported;
-        options.clients.put("okhttp", okhttp ? OkHttpDetect.version() : null);
-        if (grpcPresent()) {
-            options.clients.put("grpc", io.trafficpolice.capture.grpc.GrpcDetect.version());
-        }
+        final boolean grpc = grpcPresent();
+        // the versions are read when a host connects, not here on the main thread before
+        // Application.onCreate: reading gRPC's initializes io.grpc.internal.GrpcUtil (and OkHttp's
+        // loads its classes); the hello reports the same
+        options.lateClients = new CaptureRuntime.Clients() {
+            @Override
+            public void clients(Map<String, String> into) {
+                into.put("okhttp", okhttp ? OkHttpDetect.version() : null);
+                if (grpc) {
+                    into.put("grpc", GrpcDetect.version());
+                }
+            }
+        };
         CaptureRuntime rt = CaptureRuntime.start(platform, options);
         if (okhttp && !supported) {
             rt.diag("warn", "okhttp_unsupported_version",

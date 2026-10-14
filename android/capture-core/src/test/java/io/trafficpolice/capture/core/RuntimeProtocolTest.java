@@ -310,6 +310,46 @@ public final class RuntimeProtocolTest {
         assertEquals(100_000 - queued.size(), q.takeDropped(0).events);
     }
 
+    /**
+     * What costs the app's start is done when a host connects instead: the late client versions
+     * (gRPC's initializes GrpcUtil) and the instance id (SecureRandom). The hello is the same.
+     */
+    @Test
+    public void lateClientsAndTheInstanceAreReadWhenAHostConnects() throws Exception {
+        rt.stop();
+        final java.util.concurrent.atomic.AtomicInteger reads = new java.util.concurrent.atomic.AtomicInteger();
+        CaptureRuntime.Options o = new CaptureRuntime.Options();
+        o.sampleTraffic = false;
+        o.clients.put("okhttp", "4.12.0");
+        o.lateClients = new CaptureRuntime.Clients() {
+            @Override
+            public void clients(Map<String, String> into) {
+                reads.incrementAndGet();
+                into.put("grpc", "1.84.0");
+            }
+        };
+        CaptureRuntime late = CaptureRuntime.start(platform, o);
+        try {
+            TestPlatform.awaitWriter(late);
+            assertEquals("nothing read at start", 0, reads.get());
+            assertEquals("no instance id yet", null, late.instance);
+            String first;
+            try (TestHost host = TestHost.connect(late)) {
+                Map<String, Object> clients = host.hello.obj("clients");
+                assertEquals(java.util.Arrays.asList("okhttp", "grpc"), new ArrayList<>(clients.keySet()));
+                assertEquals("1.84.0", clients.get("grpc"));
+                first = host.hello.str("instance");
+                assertTrue(first, first.matches("[0-9a-f]{32}"));
+            }
+            try (TestHost host = TestHost.connect(late)) {
+                assertEquals("one instance for every hello", first, host.hello.str("instance"));
+            }
+            assertEquals(2, reads.get());
+        } finally {
+            late.stop();
+        }
+    }
+
     /** The app's limits (TrafficPolice.buffer): what is over them goes at once, and hello shows them. */
     @Test
     public void theAppSetsWhatTheRingKeeps() throws Exception {

@@ -22,6 +22,12 @@ public final class CaptureRuntime {
         public String build;
         /** Client name to detected version (null when absent), e.g. okhttp → 4.12.0. */
         public final Map<String, String> clients = new LinkedHashMap<>();
+        /**
+         * More client versions, read when a hello is built (on the host connection's thread)
+         * rather than at start (on the app's main thread, before Application.onCreate): reading
+         * gRPC's initializes its GrpcUtil. Put after {@link #clients}; null for none.
+         */
+        public Clients lateClients;
         public boolean okhttp;
         /** The replay ring (PROTOCOL.md §6): this many transactions at most, in this much memory. */
         public int ringTxns = 1000;
@@ -38,13 +44,19 @@ public final class CaptureRuntime {
         public long trafficIntervalMillis = 500;
     }
 
+    /** Puts client versions into a hello's {@code clients} (see {@link Options#lateClients}). */
+    public interface Clients {
+        void clients(Map<String, String> into);
+    }
+
     final Platform platform;
     final Options options;
     final EventQueue queue;
     final ReplayRing ring;
     final EventWriter writer;
     final Recorder recorder;
-    final String instance;
+    /** Made when first asked (a hello): UUID.randomUUID() starts SecureRandom, which takes a while. */
+    volatile String instance;
     final long startedTs;
     /** The writer's thread (tests look at it). */
     final Thread writerThread;
@@ -60,7 +72,7 @@ public final class CaptureRuntime {
         this.platform = platform;
         this.options = options;
         this.config = options.config;
-        this.instance = options.instance != null ? options.instance : UUID.randomUUID().toString().replace("-", "");
+        this.instance = options.instance;
         this.startedTs = platform.nanoTime();
         this.queue = new EventQueue(options.queueBytes);
         this.ring = new ReplayRing(options.ringTxns, options.ringBytes);
@@ -146,7 +158,17 @@ public final class CaptureRuntime {
     }
 
     public String instance() {
-        return instance;
+        String id = instance;
+        if (id == null) {
+            synchronized (this) {
+                id = instance;
+                if (id == null) {
+                    id = UUID.randomUUID().toString().replace("-", "");
+                    instance = id;
+                }
+            }
+        }
+        return id;
     }
 
     RuleSet rules() {
@@ -229,7 +251,7 @@ public final class CaptureRuntime {
             j.kv("build", options.build);
         }
         j.kv("mode", options.mode).endObj();
-        j.kv("instance", instance);
+        j.kv("instance", instance());
         j.key("app").obj().kv("package", app.packageName).kv("process", app.processName).kv("pid", app.pid)
                 .kv("uid", app.uid).kv("debuggable", app.debuggable).endObj();
         j.key("device").obj().kv("api", dev.api);
@@ -264,6 +286,13 @@ public final class CaptureRuntime {
         }
         j.endArr();
         Map<String, String> clients = new LinkedHashMap<>(options.clients);
+        if (options.lateClients != null) {
+            try {
+                options.lateClients.clients(clients);
+            } catch (Throwable t) {
+                internalError("hello.clients", t);
+            }
+        }
         if (attach != null) {
             attach.clients(clients);
         }
