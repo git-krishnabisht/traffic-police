@@ -232,6 +232,20 @@ impl SessionLog {
     /// when given, plus those that belong to no request), then the store's annotations. Returns
     /// how many requests it holds.
     pub fn export(&self, store: &SessionStore, out: &Path, keep: Option<&HashSet<TxnKey>>) -> io::Result<usize> {
+        self.export_until(store, out, keep, &|| false)
+    }
+
+    /// [`SessionLog::export`], asking `stop` as it goes (between two pieces of the stream, and
+    /// two records of the log); when it says so the export ends with an error of kind
+    /// `Interrupted`, and the file is left unfinished.
+    pub fn export_until(
+        &self,
+        store: &SessionStore,
+        out: &Path,
+        keep: Option<&HashSet<TxnKey>>,
+        stop: &dyn Fn() -> bool,
+    ) -> io::Result<usize> {
+        let stopped = || io::Error::new(io::ErrorKind::Interrupted, "stopped");
         let path = {
             let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             match &mut inner.sink {
@@ -255,6 +269,9 @@ impl SessionLog {
         let mut chunk = vec![0u8; 256 * 1024];
         let mut current: Option<SourceId> = None;
         loop {
+            if stop() {
+                return Err(stopped());
+            }
             let n = reader.read(&mut chunk)?;
             if n == 0 {
                 break;
@@ -284,6 +301,9 @@ impl SessionLog {
             kept.fold((Ts::MAX, 0), |(a, b), t| (a.min(t.start), b.max(t.end.unwrap_or(t.start))))
         });
         log_records(store, span, |record| {
+            if stop() {
+                return Err(stopped());
+            }
             buf.clear();
             frame::encode_raw(kind::LOG, record, &mut buf).map_err(io::Error::other)?;
             gz.write_all(&buf)

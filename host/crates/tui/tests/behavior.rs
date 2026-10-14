@@ -928,6 +928,8 @@ fn save_a_body_and_export_har() {
     let body = dir.join("sessions.json");
     app.prompt.as_mut().unwrap().input = tui_input::Input::new(body.display().to_string());
     app.finish_prompt();
+    // written on a worker by the live loop; here in line
+    app.run_jobs_inline();
     let saved = std::fs::read_to_string(&body).unwrap();
     assert!(saved.contains("\"sessionId\""), "{saved}");
 
@@ -936,6 +938,7 @@ fn save_a_body_and_export_har() {
     let har = dir.join("all.har");
     app.prompt.as_mut().unwrap().input = tui_input::Input::new(har.display().to_string());
     app.finish_prompt();
+    app.run_jobs_inline();
     let doc: serde_json::Value = serde_json::from_slice(&std::fs::read(&har).unwrap()).unwrap();
     let entries = doc["log"]["entries"].as_array().unwrap();
     assert_eq!(entries.len(), app.view_store().len());
@@ -944,6 +947,71 @@ fn save_a_body_and_export_har() {
     assert!(init["request"]["postData"]["text"].as_str().unwrap().starts_with('{'));
     assert!(init["_trafficPolice"]["thread"]["name"].is_string());
     assert!(init["timings"]["wait"].as_f64().unwrap() >= 0.0);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// A HAR or session file is written in the background: the UI goes on, and the footer says what
+/// is being written and then how it went. Quitting waits for it; quitting again stops it, and
+/// what it wrote is removed.
+#[test]
+fn exports_are_written_in_the_background_and_quitting_waits_for_them() {
+    let dir = std::env::temp_dir().join(format!("tp-export-test-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut app = app_at(40.0);
+    render_text(&mut app, MEDIUM.0, MEDIUM.1);
+    let keys = |app: &mut App, keys: &str| {
+        // keys only, as the live loop takes them: jobs run on workers there, not in line
+        for k in traffic_police_tui::parse_keys(keys).unwrap() {
+            app.handle_key(k);
+        }
+    };
+    let export_to = |app: &mut App, keys_typed: &str, path: &std::path::Path| {
+        keys(app, keys_typed);
+        app.prompt.as_mut().unwrap().input = tui_input::Input::new(path.display().to_string());
+        app.finish_prompt();
+    };
+    let har = dir.join("all.har");
+    export_to(&mut app, "ea", &har);
+    assert!(!har.exists(), "not written on the UI task");
+    assert!(app.current_message().unwrap_or_default().contains("in the background"), "{:?}", app.current_message());
+    assert_eq!(app.exporting().as_deref(), Some("writing all.har…"));
+    // the same file again, while it is written: not taken
+    export_to(&mut app, "ea", &har);
+    assert!(app.current_message().unwrap_or_default().contains("exists"), "{:?}", app.current_message());
+    app.prompt = None;
+    app.overlay = Overlay::None;
+    // :q waits for it
+    keys(&mut app, ":q<Enter>");
+    assert!(!app.should_quit);
+    assert!(app.current_message().unwrap_or_default().starts_with("quitting once "), "{:?}", app.current_message());
+    app.run_jobs_inline();
+    assert!(app.should_quit, "quits once it is written");
+    let doc: serde_json::Value = serde_json::from_slice(&std::fs::read(&har).unwrap()).unwrap();
+    assert_eq!(doc["log"]["entries"].as_array().unwrap().len(), app.view_store().len());
+    assert!(app.current_message().unwrap_or_default().starts_with("wrote "), "{:?}", app.current_message());
+
+    // quitting twice stops it: no file
+    let mut app = app_at(40.0);
+    let stopped = dir.join("stopped.har");
+    export_to(&mut app, "ea", &stopped);
+    keys(&mut app, ":q<Enter>:q<Enter>");
+    assert!(app.should_quit);
+    app.run_jobs_inline();
+    assert!(!stopped.exists(), "a stopped export leaves no file");
+    assert!(app.current_message().unwrap_or_default().contains("stopped"), "{:?}", app.current_message());
+
+    // one that fails says why, and when quitting waited for it, it does not quit yet
+    let mut app = app_at(40.0);
+    export_to(&mut app, "ea", &dir.join("no/such/dir/x.har"));
+    keys(&mut app, ":q<Enter>");
+    app.run_jobs_inline();
+    let said = app.current_message().unwrap_or_default().to_string();
+    assert!(said.starts_with("cannot write") && said.ends_with("so not quitting yet"), "{said:?}");
+    assert!(!app.should_quit);
+    assert_eq!(app.exporting(), None);
+    keys(&mut app, ":q<Enter>");
+    assert!(app.should_quit, "quitting again quits");
     std::fs::remove_dir_all(&dir).unwrap();
 }
 

@@ -158,7 +158,7 @@ pub fn restore_terminal() {
 /// What the panic hook does: a panic on the thread that owns the terminal ends the program (the UI
 /// unwinds, the backend says goodbye, then the process ends), so the terminal is put back before
 /// the message is printed, so that it can be read. A panic on another thread, while the UI runs,
-/// is a worker's (a body decode, a search, jq, a backend's task): tokio catches it and
+/// is a worker's (a body decode, a search, jq, an export, a backend's task): tokio catches it and
 /// the UI goes on, so the terminal and the spilled bodies stay, the message goes to the log
 /// instead of over the screen, and the footer says a background task failed. Up to 0.5.1 every
 /// panic put the terminal back and removed the spill directories, so after a worker's the UI went
@@ -300,8 +300,10 @@ pub async fn run(mut app: App, mut events: mpsc::Receiver<Vec<SessionEvent>>, op
     app.switch_apps = opts.switch.is_some();
     // dropping `term` puts the terminal back
     let end = event_loop(&mut term, &mut app, &mut events, opts.status, opts.switch).await;
-    // what still runs on workers for the UI is not wanted any more
+    // what still runs on workers for the UI is not wanted any more: searches, and files that
+    // quitting did not wait for (a signal, a second quit, the terminal gone), which are removed
     app.stop_searches();
+    app.stop_exports();
     end
 }
 
@@ -341,6 +343,7 @@ async fn event_loop(
     let (body_tx, mut body_rx) = mpsc::unbounded_channel::<(BodyJob, BodyView)>();
     let (search_tx, mut search_rx) = mpsc::unbounded_channel::<Vec<crate::app::SearchResult>>();
     let (rules_tx, mut rules_rx) = mpsc::unbounded_channel::<traffic_police_core::rules::RulesFile>();
+    let (export_tx, mut export_rx) = mpsc::unbounded_channel::<(std::path::PathBuf, Result<String, String>)>();
     // started once there is a rules file to watch (r can create it while the UI runs)
     let mut watcher = AbortOnDrop(None);
     let mut backend_open = true;
@@ -404,6 +407,10 @@ async fn event_loop(
                 app.rules_reloaded(f);
                 dirty = true;
             }
+            Some((path, result)) = export_rx.recv() => {
+                app.finish_export(&path, result);
+                dirty = true;
+            }
             signal = stop.recv() => {
                 let near_editor = editor.is_some() || editor_ended.is_some_and(|t| t.elapsed() < EDITOR_INTERRUPT);
                 if signal == StopSignal::Interrupt && near_editor {
@@ -445,6 +452,16 @@ async fn event_loop(
             watcher.0 = Some(tokio::spawn(crate::rules::watch(path, rules_tx.clone())));
         }
         dispatch_jobs(app, &body_tx, &jq_tx, &search_tx);
+        for job in app.take_export_jobs() {
+            let tx = export_tx.clone();
+            tokio::task::spawn_blocking(move || {
+                let path = job.path.clone();
+                let result = contained(|| job.run()).unwrap_or_else(|| {
+                    Err(format!("{} could not be written: an internal error (details in the log)", path.display()))
+                });
+                let _ = tx.send((path, result));
+            });
+        }
         if std::mem::take(&mut app.switch_request)
             && let Some(sw) = &switch
         {

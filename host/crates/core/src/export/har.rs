@@ -1,6 +1,8 @@
 //! HAR 1.2 (ARCHITECTURE.md §5.10): the standard fields, plus `_trafficPolice` on each entry for
 //! what HAR has no place for (thread, call stack, capture state, failure, rules, source).
 
+use std::io::{self, Write};
+
 use base64::Engine;
 use serde_json::{Map, Value, json};
 
@@ -296,15 +298,94 @@ fn ws_messages(store: &SessionStore, t: &Transaction) -> Value {
     Value::Array(messages)
 }
 
+fn creator() -> Value {
+    json!({ "name": "traffic-police", "version": env!("CARGO_PKG_VERSION") })
+}
+
 /// A HAR document for these transactions (in the order given).
 pub fn har(store: &SessionStore, txns: &[TxnIdx], now: Ts) -> Value {
     let entries: Vec<Value> = txns.iter().map(|&i| entry(store, store.txn(i), now)).collect();
     json!({
         "log": {
             "version": "1.2",
-            "creator": { "name": "traffic-police", "version": env!("CARGO_PKG_VERSION") },
+            "creator": creator(),
             "pages": [],
             "entries": entries,
         }
     })
+}
+
+/// Writes the document [`har`] makes, as `serde_json::to_writer_pretty` writes it, one entry at
+/// a time, so a big session's document is never all in memory (50,000 requests made 110 MB of
+/// text, and a tree of values several times that). `stop` is asked before each entry; when it
+/// says so the writing ends with an error of kind `Interrupted`.
+pub fn write_har(
+    store: &SessionStore,
+    txns: &[TxnIdx],
+    now: Ts,
+    out: &mut impl Write,
+    stop: &dyn Fn() -> bool,
+) -> io::Result<()> {
+    out.write_all(b"{\n  \"log\": {\n    \"version\": \"1.2\",\n    \"creator\": ")?;
+    write_nested(out, &creator(), 4)?;
+    out.write_all(b",\n    \"pages\": [],\n    \"entries\": [")?;
+    for (n, &i) in txns.iter().enumerate() {
+        if stop() {
+            return Err(io::Error::new(io::ErrorKind::Interrupted, "stopped"));
+        }
+        out.write_all(if n == 0 { b"\n      " } else { b",\n      " })?;
+        write_nested(out, &entry(store, store.txn(i), now), 6)?;
+    }
+    out.write_all(if txns.is_empty() { b"]\n  }\n}" } else { b"\n    ]\n  }\n}" })
+}
+
+/// `v` pretty-printed as a value `indent` columns in: every line after its first is moved over.
+/// (A newline in JSON text is only ever between two lines: inside strings it is escaped.)
+fn write_nested(out: &mut impl Write, v: &Value, indent: usize) -> io::Result<()> {
+    let text = serde_json::to_vec_pretty(v)?;
+    let pad = vec![b' '; indent];
+    for (n, line) in text.split(|&b| b == b'\n').enumerate() {
+        if n > 0 {
+            out.write_all(b"\n")?;
+            out.write_all(&pad)?;
+        }
+        out.write_all(line)?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::store::SourceIds;
+
+    /// The document written entry by entry is the one `har` makes, byte for byte, printed.
+    #[test]
+    fn written_entry_by_entry_it_is_the_same_document() {
+        let entries = json!({ "log": { "version": "1.2", "creator": { "name": "x", "version": "1" }, "entries": [
+            { "startedDateTime": "2026-09-29T10:40:01.000+05:30", "time": 120.5,
+              "request": { "method": "POST", "url": "https://api.example.com/login?a=1", "headers": [
+                { "name": "content-type", "value": "application/json" }],
+                "postData": { "mimeType": "application/json", "text": "{\"user\":\"a\\nb\"}" } },
+              "response": { "status": 200, "headers": [{ "name": "content-type", "value": "application/json" }],
+                "content": { "size": 11, "mimeType": "application/json", "text": "{\"ok\":true}" } },
+              "timings": { "send": 0.5, "wait": 70, "receive": 9.5 } },
+            { "startedDateTime": "2026-09-29T10:40:02.000+05:30", "time": 3,
+              "request": { "method": "GET", "url": "https://gone.example.com/", "headers": [] },
+              "response": { "status": 0, "headers": [], "content": { "size": 0 }, "_error": "refused" },
+              "timings": { "send": 0, "wait": 3, "receive": 0 } }
+        ] } });
+        let opened = crate::import::har(&serde_json::to_vec(&entries).unwrap(), &SourceIds::default()).unwrap();
+        let mut store = SessionStore::new();
+        store.apply_all(opened.events);
+        let now = store.latest();
+        for txns in [vec![], vec![0], vec![1, 0]] {
+            let mut written = Vec::new();
+            write_har(&store, &txns, now, &mut written, &|| false).unwrap();
+            let made = serde_json::to_vec_pretty(&har(&store, &txns, now)).unwrap();
+            assert_eq!(String::from_utf8(written).unwrap(), String::from_utf8(made).unwrap(), "{txns:?}");
+        }
+        let err = write_har(&store, &[0, 1], now, &mut Vec::new(), &|| true).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::Interrupted);
+    }
 }

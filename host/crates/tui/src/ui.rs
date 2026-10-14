@@ -1793,6 +1793,12 @@ fn draw_footer(app: &App, r: Rect, buf: &mut Buffer) {
             }
             right.push(Span::styled(format!("⚠ {}", d.code.replace('_', " ")), t.warn()));
         }
+        if let Some(e) = app.exporting() {
+            if !right.is_empty() {
+                right.push(Span::raw("  "));
+            }
+            right.push(Span::styled(e, t.accent()));
+        }
     }
     if app.frames.visible {
         let (fps, took) = app.frames.summary();

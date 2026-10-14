@@ -430,6 +430,13 @@ impl FrameStats {
     }
 }
 
+/// A file being written on a worker ([`crate::share::ExportJob`]).
+#[derive(Debug, Clone)]
+pub(crate) struct Exporting {
+    pub path: PathBuf,
+    pub cancel: Arc<std::sync::atomic::AtomicBool>,
+}
+
 /// Where the Thread View's bars are, flattened in visual order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Bar {
@@ -491,6 +498,11 @@ pub struct App {
     pub palette: Option<crate::palette::Palette>,
     /// The captured stream, for saving the session (`e`).
     pub session_log: Option<Arc<traffic_police_core::session::SessionLog>>,
+    /// Files being written on workers, and those queued for the event loop to start.
+    pub(crate) exports: Vec<Exporting>,
+    pub(crate) export_jobs: Vec<crate::share::ExportJob>,
+    /// Quitting waits for the exports to end (a second quit does not).
+    pub(crate) quit_when_written: bool,
     pub search_input: Input,
     search_before: Option<String>,
     /// Logdawg's view, its filter as typed, where that stops parsing, and what it was before
@@ -595,6 +607,9 @@ impl App {
             clipboard: crate::share::ClipboardMode::default(),
             copied: None,
             session_log: None,
+            exports: Vec::new(),
+            export_jobs: Vec::new(),
+            quit_when_written: false,
             replay: None,
             diff_mark: None,
             diff: None,
@@ -1186,7 +1201,7 @@ impl App {
         if ctrl && k.code == KeyCode::Char('c') {
             match self.keymap.action(&k) {
                 Some(Action::Quit) => {
-                    self.should_quit = true;
+                    self.quit();
                     return;
                 }
                 Some(_) => {}
@@ -1412,6 +1427,22 @@ impl App {
         }
     }
 
+    /// Quits, unless files are being written: then the first quit says so and waits for them to
+    /// end, and a second one stops them (their files are removed) and quits at once.
+    fn quit(&mut self) {
+        if !self.exports.is_empty() && !self.quit_when_written {
+            self.quit_when_written = true;
+            let what = match self.exports.as_slice() {
+                [one] => format!("{} is written · quit again to stop it", one.path.display()),
+                more => format!("the {} files are written · quit again to stop them", more.len()),
+            };
+            self.flash(format!("quitting once {what} and quit now"));
+            return;
+        }
+        self.stop_exports();
+        self.should_quit = true;
+    }
+
     /// Lists what a filter object keeps (the rule form's match), showing its label in the bar.
     pub fn set_filter_object(&mut self, filter: Filter) {
         self.filter_input = Input::new(filter.source.clone());
@@ -1474,7 +1505,7 @@ impl App {
         }
         let not_detail = !matches!(self.focus, Focus::Detail | Focus::Preview);
         match a {
-            Action::Quit => self.should_quit = true,
+            Action::Quit => self.quit(),
             Action::Help => self.overlay = Overlay::Help,
             Action::ViewConnections => self.set_view(View::Connections),
             Action::ViewThreads => self.set_view(View::Threads),
@@ -2196,6 +2227,7 @@ impl App {
     /// Whether filters or body decodes are waiting to be run.
     pub fn has_queued_jobs(&self) -> bool {
         !self.jq_jobs.is_empty()
+            || !self.export_jobs.is_empty()
             || self.bodies.has_queued()
             || self.rows.has_body_wanted()
             || self.frozen.as_ref().is_some_and(|f| f.rows.has_body_wanted())
@@ -2218,6 +2250,11 @@ impl App {
         for job in self.take_jq_jobs() {
             let result = (self.jq_runner)(&job.filter, &job.bytes);
             self.finish_jq(job, result);
+        }
+        for job in self.take_export_jobs() {
+            let path = job.path.clone();
+            let result = job.run();
+            self.finish_export(&path, result);
         }
     }
 
