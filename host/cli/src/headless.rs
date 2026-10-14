@@ -16,7 +16,7 @@ use traffic_police_adb::Adb;
 use traffic_police_backends::{DemoConfig, DeviceTarget, run_device};
 use traffic_police_core::SessionEvent;
 use traffic_police_core::backend::{BackendCommand, ConnectionStatus};
-use traffic_police_core::export::har::har;
+use traffic_police_core::export::har::write_har;
 use traffic_police_core::export::tail::{finished, json_line, text_line};
 use traffic_police_core::filter::{BodySearch, Filter};
 use traffic_police_core::fmt::Ts;
@@ -584,9 +584,16 @@ pub async fn export_har(out: &Path, input: ExportInput<'_>, filter: Option<Filte
     let mut txns: Vec<TxnIdx> =
         (0..store.len() as TxnIdx).filter(|&i| passes(&store, i, filter.as_ref(), now)).collect();
     txns.sort_by_key(|&i| store.txn(i).start);
-    let doc = har(&store, &txns, now);
-    let bytes = serde_json::to_vec_pretty(&doc)?;
-    std::fs::write(out, bytes).with_context(|| format!("cannot write {}", out.display()))?;
+    // an entry at a time, so a big session's document is never all in memory (until 2026-10-14
+    // it was built whole first: 50,000 requests made 110 MB of text and a tree of values several
+    // times that); a file that is there is not replaced, and one half written is removed
+    let file = std::fs::File::create_new(out).with_context(|| format!("cannot write {}", out.display()))?;
+    let mut w = std::io::BufWriter::new(file);
+    if let Err(e) = write_har(&store, &txns, now, &mut w, &|| false).and_then(|()| w.flush()) {
+        drop(w);
+        let _ = std::fs::remove_file(out);
+        return Err(e).with_context(|| format!("cannot write {}", out.display()));
+    }
     note(format_args!("wrote {} of {} requests to {}", txns.len(), store.len(), out.display()));
     Ok(())
 }
