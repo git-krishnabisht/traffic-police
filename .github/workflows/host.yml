@@ -7,6 +7,11 @@ on:
     paths: ["host/**", "testdata/**", ".github/workflows/host.yml"]
   # release.yml runs every job here before it builds a release
   workflow_call:
+    inputs:
+      fuzz-seconds:
+        description: How long each fuzz target runs, in seconds
+        type: number
+        default: 60
 
 env:
   CARGO_TERM_COLOR: always
@@ -61,9 +66,10 @@ jobs:
       # ingest from protocol bytes to the store: a 50,000-event replay, then 20,000 events a second
       - run: cargo test --locked --release -p traffic-police-core --test ingest -- --ignored --nocapture
 
-  # cargo-fuzz targets (host/fuzz): each runs a minute; a crash fails the job and its input is
-  # kept as an artifact (add it to testdata/fuzz/<target>/ once fixed). Every target runs, also
-  # after one crashes (until 2026-10-09 the first crash ended the job)
+  # cargo-fuzz targets (host/fuzz): each runs a minute (a release, whose code a push fuzzed
+  # already, a shorter while: fuzz-seconds); a crash fails the job and its input is kept as an
+  # artifact (add it to testdata/fuzz/<target>/ once fixed). Every target runs, also after one
+  # crashes (until 2026-10-09 the first crash ended the job)
   fuzz:
     runs-on: ubuntu-latest
     steps:
@@ -75,11 +81,14 @@ jobs:
       - run: cargo +nightly install cargo-fuzz --locked
       - name: Fuzz every target
         working-directory: host/fuzz
+        env:
+          # empty on a push or a pull request, which have no inputs
+          FUZZ_SECONDS: ${{ inputs.fuzz-seconds || 60 }}
         run: |
           crashed=""
           for t in $(cargo +nightly fuzz list); do
             echo "::group::$t"
-            cargo +nightly fuzz run "$t" -- -max_total_time=60 -rss_limit_mb=2048 || crashed="$crashed $t"
+            cargo +nightly fuzz run "$t" -- -max_total_time="$FUZZ_SECONDS" -rss_limit_mb=2048 || crashed="$crashed $t"
             echo "::endgroup::"
           done
           if [ -n "$crashed" ]; then echo "::error::crashed:$crashed"; exit 1; fi

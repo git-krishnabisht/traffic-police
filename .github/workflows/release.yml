@@ -18,6 +18,10 @@ on:
 jobs:
   host-checks:
     uses: ./.github/workflows/host.yml
+    # the push of this code fuzzed it for a minute a target; here a short run, which still
+    # builds every target (the fuzz job took 7.5 of a release's 14 minutes)
+    with:
+      fuzz-seconds: 15
 
   android-checks:
     uses: ./.github/workflows/android.yml
