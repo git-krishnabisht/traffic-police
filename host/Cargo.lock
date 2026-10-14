@@ -2726,6 +2726,7 @@ dependencies = [
  "traffic-police-adb",
  "traffic-police-backends",
  "traffic-police-core",
+ "traffic-police-fakeadb",
  "traffic-police-proto",
  "tui-input",
  "unicode-width",

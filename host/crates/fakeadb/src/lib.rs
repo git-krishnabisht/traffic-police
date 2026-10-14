@@ -5,7 +5,7 @@
 //! begin at 1 again). [`FakeRuntime`] plays the capture runtime in an app process: `hello`, the
 //! handshake, replay from `resume_after_seq`, events as they happen, pings, and its process dying.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -44,6 +44,8 @@ struct Running {
 struct State {
     devices: Vec<Dev>,
     forwards: Vec<Forward>,
+    /// Every forward asked for, in order, as `(serial, remote)`: a socket probe is one.
+    forwarded: Vec<(String, String)>,
     next_transport: u64,
 }
 
@@ -75,6 +77,11 @@ struct Dev {
     uids: HashMap<String, u32>,
     /// Device TCP ports and the host address that serves each (`forward tcp:0 tcp:<port>`).
     tcp: HashMap<u16, std::net::SocketAddr>,
+    /// Packages `run-as` refuses (release builds; a userdebug image lists every app as
+    /// debuggable).
+    run_as_refused: HashSet<String>,
+    /// `ro.boot.disable_runas` is 1: `run-as` works for no package.
+    run_as_disabled: bool,
 }
 
 #[derive(Clone)]
@@ -137,6 +144,8 @@ impl FakeAdb {
                 log_epoch: 0,
                 uids: HashMap::new(),
                 tcp: HashMap::new(),
+                run_as_refused: HashSet::new(),
+                run_as_disabled: false,
             });
             id
         };
@@ -192,6 +201,19 @@ impl FakeAdb {
         self.with_device(serial, |d| {
             d.uids.insert(package.to_string(), uid);
         });
+    }
+
+    /// `run-as` refuses the package, as for a release build, though its processes may be
+    /// listed as debuggable (a userdebug image lists every app).
+    pub fn refuse_run_as(&self, serial: &str, package: &str) {
+        self.with_device(serial, |d| {
+            d.run_as_refused.insert(package.to_string());
+        });
+    }
+
+    /// `ro.boot.disable_runas` is 1: `run-as` works for no package, and the device says so.
+    pub fn disable_run_as(&self, serial: &str) {
+        self.with_device(serial, |d| d.run_as_disabled = true);
     }
 
     /// A TCP port on the device, served by `to` on this computer (a Flutter app's VM service).
@@ -267,6 +289,12 @@ impl FakeAdb {
     pub fn forwards(&self) -> Vec<(String, u16, String)> {
         let st = self.inner.state.lock().unwrap();
         st.forwards.iter().map(|f| (f.serial.clone(), f.port, f.remote.clone())).collect()
+    }
+
+    /// Every forward asked for, in order, as `(serial, remote)`, also those removed since: a
+    /// socket probe is one.
+    pub fn forwarded(&self) -> Vec<(String, String)> {
+        self.inner.state.lock().unwrap().forwarded.clone()
     }
 
     /// The shell commands the device ran, in order.
@@ -469,12 +497,11 @@ async fn transport_command(inner: &Arc<Inner>, s: &mut TcpStream, serial: &str, 
                 }
             })
         };
-        inner.state.lock().unwrap().forwards.push(Forward {
-            serial: serial.to_string(),
-            port,
-            remote: remote.to_string(),
-            task,
-        });
+        {
+            let mut st = inner.state.lock().unwrap();
+            st.forwarded.push((serial.to_string(), remote.to_string()));
+            st.forwards.push(Forward { serial: serial.to_string(), port, remote: remote.to_string(), task });
+        }
         if okay(s).await && okay(s).await {
             let _ = s.write_all(&hex4(port.to_string().as_bytes())).await;
         }
@@ -641,6 +668,23 @@ fn run_shell(d: &mut Dev, command: &str) -> (String, String, u8) {
             (String::new(), String::new(), 1)
         };
     }
+    // the picker's question, every package at once (tui/src/picker.rs, learn_debuggable): `*`
+    // when run-as is disabled, else each package run-as accepts
+    if command.contains("ro.boot.disable_runas")
+        && let Some(list) = command.split_once("for p in ").and_then(|(_, rest)| rest.split_once("; do"))
+    {
+        if d.run_as_disabled {
+            return ("*\n".into(), String::new(), 0);
+        }
+        let out: String = list
+            .0
+            .split_whitespace()
+            .map(unquote)
+            .filter(|p| !d.run_as_refused.contains(p))
+            .map(|p| format!("{p}\n"))
+            .collect();
+        return (out, String::new(), 0);
+    }
     if command.starts_with("getprop ") {
         let mut out = String::new();
         for part in command.split(';') {
@@ -662,6 +706,7 @@ fn run_shell(d: &mut Dev, command: &str) -> (String, String, u8) {
                 "ro.build.version.release" => "16".to_string(),
                 "ro.product.model" => d.model.clone(),
                 "ro.product.cpu.abi" => "arm64-v8a".to_string(),
+                "ro.boot.disable_runas" if d.run_as_disabled => "1".to_string(),
                 _ => String::new(),
             };
             out.push_str(&value);
@@ -683,12 +728,7 @@ fn run_shell(d: &mut Dev, command: &str) -> (String, String, u8) {
         return (out, String::new(), 0);
     }
     if let Some(name) = command.strip_prefix("pidof ") {
-        // as the shell reads it: 'quoted' (traffic_police_adb::quote) or bare
-        let name = name.trim();
-        let name = name
-            .strip_prefix('\'')
-            .and_then(|n| n.strip_suffix('\''))
-            .map_or(name.to_string(), |n| n.replace("'\\''", "'"));
+        let name = unquote(name.trim());
         let pids: Vec<String> = d.processes.iter().filter(|p| p.name == name).map(|p| p.pid.to_string()).collect();
         return if pids.is_empty() {
             (String::new(), String::new(), 1)
@@ -697,6 +737,11 @@ fn run_shell(d: &mut Dev, command: &str) -> (String, String, u8) {
         };
     }
     (String::new(), format!("/system/bin/sh: {command}: not found\n"), 127)
+}
+
+/// A word as the shell reads it: 'quoted' (traffic_police_adb::quote) or bare.
+fn unquote(word: &str) -> String {
+    word.strip_prefix('\'').and_then(|w| w.strip_suffix('\'')).map_or(word.to_string(), |w| w.replace("'\\''", "'"))
 }
 
 /// The capture runtime in one app process (PROTOCOL.md §6): it speaks first, waits for
