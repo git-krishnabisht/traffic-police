@@ -1,8 +1,8 @@
 //! The spill file: body bytes past the memory budget, appended to one file in a private per-run
 //! directory, `<temp>/traffic-police-<pid>-<suffix>/` (mode 0700 on Unix). The directory goes
-//! away when the store that made it is dropped, from the panic hook and on SIGTERM/SIGHUP
-//! ([`remove_all`]), and at the next start if this process died without either
-//! ([`remove_stale`]).
+//! away when the store that made it is dropped, when the process ends (also after a panic in the
+//! UI, or SIGTERM/SIGHUP: [`remove_all`]), and at the next start if this process died without
+//! either ([`remove_stale`]).
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
@@ -110,8 +110,9 @@ fn private_dir_in(parent: &Path) -> io::Result<PathBuf> {
     Ok(dir)
 }
 
-/// Removes every spill directory of this process (panic hook, SIGTERM, SIGHUP). Stores that are
-/// still alive lose their spilled bytes, so call this only on the way out.
+/// Removes every spill directory of this process, when it ends. Stores that are still alive lose
+/// their spilled bytes, so call this only on the way out: not from a panic that the process
+/// survives (one on a worker thread, which tokio catches).
 pub fn remove_all() {
     let dirs = std::mem::take(&mut *DIRS.lock().unwrap_or_else(|e| e.into_inner()));
     for d in dirs {

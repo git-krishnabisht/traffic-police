@@ -77,8 +77,14 @@ pub async fn run_session(
                     None => switching = false,
                 },
                 // the capture ended by itself (the app exited, a failure): the UI shows why, and
-                // another app can still be picked
-                _ = &mut capture, if running => running = false,
+                // another app can still be picked. One that panicked (a bug) could not say why.
+                ended = &mut capture, if running => {
+                    running = false;
+                    if ended.is_err_and(|e| e.is_panic()) {
+                        let why = "the capture stopped with an internal error (details in the log) · data kept";
+                        status.send_replace(ConnectionStatus::Failed(why.into()));
+                    }
+                }
             }
         };
         tracing::info!(from = %target.package, to = %next.package, serial = ?next.serial, "another app");

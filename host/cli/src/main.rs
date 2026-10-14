@@ -327,15 +327,26 @@ fn main() -> anyhow::Result<()> {
     }
 }
 
+/// Removes this run's spill directories when it is dropped: when the process ends, normally or
+/// after a panic in the UI (which carries on through the runtime once the backend said goodbye).
+struct RemoveSpillOnExit;
+
+impl Drop for RemoveSpillOnExit {
+    fn drop(&mut self) {
+        spill::remove_all();
+    }
+}
+
 /// Runs the UI: logging to the log file, spilled bodies cleaned up after.
 fn ui_run(log_file: Option<&Path>, work: impl Future<Output = anyhow::Result<()>>) -> anyhow::Result<()> {
     let _log = init_logging(log_file)?;
     traffic_police_core::fmt::set_local_offset_secs(traffic_police_tui::local_utc_offset_secs());
     spill::remove_stale();
+    // dropped after the runtime, which waits for its workers: what still runs there (an export)
+    // reads the spilled bodies until it ends
+    let _spill = RemoveSpillOnExit;
     let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
-    let result = rt.block_on(work);
-    spill::remove_all();
-    result
+    rt.block_on(work)
 }
 
 /// Runs a command without the UI: logging to the log file, spilled bodies cleaned up after.
@@ -350,6 +361,7 @@ fn headless_run(
     let _log = init_logging(log_file)?;
     traffic_police_core::fmt::set_local_offset_secs(traffic_police_tui::local_utc_offset_secs());
     spill::remove_stale();
+    let _spill = RemoveSpillOnExit;
     let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
     let result = rt.block_on(async {
         headless::stop_on_signals();
@@ -357,7 +369,6 @@ fn headless_run(
     });
     // the backend may still be saying goodbye; it has had its chance
     rt.shutdown_timeout(Duration::from_secs(1));
-    spill::remove_all();
     result
 }
 
