@@ -741,9 +741,9 @@ Nothing here sends data anywhere: no telemetry, and no network traffic from the 
 adb.
 
 Releases: tag `vX.Y.Z` with notes in `docs/releases/vX.Y.Z.md`, and push the tag; the release
-workflow builds the binaries (agent built in), their checksums and `THIRD-PARTY-LICENSES.txt`
-(`python3 host/scripts/third_party_licenses.py`), and publishes them. Run it by hand first to try
-the build without publishing.
+workflow builds the binaries (agent built in, `cargo build --profile dist`: whole-program LTO),
+their checksums and `THIRD-PARTY-LICENSES.txt` (`python3 host/scripts/third_party_licenses.py`),
+and publishes them. Run it by hand first to try the build without publishing.
 
 ## License
 

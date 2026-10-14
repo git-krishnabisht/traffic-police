@@ -107,16 +107,17 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: host
-      - run: cargo build --release --locked -p traffic-police
+      # the dist profile: --release with whole-program LTO, about 650 KB smaller (host/Cargo.toml)
+      - run: cargo build --profile dist --locked -p traffic-police
         env:
           TRAFFIC_POLICE_EMBED_AGENT: "1"
-      # the agent is inside: doctor finds it without the source tree's build output
+      # the agent is inside: doctor finds it without the source tree's build output, and unpacks it
       - name: The binary carries the agent
         run: |
           rm -rf ../android/attach-agent/build
-          ./target/release/${{ matrix.exe }} doctor --mode attach -p io.example 2>&1 | tee doctor.txt || true
+          ./target/dist/${{ matrix.exe }} doctor --mode attach -p io.example 2>&1 | tee doctor.txt || true
           grep -q "agent for attach mode: embedded in this binary" doctor.txt
-          mv ./target/release/${{ matrix.exe }} ${{ matrix.name }}
+          mv ./target/dist/${{ matrix.exe }} ${{ matrix.name }}
       - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.name }}

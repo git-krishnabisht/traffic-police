@@ -61,5 +61,12 @@ lto = "thin"
 codegen-units = 1
 strip = true
 
+# The binaries of a release (release.yml, `cargo build --profile dist`): whole-program LTO makes
+# them about 650 KB smaller (6% on macOS arm64) for about 30 s more of linking. `--release` and the
+# release-mode tests (the frame time and ingest checks) keep thin LTO.
+[profile.dist]
+inherits = "release"
+lto = "fat"
+
 [profile.dev.package."*"]
 opt-level = 2
