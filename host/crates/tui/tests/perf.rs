@@ -1,4 +1,6 @@
-//! Frame time with 50,000 transactions (ARCHITECTURE.md §6: at most 33 ms, target under 8 ms),
+//! Frame time with 50,000 transactions (ARCHITECTURE.md §6: at most 33 ms on average, target
+//! under 8 ms, and no frame over [`WORST_FRAME`]): the views, groups of up to 50,000 repeats, a
+//! `body:` filter typed while its searches run, a HAR written in the background, data coming in;
 //! and with half a million lines of the device's log in Logdawg.
 //!
 //! Ignored by default because it is only meaningful in release builds:
@@ -16,17 +18,51 @@ use traffic_police_core::SessionEvent;
 use traffic_police_core::event::{RequestStarted, ResponseStarted};
 use traffic_police_core::fmt::{NS_PER_MS, NS_PER_SEC};
 use traffic_police_core::model::TxnKey;
+use traffic_police_core::rows::Row;
 use traffic_police_proto::BodyDir;
 use traffic_police_proto::msg::{ClientInfo, StackFrame, ThreadInfo};
+use traffic_police_tui::app::SearchResult;
 use traffic_police_tui::terminal::{INGEST_PER_TURN, ingest_waiting};
 use traffic_police_tui::{App, parse_keys, render_keys, render_text, ui};
 
 const N: u64 = 50_000;
 
+/// A frame's budget on average.
+const BUDGET: Duration = Duration::from_millis(33);
+
 /// The worst frame allowed in any case: three times the average budget, room for the scheduling
 /// of a busy CI machine, and well under the stalls these cases are here to catch (hundreds of
-/// milliseconds and more).
+/// milliseconds and more: a HAR of 50,000 requests made on the UI task took 0.6 to 3.4 s).
 const WORST_FRAME: Duration = Duration::from_millis(100);
+
+/// The cases take turns, so that each is measured alone: the test harness runs them at once,
+/// and CI's machines have four cores.
+fn alone() -> std::sync::MutexGuard<'static, ()> {
+    static ONE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    ONE.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// A case's frames: on average and at worst.
+struct Frames {
+    label: String,
+    avg: Duration,
+    worst: Duration,
+}
+
+impl Frames {
+    fn new(label: &str, total: Duration, frames: u32, worst: Duration) -> Frames {
+        let avg = total / frames.max(1);
+        println!("{label:<44} avg {avg:>8.2?}  worst {worst:>8.2?}");
+        Frames { label: label.into(), avg, worst }
+    }
+
+    /// Within [`BUDGET`] on average and [`WORST_FRAME`] at worst.
+    fn check(&self) {
+        let Frames { label, avg, worst } = self;
+        assert!(*avg < BUDGET, "{label}: a frame took {avg:?} on average, over the {BUDGET:?} budget");
+        assert!(*worst < WORST_FRAME, "{label}: a frame took {worst:?}, over {WORST_FRAME:?}");
+    }
+}
 
 /// `count` completed requests for the demo's source, `gap` apart, ending at `end`.
 fn synth(source: u32, first_txn: u64, count: u64, end: u64, gap: u64) -> Vec<SessionEvent> {
@@ -114,7 +150,7 @@ fn big_app() -> (App, DemoSession, u64) {
     (app, session, end)
 }
 
-fn time_frames(label: &str, app: &mut App, frames: u32, mut between: impl FnMut(&mut App, u32)) -> Duration {
+fn time_frames(label: &str, app: &mut App, frames: u32, mut between: impl FnMut(&mut App, u32)) -> Frames {
     let (w, h) = common::LARGE;
     render_text(app, w, h);
     let start = Instant::now();
@@ -125,17 +161,27 @@ fn time_frames(label: &str, app: &mut App, frames: u32, mut between: impl FnMut(
         render_text(app, w, h);
         worst = worst.max(t.elapsed());
     }
-    let avg = start.elapsed() / frames;
-    println!("{label:<44} avg {:>8.2?}  worst {:>8.2?}", avg, worst);
-    avg
+    Frames::new(label, start.elapsed(), frames, worst)
+}
+
+/// Requests to one endpoint in runs of `run`, so that collapsing repeats makes groups of `run`.
+fn synth_runs(source: u32, first_txn: u64, count: u64, end: u64, gap: u64, run: u64) -> Vec<SessionEvent> {
+    let mut out = synth(source, first_txn, count, end, gap);
+    for e in &mut out {
+        if let SessionEvent::Request(r) = e {
+            r.method = "GET".into();
+            r.url = format!("https://api.example.app/api/v1/poll/{}", (r.key.txn - first_txn) / run);
+        }
+    }
+    out
 }
 
 #[test]
 #[ignore = "run in release: cargo test --release -p traffic-police-tui --test perf -- --ignored --nocapture"]
 fn frame_time_with_50k_transactions() {
+    let _alone = alone();
     let (mut app, _session, end) = big_app();
     assert!(app.store.len() as u64 >= N);
-    let budget = Duration::from_millis(33);
     let mut results = Vec::new();
     results.push(time_frames("Connection View, nothing new", &mut app, 200, |_, _| {}));
     // a new request every frame forces the row model to rebuild
@@ -176,9 +222,136 @@ fn frame_time_with_50k_transactions() {
     results.push(time_frames("detail open on Response", &mut app, 200, |_, _| {}));
     render_keys(&mut app, 200, 50, &parse_keys("<Esc>----").unwrap());
     results.push(time_frames("graph zoomed out to 10 minutes", &mut app, 200, |_, _| {}));
-    for avg in results {
-        assert!(avg < budget, "a frame took {avg:?} on average, over the {budget:?} budget");
+    results.iter().for_each(Frames::check);
+}
+
+/// Repeats of one endpoint collapsed into groups of 50 to 50,000 (ARCHITECTURE.md §5.7), with the
+/// graph's window over all of them, so that each group's row draws its members' bars; then a
+/// member more every frame. Up to 0.5.1 every member's bar was drawn: 22 to 24 ms a frame for
+/// groups of 5,000 and 50,000, and 92 to 131 ms at worst.
+#[test]
+#[ignore = "run in release: cargo test --release -p traffic-police-tui --test perf -- --ignored --nocapture"]
+fn frame_time_with_large_groups() {
+    let _alone = alone();
+    let mut results = Vec::new();
+    for run in [50, 5_000, N] {
+        let mut app = common::app_at(2.0);
+        let source = app.store.current_source().expect("demo source").id;
+        let end = DemoSession::clock_at(2 * NS_PER_SEC);
+        app.ingest(synth_runs(source, 10_000_000, N, end, 40 * NS_PER_MS, run));
+        app.now_override = Some(end);
+        // collapsed, and a window of an hour: the 33 minutes of requests in it
+        render_keys(&mut app, 200, 50, &parse_keys("c------").unwrap());
+        let groups = app.view_rows().rows().iter().filter(|r| matches!(r, Row::Group { .. })).count();
+        assert!(groups as u64 >= N / run, "{groups} groups");
+        results.push(time_frames(&format!("groups of {run}, nothing new"), &mut app, 100, |_, _| {}));
+        let (mut now, mut next) = (end, 20_000_000u64);
+        let last = format!("https://api.example.app/api/v1/poll/{}", (N - 1) / run);
+        results.push(time_frames(&format!("groups of {run}, a member more every frame"), &mut app, 100, |app, _| {
+            now += 33 * NS_PER_MS;
+            let mut one = synth(source, next, 1, now, 10 * NS_PER_MS);
+            if let SessionEvent::Request(r) = &mut one[0] {
+                r.method = "GET".into();
+                r.url = last.clone();
+            }
+            app.ingest(one);
+            app.now_override = Some(now);
+            next += 1;
+        }));
     }
+    results.iter().for_each(Frames::check);
+}
+
+/// A `body:` filter typed into a session of 50,000 requests, a key a frame, with the searches on
+/// worker threads as the live loop runs them, until all 50,000 have been searched. Up to 0.5.1
+/// each keystroke made a search of every body on the UI task.
+#[test]
+#[ignore = "run in release: cargo test --release -p traffic-police-tui --test perf -- --ignored --nocapture"]
+fn frame_time_while_a_body_filter_is_typed() {
+    let _alone = alone();
+    let (mut app, _session, _end) = big_app();
+    let mut term = Terminal::new(TestBackend::new(common::LARGE.0, common::LARGE.1)).unwrap();
+    let (tx, rx) = std::sync::mpsc::channel::<Vec<SearchResult>>();
+    let mut keys = parse_keys("/body:\"items\"<Enter>").unwrap().into_iter();
+    let (start, mut total, mut worst, mut frames) = (Instant::now(), Duration::ZERO, Duration::ZERO, 0);
+    loop {
+        // a turn of the loop: the results that came, a key, a frame, the searches to start
+        let t = Instant::now();
+        while let Ok(r) = rx.try_recv() {
+            app.finish_searches(&r);
+        }
+        let key = keys.next();
+        if let Some(k) = key {
+            app.handle_key(k);
+        }
+        term.draw(|f| ui::draw(f, &mut app)).unwrap();
+        for batch in app.take_search_jobs() {
+            let tx = tx.clone();
+            std::thread::spawn(move || batch.run(|r| tx.send(r).is_ok()));
+        }
+        let took = t.elapsed();
+        (total, worst, frames) = (total + took, worst.max(took), frames + 1);
+        // every synthetic body has "items"
+        if key.is_none() && app.view_rows().len() as u64 >= N && !app.has_queued_jobs() {
+            break;
+        }
+        assert!(start.elapsed() < Duration::from_secs(30), "the searches did not end");
+        std::thread::sleep(Duration::from_millis(16));
+    }
+    println!("{:<44} {:>8.2?}", "  every body searched after", start.elapsed());
+    Frames::new("typing body:\"items\", 50,000 searched", total, frames, worst).check();
+}
+
+/// A HAR of 50,000 requests written while the UI goes on, a new request every frame: the UI task
+/// only takes the snapshot. Up to 0.5.1 the UI task made the file: 0.6 to 3.4 s.
+#[test]
+#[ignore = "run in release: cargo test --release -p traffic-police-tui --test perf -- --ignored --nocapture"]
+fn frame_time_while_a_har_is_written() {
+    let _alone = alone();
+    let (mut app, _session, end) = big_app();
+    let source = app.store.current_source().expect("demo source").id;
+    let path = std::env::temp_dir().join(format!("tp-perf-{}.har", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    render_keys(&mut app, 200, 50, &parse_keys("ea").unwrap());
+    app.prompt.as_mut().expect("the path's prompt").input = tui_input::Input::new(path.display().to_string());
+    let requests = app.store.len();
+    let t = Instant::now();
+    app.finish_prompt();
+    let snapshot = t.elapsed();
+    let (tx, rx) = std::sync::mpsc::channel();
+    for job in app.take_export_jobs() {
+        let tx = tx.clone();
+        std::thread::spawn(move || {
+            let path = job.path.clone();
+            let _ = tx.send((path, job.run()));
+        });
+    }
+    let mut term = Terminal::new(TestBackend::new(common::LARGE.0, common::LARGE.1)).unwrap();
+    let (start, mut total, mut worst, mut frames) = (Instant::now(), Duration::ZERO, Duration::ZERO, 0);
+    let (mut now, mut next) = (end, 20_000_000u64);
+    loop {
+        if let Ok((p, result)) = rx.try_recv() {
+            app.finish_export(&p, result);
+            break;
+        }
+        let t = Instant::now();
+        now += 33 * NS_PER_MS;
+        app.ingest(synth(source, next, 1, now, 10 * NS_PER_MS));
+        app.now_override = Some(now);
+        next += 1;
+        term.draw(|f| ui::draw(f, &mut app)).unwrap();
+        let took = t.elapsed();
+        (total, worst, frames) = (total + took, worst.max(took), frames + 1);
+        assert!(start.elapsed() < Duration::from_secs(60), "the export did not end");
+        std::thread::sleep(Duration::from_millis(16).saturating_sub(took));
+    }
+    println!("{:<44} {snapshot:>8.2?}, written in {:.2?}", "HAR of 50,000: the snapshot", start.elapsed());
+    let doc: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    std::fs::remove_file(&path).unwrap();
+    assert_eq!(doc["log"]["entries"].as_array().map(Vec::len), Some(requests));
+    assert!(app.current_message().is_some_and(|m| m.starts_with("wrote ")), "{:?}", app.current_message());
+    assert!(snapshot < WORST_FRAME, "the snapshot took {snapshot:?}");
+    Frames::new("frames while it is written, a request each", total, frames, worst).check();
 }
 
 /// Ingest through the UI's channel (ARCHITECTURE.md §6: 20,000 events a second sustained, a
@@ -190,6 +363,7 @@ fn frame_time_with_50k_transactions() {
 #[test]
 #[ignore = "run in release: cargo test --release -p traffic-police-tui --test perf -- --ignored --nocapture"]
 fn ingest_through_the_ui_while_it_draws() {
+    let _alone = alone();
     let (mut app, _session, end) = big_app();
     let source = app.store.current_source().expect("demo source").id;
     let mut term = Terminal::new(TestBackend::new(common::LARGE.0, common::LARGE.1)).unwrap();
@@ -261,6 +435,7 @@ fn ingest_through_the_ui_while_it_draws() {
 #[test]
 #[ignore = "run in release: cargo test --release -p traffic-police-tui --test perf -- --ignored --nocapture"]
 fn logdawg_with_500k_lines() {
+    let _alone = alone();
     use traffic_police_core::logdawg::{Level, LogLine};
     const LINES: u64 = 500_000;
     const APP_UID: u32 = 10_234;
@@ -329,7 +504,6 @@ fn logdawg_with_500k_lines() {
     render_keys(&mut app, 200, 50, &parse_keys("4").unwrap());
     println!("{:<44} {:>8.2?}", "first frame, every line tested (package:mine)", t.elapsed());
     assert!(app.logdawg.len() as u64 >= LINES / 10);
-    let budget = Duration::from_millis(33);
     let mut results = Vec::new();
     let mut i = LINES;
     let mut now = end;
@@ -363,7 +537,5 @@ fn logdawg_with_500k_lines() {
     app.apply_log_filter("package:mine");
     render_keys(&mut app, 200, 50, &parse_keys("<C-u><C-u>kkk").unwrap());
     results.push(time_frames("Logdawg not following, 20 new lines a frame", &mut app, 200, &mut feed));
-    for avg in results {
-        assert!(avg < budget, "a frame took {avg:?} on average, over the {budget:?} budget");
-    }
+    results.iter().for_each(Frames::check);
 }
