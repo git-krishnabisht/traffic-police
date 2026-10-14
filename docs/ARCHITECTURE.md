@@ -674,6 +674,7 @@ A CI step (`cargo tree -e features`) fails if a C library sneaks back in through
   - The VM's times are wall-clock µs. They become the device's CLOCK_BOOTTIME ns through an offset read once per process: `/proc/uptime` and `date +%s%N` in one shell command.
 - **Bodies.**
   - dart:io keeps them whole, without a cap, until the entry ends; the capture cap applies when they are sent.
+  - The VM service sends a body as a JSON array of byte values in one message (512 MB at most, about four bytes of JSON a byte). The host reads a message first for what it is (its method, id and error) and reads its own reply whole only then, with the caller's reader: `getHttpProfileRequest`'s bodies go straight into bytes, kept up to the capture cap and counted past it (`profile::read_full`). Up to 0.5.1 every message was read into JSON values (`preserve_order`: about 80 bytes a value) and the result copied once more: reading a 30 MB body peaked at 4.4 GB of heap, now at 24 MB (with a 10 MB cap; measured with a counting allocator, release build).
   - A body dart:io decompressed for the app (`compressionState` `decompressed`) is sent with `body_end.decoded`. The host then does not decode it again, while the headers still show `content-encoding: gzip` (PROTOCOL.md §7.1).
 - **What it sees.** dart:io's `HttpClient` and everything on it: package:http's `IOClient`, dio's default adapter, `NetworkImage`, and dart:io WebSocket handshakes. Also clients that report through package:http_profile: cronet_http 1.3 and newer, ok_http, dio's native adapter.
 - **What it does not see.**

@@ -591,13 +591,16 @@ async fn stream(
                         continue;
                     }
                     let id = entry["id"].as_str().unwrap_or_default();
-                    match vm
-                        .call("ext.dart.io.getHttpProfileRequest", json!({ "isolateId": iso, "id": id }), FETCH)
-                        .await
-                    {
-                        Ok(full) => s.translator.finish(&full, &mut frames),
+                    // the bodies are read straight into bytes, up to the capture cap
+                    let caps = s.translator.body_caps();
+                    let params = json!({ "isolateId": iso, "id": id });
+                    let read = |reply: &str| profile::read_full(reply, caps);
+                    match vm.call_with("ext.dart.io.getHttpProfileRequest", params, FETCH, read).await {
+                        Ok(Some(full)) => s.translator.finish(&full, &mut frames),
                         // ended without its bodies (the profile was cleared, or the fetch failed)
-                        Err(RpcError::Rpc(..)) | Err(RpcError::Timeout) => s.translator.finish(entry, &mut frames),
+                        Ok(None) | Err(RpcError::Rpc(..)) | Err(RpcError::Timeout) => {
+                            s.translator.finish(&profile::Full::without_bodies(entry), &mut frames)
+                        }
                         Err(e) => return lost(e),
                     }
                 }

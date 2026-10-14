@@ -2645,6 +2645,7 @@ dependencies = [
  "flate2",
  "image",
  "regex",
+ "serde",
  "serde_json",
  "tokio",
  "tracing",
