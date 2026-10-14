@@ -2610,6 +2610,7 @@ dependencies = [
  "base64",
  "clap",
  "crossterm",
+ "flate2",
  "serde",
  "serde_json",
  "tokio",

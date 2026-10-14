@@ -4,7 +4,8 @@ mod config;
 mod doctor;
 mod headless;
 
-/// The attach-mode agent, when the build embedded it (`TRAFFIC_POLICE_EMBED_AGENT`, see build.rs).
+/// The attach-mode agent, when the build embedded it (`TRAFFIC_POLICE_EMBED_AGENT`, see build.rs):
+/// each file gzip-compressed, unpacked by [`embedded_agent`].
 mod embedded {
     include!(concat!(env!("OUT_DIR"), "/embedded_agent.rs"));
 }
@@ -12,7 +13,7 @@ mod embedded {
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command as Process, Stdio};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, bail};
@@ -533,8 +534,8 @@ fn load_agent_kit(dir: Option<&Path>) -> anyhow::Result<Arc<AgentKit>> {
     if let Some(d) = dir {
         return AgentKit::from_dir(d).map(Arc::new).with_context(|| format!("the agent in {}", d.display()));
     }
-    if let Some([arm64, arm, x86_64, boot, runtime]) = embedded::AGENT {
-        return Ok(Arc::new(AgentKit::embedded(boot, runtime, [arm64, arm, x86_64])));
+    if let Some([arm64, arm, x86_64, boot, runtime]) = embedded_agent()? {
+        return Ok(Arc::new(AgentKit::embedded(boot, runtime, [arm64.as_slice(), arm.as_slice(), x86_64.as_slice()])));
     }
     const OUTPUT: &str = "android/attach-agent/build/outputs/agent";
     let candidates = [
@@ -555,6 +556,29 @@ fn load_agent_kit(dir: Option<&Path>) -> anyhow::Result<Arc<AgentKit>> {
         "attach mode needs the agent, and this build has none: build it with \
          `cd android && ./gradlew :attach-agent:agentArtifacts`, or give --agent-dir"
     )
+}
+
+/// The agent built into this binary, unpacked: once, when attach mode first needs it (3.6 MB
+/// for the rest of the run), since it is kept compressed in the binary. `None` when the build
+/// embedded none.
+fn embedded_agent() -> anyhow::Result<Option<&'static [Vec<u8>; 5]>> {
+    static FILES: OnceLock<[Vec<u8>; 5]> = OnceLock::new();
+    let Some(packed) = embedded::AGENT else { return Ok(None) };
+    if let Some(files) = FILES.get() {
+        return Ok(Some(files));
+    }
+    let mut files: [Vec<u8>; 5] = Default::default();
+    for (file, packed) in files.iter_mut().zip(packed) {
+        *file = unpack(packed).context("the agent built into this binary does not unpack")?;
+    }
+    Ok(Some(FILES.get_or_init(|| files)))
+}
+
+/// One file as build.rs packed it (gzip, whose checksum covers what comes out).
+fn unpack(packed: &[u8]) -> std::io::Result<Vec<u8>> {
+    let mut out = Vec::new();
+    flate2::read::GzDecoder::new(packed).read_to_end(&mut out)?;
+    Ok(out)
 }
 
 /// `package` in `.traffic-police/project.toml` (the nearest at or above the working directory):
@@ -993,6 +1017,30 @@ mod tests {
         assert_eq!(project_package(Some(&dir)).as_deref(), Some("com.example.shop"));
         assert_eq!(project_package(Some(&sub)).as_deref(), Some("com.example.shop"));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// What build.rs packs comes back as it was: the agent's files when the build embedded it,
+    /// else stand-ins of the same number, packed the same way.
+    #[test]
+    fn the_embedded_files_unpack_to_what_was_packed() {
+        let same = |unpacked: &[u8], file: &str| {
+            let original = std::fs::read(file).unwrap_or_else(|e| panic!("{file}: {e}"));
+            assert!(unpacked == original, "{file}: {} bytes unpacked, {} packed", unpacked.len(), original.len());
+        };
+        for (file, packed) in embedded::PACKED {
+            same(&unpack(packed).unwrap(), file);
+        }
+        // and so does the agent attach mode loads, when there is one
+        if let Some(files) = embedded_agent().unwrap() {
+            for (unpacked, (file, _)) in files.iter().zip(embedded::PACKED) {
+                same(unpacked, file);
+            }
+        }
+        // a damaged file is an error, not a wrong agent
+        let mut damaged = embedded::PACKED[4].1.to_vec();
+        let middle = damaged.len() / 2;
+        damaged[middle] ^= 0xff;
+        assert!(unpack(&damaged).is_err());
     }
 
     /// Every example in the help parses (0.3.1's `export --help` gave a filter without
