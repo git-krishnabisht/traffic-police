@@ -84,7 +84,10 @@ impl BodyStore {
         }
         let gap = offset > body.next_offset;
         let skip = body.next_offset.saturating_sub(offset) as usize;
-        let fresh = bytes.slice(skip..);
+        // a chunk is a view into the buffer it was read into (64 KB or more, a whole inflated
+        // piece of a session file): kept as it is, it keeps that buffer alive while the budget
+        // counts only the chunk, and spilling it frees nothing
+        let fresh = Bytes::copy_from_slice(&bytes[skip..]);
         let added = fresh.len() as u64;
         body.segments.push(Segment::Mem(fresh));
         body.next_offset = end;
@@ -289,6 +292,34 @@ mod tests {
         assert!(s.has_gap(id));
         assert_eq!(&s.bytes(id)[..], b"hello world!");
         assert_eq!(s.held(id), 12);
+    }
+
+    /// Up to 0.5.1 every read buffer stayed in memory as long as any chunk of it did, and
+    /// spilling the chunk freed nothing.
+    #[test]
+    fn chunks_are_kept_as_copies_not_views_of_the_buffer_they_were_read_into() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        struct ReadBuffer(Vec<u8>, Arc<AtomicBool>);
+        impl AsRef<[u8]> for ReadBuffer {
+            fn as_ref(&self) -> &[u8] {
+                &self.0
+            }
+        }
+        impl Drop for ReadBuffer {
+            fn drop(&mut self) {
+                self.1.store(true, Ordering::SeqCst);
+            }
+        }
+        let freed = Arc::new(AtomicBool::new(false));
+        let read = Bytes::from_owner(ReadBuffer(vec![7u8; 64 << 10], freed.clone()));
+        let mut s = BodyStore::default();
+        let id = s.alloc();
+        s.append(id, 0, read.slice(100..110));
+        s.append(id, 5, read.slice(200..220));
+        drop(read);
+        assert!(freed.load(Ordering::SeqCst), "the read buffer went with its frames");
+        assert_eq!(&s.bytes(id)[..], &[7u8; 25]);
+        assert_eq!(s.mem_bytes(), 25);
     }
 
     #[test]
