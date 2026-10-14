@@ -537,7 +537,7 @@ void ReportAll(JNIEnv* env) {
 
 // The classes loaded before the agent that it hooks and has not hooked yet: OkHttp's and gRPC's
 // in an app that was running already. A class defined since the load hook was set up was hooked
-// then, and java.net.URL right at the start (HookUrlFirst).
+// then, and java.net.URL just before this (HookUrlFirst).
 void RetransformLoadedClasses(JNIEnv* env) {
   const auto begin = std::chrono::steady_clock::now();
   jint count = 0;
@@ -561,11 +561,14 @@ void RetransformLoadedClasses(JNIEnv* env) {
 }
 
 // java.net.URL is a boot class, loaded long before any agent, so its hooks (HttpURLConnection)
-// need a retransform; it comes first, before the runtime dex is even read. Until 0.5.1 it waited
-// for the pass that follows the runtime's start, and on a slow device (CI's API 36 emulator, 5 s
-// and more after the app started) the app's first HttpURLConnection requests went by unhooked,
-// while OkHttp's, hooked as their classes were defined, were captured. The trampoline passes
-// every value through until the runtime installs its handler, so hooking early changes nothing.
+// need a retransform; it comes as soon as the runtime captures, before the pass over the other
+// loaded classes. Until 0.5.1 it waited for that pass, and on a slow device (CI's API 36
+// emulator, 5 s and more after the app started) the app's first HttpURLConnection requests went
+// by unhooked, while OkHttp's, hooked as their classes were defined, were captured. It does not
+// come before the runtime starts either: the retransform alone can take seconds (1.1 to 2.9 s on
+// CI's API 36 emulator, 34 ms on an API 31 one), and until the runtime installs its handler the
+// trampoline lets every call through uncaptured, OkHttp's too (on 2026-10-14 that lost the
+// `:worker` process's one request, made as it starts).
 void HookUrlFirst(JNIEnv* env) {
   const auto begin = std::chrono::steady_clock::now();
   jclass url = env->FindClass("java/net/URL");
@@ -622,7 +625,6 @@ void* InitializeOnAgentThread(void*) {
     Log(ANDROID_LOG_ERROR, "could not attach the initialization thread to ART");
     return nullptr;
   }
-  if (g_runtime_active.load(std::memory_order_acquire)) HookUrlFirst(env);
 
   const std::string dex_path = g_runtime_dir + "/traffic-police-runtime.dex";
   std::ifstream dex_file(dex_path, std::ios::binary | std::ios::ate);
@@ -779,6 +781,7 @@ void* InitializeOnAgentThread(void*) {
   Log(ANDROID_LOG_INFO,
       "runtime capturing " + std::to_string(MillisSince(g_attach_time)) + " ms after the agent loaded");
   if (g_runtime_active.load(std::memory_order_acquire)) {
+    HookUrlFirst(env);
     RetransformLoadedClasses(env);
     ReportAll(env);
   }
