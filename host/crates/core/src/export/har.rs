@@ -269,11 +269,12 @@ fn entry(store: &SessionStore, t: &Transaction, now: Ts) -> Value {
 fn ws_messages(store: &SessionStore, t: &Transaction) -> Value {
     let messages: Vec<Value> = t
         .ws
+        .messages
         .iter()
         .map(|m| {
             let (opcode, data) = match m.op.as_str() {
-                "text" => (1, String::from_utf8_lossy(&m.data).into_owned()),
-                "binary" => (2, base64::engine::general_purpose::STANDARD.encode(&m.data)),
+                "text" => (1, String::from_utf8_lossy(&store.ws_payload(t, m)).into_owned()),
+                "binary" => (2, base64::engine::general_purpose::STANDARD.encode(store.ws_payload(t, m))),
                 "close" => (
                     8,
                     format!(

@@ -28,9 +28,20 @@ enum Segment {
     Disk { offset: u64, len: u64 },
 }
 
+impl Segment {
+    fn len(&self) -> u64 {
+        match self {
+            Segment::Mem(b) => b.len() as u64,
+            Segment::Disk { len, .. } => *len,
+        }
+    }
+}
+
 #[derive(Debug, Default, Clone)]
 struct BodyData {
     segments: Vec<Segment>,
+    /// Where each segment starts in what is held (to read part of a body).
+    starts: Vec<u64>,
     /// Next expected offset (bytes held, counting any gaps as skipped).
     next_offset: u64,
     held: u64,
@@ -89,6 +100,7 @@ impl BodyStore {
         // counts only the chunk, and spilling it frees nothing
         let fresh = Bytes::copy_from_slice(&bytes[skip..]);
         let added = fresh.len() as u64;
+        body.starts.push(body.held);
         body.segments.push(Segment::Mem(fresh));
         body.next_offset = end;
         body.held += added;
@@ -162,6 +174,43 @@ impl BodyStore {
                 out.freeze()
             }
         }
+    }
+
+    /// `len` bytes of what is held of a body, from `offset` on (a WebSocket message's payload,
+    /// among the socket's others): from memory or the spill file, as they are.
+    pub fn slice(&self, id: BodyId, offset: u64, len: u64) -> Bytes {
+        let body = &self.bodies[id as usize];
+        let end = offset.saturating_add(len).min(body.held);
+        if offset >= end {
+            return Bytes::new();
+        }
+        // the segment that holds `offset`: the last one that starts at or before it
+        let first = body.starts.partition_point(|&s| s <= offset).saturating_sub(1);
+        let mut out = BytesMut::new();
+        for (seg, &start) in body.segments[first..].iter().zip(&body.starts[first..]) {
+            if start >= end {
+                break;
+            }
+            let (from, to) = (offset.saturating_sub(start), (end - start).min(seg.len()));
+            match seg {
+                // within one segment in memory: a view of it
+                Segment::Mem(b) if out.is_empty() && end - start <= seg.len() => {
+                    return b.slice(from as usize..to as usize);
+                }
+                Segment::Mem(b) => out.extend_from_slice(&b[from as usize..to as usize]),
+                Segment::Disk { offset: at, .. } => {
+                    let read = match &self.spill {
+                        Some(f) => f.read(at + from, to - from, &mut out),
+                        None => Err(std::io::Error::other("no spill file")),
+                    };
+                    if let Err(e) = read {
+                        tracing::warn!("reading spilled body bytes failed: {e}");
+                        break;
+                    }
+                }
+            }
+        }
+        out.freeze()
     }
 
     pub fn held(&self, id: BodyId) -> u64 {
@@ -263,6 +312,7 @@ fn spill_body(file: &SpillFile, body: &mut BodyData) -> std::io::Result<()> {
         let (offset, len) = file.append(&run)?;
         out.push(Segment::Disk { offset, len });
     }
+    body.starts = out.iter().scan(0, |at, s| Some(std::mem::replace(at, *at + s.len()))).collect();
     body.segments = out;
     body.in_mem = 0;
     Ok(())
@@ -320,6 +370,34 @@ mod tests {
         assert!(freed.load(Ordering::SeqCst), "the read buffer went with its frames");
         assert_eq!(&s.bytes(id)[..], &[7u8; 25]);
         assert_eq!(s.mem_bytes(), 25);
+    }
+
+    /// Part of a body, as a WebSocket message's payload is read: from one segment, across
+    /// several, and from the spill file once the body went there.
+    #[test]
+    fn parts_of_a_body_read_back_from_memory_and_disk() {
+        let mut s = BodyStore::with_budget(1000);
+        let id = s.alloc();
+        let parts: Vec<Bytes> = (0..6).map(|i| pattern(100, i)).collect();
+        for (i, p) in parts.iter().enumerate() {
+            s.append(id, i as u64 * 100, p.clone());
+        }
+        let all = joined(&parts);
+        let check = |s: &BodyStore| {
+            for (offset, len) in [(0, 100), (100, 100), (150, 100), (0, 600), (550, 100), (599, 1), (600, 5), (10, 0)] {
+                let end = (offset + len).min(600);
+                assert_eq!(&s.slice(id, offset as u64, len as u64)[..], &all[offset.min(end)..end], "{offset}+{len}");
+            }
+        };
+        check(&s);
+        // another body pushes this one over the budget, onto the disk
+        let other = s.alloc();
+        s.append(other, 0, pattern(500, 9));
+        assert!(s.spilled_bytes() >= 600, "{}", s.spilled_bytes());
+        check(&s);
+        // more after the spill: part on disk, part in memory
+        s.append(id, 600, pattern(50, 7));
+        assert_eq!(&s.slice(id, 580, 70)[..], &[&all[580..], &pattern(50, 7)[..]].concat()[..]);
     }
 
     #[test]

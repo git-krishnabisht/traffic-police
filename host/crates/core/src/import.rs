@@ -414,16 +414,14 @@ fn entry_events(e: &Value, key: TxnKey, start: Ts, out: &mut Vec<SessionEvent>) 
             let size = m["_size"].as_u64().unwrap_or(data.len() as u64);
             out.push(SessionEvent::WsMessage {
                 key,
-                msg: crate::model::WsMessage {
-                    at,
-                    out: m["type"] == "send",
-                    op: op.to_string(),
-                    size,
-                    truncated: size > data.len() as u64,
-                    data,
-                    code,
-                    reason,
-                },
+                at,
+                out: m["type"] == "send",
+                op: op.to_string(),
+                size,
+                truncated: size > data.len() as u64,
+                data,
+                code,
+                reason,
             });
         }
     }

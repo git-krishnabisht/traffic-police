@@ -2142,10 +2142,9 @@ impl App {
                         self.open_value_menu(txn);
                     }
                 }
+                Some(DocRow::Message(i)) => self.open_ws_message(txn, i),
                 Some(DocRow::Line(_) | DocRow::Hanging(..)) => {
-                    if let Some(&(_, i)) = doc.messages.iter().find(|(r, _)| *r == cur) {
-                        self.open_ws_message(txn, i);
-                    } else if let Some((_, token)) = doc.tokens.iter().find(|(r, _)| *r == cur) {
+                    if let Some((_, token)) = doc.tokens.iter().find(|(r, _)| *r == cur) {
                         let token = token.clone();
                         self.run_value_action(&crate::share::MenuAction::DecodeJwt(token));
                     } else {

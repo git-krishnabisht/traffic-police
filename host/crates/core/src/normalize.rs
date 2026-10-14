@@ -201,16 +201,14 @@ impl Normalizer {
                 };
                 out.push(SessionEvent::WsMessage {
                     key: self.key(m.txn),
-                    msg: crate::model::WsMessage {
-                        at: m.ts,
-                        out: m.dir == "out",
-                        op: m.op,
-                        size: m.size,
-                        data,
-                        truncated: m.truncated,
-                        code: m.code,
-                        reason: m.reason,
-                    },
+                    at: m.ts,
+                    out: m.dir == "out",
+                    op: m.op,
+                    size: m.size,
+                    data,
+                    truncated: m.truncated,
+                    code: m.code,
+                    reason: m.reason,
                 })
             }
             DeviceMsg::Dropped(m) => {

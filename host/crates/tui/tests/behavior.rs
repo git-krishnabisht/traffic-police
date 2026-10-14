@@ -1650,11 +1650,12 @@ fn a_websocket_lists_its_messages_and_enter_opens_one() {
     assert!(has("↓ +", &["text", "\"state\":\"delivered\""]), "{lines:#?}");
     assert!(has("↑ +", &["close", "1000 left the orders screen"]), "{lines:#?}");
     assert!(has("↓ +", &["close", "1000 bye"]), "{lines:#?}");
-    assert_eq!(doc.messages.len(), 8);
+    // the rows after the headers are the messages
+    assert!(doc.messages && doc.body_len == 8);
+    let row = doc.head.len();
+    assert!(matches!(doc.row(row), Some(traffic_police_tui::detail::DocRow::Message(0))));
 
     // Enter on the first message (the subscription the app sent) opens its payload
-    let (row, i) = doc.messages[0];
-    assert_eq!(i, 0);
     let text = press(&mut app, MEDIUM, &format!("g{}<Enter>", "j".repeat(row)));
     assert_eq!(app.overlay, Overlay::Decoded, "{text}");
     assert!(text.contains("message 1 · sent text"), "{text}");

@@ -16,42 +16,47 @@ use crate::theme::Theme;
 use crate::wrap::{self, Part, Text};
 use traffic_police_proto::msg::StackFrame;
 
-/// A WebSocket's messages after its handshake's headers: one line each, with the direction,
-/// the time since the socket opened, the type, the size and the start of the payload.
+/// A WebSocket's messages after its handshake's headers: one row each (see [`ws_line`]), made
+/// only when it is drawn (a busy socket has hundreds of thousands; up to 0.5.1 every one was made
+/// for every frame).
 fn ws_rows(theme: &Theme, t: &Transaction, doc: &mut Doc) {
-    let sent = t.ws.iter().filter(|m| m.out).count();
-    let received = t.ws.len() - sent;
-    doc.head
-        .push(title(theme, format!("Messages ({} · {sent} sent, {received} received · Enter opens one)", t.ws.len())));
-    if t.ws.is_empty() {
+    let ws = &t.ws;
+    doc.head.push(title(
+        theme,
+        format!("Messages ({} · {} sent, {} received · Enter opens one)", ws.len(), ws.sent, ws.received),
+    ));
+    if ws.is_empty() {
         let what = if t.state.is_open() { "none yet" } else { "none" };
         doc.head.push(DocRow::Line(Line::styled(what.to_string(), theme.dim())));
     }
-    for (i, m) in t.ws.iter().enumerate() {
-        let row = doc.head.len();
-        doc.head.push(DocRow::Line(ws_line(theme, t.start, m)));
-        doc.messages.push((row, i));
-    }
+    doc.messages = true;
+    doc.body_len = ws.len();
 }
 
 /// `↑ +1.204 s  text    27 B  {"type":"subscribe"}`
-pub fn ws_line(theme: &Theme, start: fmt::Ts, m: &traffic_police_core::model::WsMessage) -> Line<'static> {
+pub fn ws_line(
+    theme: &Theme,
+    store: &traffic_police_core::SessionStore,
+    t: &Transaction,
+    m: &traffic_police_core::model::WsMessage,
+) -> Line<'static> {
     let arrow = if m.out {
         Span::styled("↑ ", Style::default().fg(theme.send()))
     } else {
         Span::styled("↓ ", Style::default().fg(theme.recv()))
     };
-    let since = m.at.saturating_sub(start);
+    let since = m.at.saturating_sub(t.start);
     let preview = match m.op.as_str() {
         "close" => {
             format!("{} {}", m.code.map(|c| c.to_string()).unwrap_or_default(), m.reason.clone().unwrap_or_default())
         }
+        // the payload's start only: what the row shows
         "text" => {
-            let s = String::from_utf8_lossy(&m.data);
-            let one: String = s.chars().map(|c| if c == '\n' || c == '\r' { ' ' } else { c }).take(240).collect();
-            one
+            let start = store.ws_payload_start(t, m, 1024);
+            let s = String::from_utf8_lossy(&start);
+            s.chars().map(|c| if c == '\n' || c == '\r' { ' ' } else { c }).take(240).collect()
         }
-        _ => m.data.iter().take(24).map(|b| format!("{b:02x}")).collect::<Vec<_>>().join(" "),
+        _ => store.ws_payload_start(t, m, 24).iter().map(|b| format!("{b:02x}")).collect::<Vec<_>>().join(" "),
     };
     let size = if m.op == "close" { String::new() } else { fmt::bytes(m.size) };
     let mut spans = vec![
@@ -74,6 +79,8 @@ pub enum DocRow {
     Hanging(Line<'static>, usize),
     /// Line `i` of the body view.
     Body(usize),
+    /// WebSocket message `i`.
+    Message(usize),
     /// An app frame at stack index `index`.
     Frame {
         index: usize,
@@ -96,11 +103,12 @@ pub struct Doc {
     pub head: Vec<DocRow>,
     pub body_len: usize,
     pub body_dir: Option<BodyDir>,
+    /// The `body_len` rows after `head` are a WebSocket's messages ([`DocRow::Message`]; Enter
+    /// opens one), not a body's lines.
+    pub messages: bool,
     pub tail: Vec<DocRow>,
     /// Rows of `head` that show a JWT (Enter decodes it), with the token.
     pub tokens: Vec<(usize, String)>,
-    /// Rows of `head` that show a WebSocket message (Enter opens it), with its index.
-    pub messages: Vec<(usize, usize)>,
 }
 
 impl Doc {
@@ -118,7 +126,7 @@ impl Doc {
         }
         let j = i - self.head.len();
         if j < self.body_len {
-            return Some(DocRow::Body(j));
+            return Some(if self.messages { DocRow::Message(j) } else { DocRow::Body(j) });
         }
         self.tail.get(j - self.body_len).cloned()
     }
@@ -594,6 +602,15 @@ fn row_kind(app: &mut App, doc: &Doc, i: usize, txn: TxnIdx) -> RowKind {
         }
         Some(DocRow::Hanging(l, indent)) => RowKind::Text(Text::from_line(&l), indent, false),
         Some(DocRow::Body(bi)) => RowKind::Body(bi),
+        Some(DocRow::Message(mi)) => {
+            let theme = app.theme.clone();
+            let store = app.view_store();
+            let t = store.txn(txn);
+            match t.ws.messages.get(mi) {
+                Some(m) => RowKind::Text(Text::from_line(&ws_line(&theme, store, t, m)), 2, true),
+                None => RowKind::Fixed,
+            }
+        }
         Some(DocRow::Frame { index }) => {
             let theme = app.theme.clone();
             let t = app.view_store().txn(txn);
@@ -850,8 +867,7 @@ fn overview_rows(app: &mut App, txn: TxnIdx, rows: &mut Vec<DocRow>, tokens: &mu
         rows.push(label_row(&theme, "Response size", plain(&theme, size)));
     }
     if t.is_websocket() {
-        let (sent, received): (Vec<_>, Vec<_>) = t.ws.iter().partition(|m| m.out);
-        let bytes = |v: &[&traffic_police_core::model::WsMessage]| fmt::bytes(v.iter().map(|m| m.size).sum());
+        let ws = &t.ws;
         let state = if t.state.is_open() { "open" } else { "closed" };
         rows.push(label_row(
             &theme,
@@ -860,10 +876,10 @@ fn overview_rows(app: &mut App, txn: TxnIdx, rows: &mut Vec<DocRow>, tokens: &mu
                 &theme,
                 format!(
                     "{state} · {} sent ({}) · {} received ({}) · the messages are on the Response tab",
-                    sent.len(),
-                    bytes(&sent),
-                    received.len(),
-                    bytes(&received)
+                    ws.sent,
+                    fmt::bytes(ws.sent_bytes),
+                    ws.received,
+                    fmt::bytes(ws.received_bytes)
                 ),
             ),
         ));
@@ -1083,7 +1099,7 @@ pub fn row_text(app: &mut App, doc: &Doc, i: usize, txn: TxnIdx) -> Option<Strin
             let parsed = app.detail.parsed;
             app.body_view(txn, dir).map(|v| v.plain(bi, parsed))
         }
-        DocRow::Frame { .. } | DocRow::FrameRun { .. } => match row_kind(app, doc, i, txn) {
+        DocRow::Frame { .. } | DocRow::FrameRun { .. } | DocRow::Message(_) => match row_kind(app, doc, i, txn) {
             RowKind::Text(text, ..) => Some(text.text.into_owned()),
             _ => None,
         },

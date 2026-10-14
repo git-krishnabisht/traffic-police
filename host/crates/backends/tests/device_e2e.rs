@@ -366,12 +366,14 @@ fn check_main_run(r: &mut Report, store: &SessionStore, source: SourceId, run: &
     if let Some(t) = one(r, "/live") {
         r.check(status(t) == 101 && t.is_websocket(), || format!("{run}: /live {}", status(t)));
         let got: Vec<String> =
-            t.ws.iter()
+            t.ws.messages
+                .iter()
                 .map(|m| {
+                    let data = store.ws_payload(t, m);
                     let what = match m.op.as_str() {
                         "close" => m.code.map(|c| c.to_string()).unwrap_or_default(),
-                        "text" => String::from_utf8_lossy(&m.data).into_owned(),
-                        _ => m.data.iter().map(|b| format!("{b:02x}")).collect(),
+                        "text" => String::from_utf8_lossy(&data).into_owned(),
+                        _ => data.iter().map(|b| format!("{b:02x}")).collect(),
                     };
                     format!("{} {} {what}", if m.out { "out" } else { "in" }, m.op)
                 })

@@ -19,7 +19,7 @@ use crate::event::{MarkerKind, SessionEvent};
 use crate::fmt::Ts;
 use crate::model::{
     BodyDir, BodyMeta, BodyState, ClientInfo, Failure, ResponseInfo, RuleHit, SourceId, SourceInfo, ThreadInfo,
-    Transaction, TxnIdx, TxnKey, TxnState, Url,
+    Transaction, TxnIdx, TxnKey, TxnState, Url, WsMessage,
 };
 
 pub use body::{BodyPieces, BodyStore, DEFAULT_MEMORY_BUDGET, set_default_budget};
@@ -192,6 +192,16 @@ impl SessionStore {
     /// A body's captured bytes to read later, off the UI task ([`BodyPieces`]).
     pub fn body_pieces(&self, meta: &BodyMeta) -> BodyPieces {
         meta.id.map(|id| self.bodies.pieces(id)).unwrap_or_default()
+    }
+
+    /// A WebSocket message's payload as captured (from memory or the spill file).
+    pub fn ws_payload(&self, t: &Transaction, m: &WsMessage) -> Bytes {
+        t.ws.body.map(|id| self.bodies.slice(id, m.offset, m.len)).unwrap_or_default()
+    }
+
+    /// The start of a WebSocket message's payload, at most `max` bytes (for a preview).
+    pub fn ws_payload_start(&self, t: &Transaction, m: &WsMessage, max: u64) -> Bytes {
+        t.ws.body.map(|id| self.bodies.slice(id, m.offset, m.len.min(max))).unwrap_or_default()
     }
 
     /// Wall-clock milliseconds for a timestamp, using the closest source's clock pair.
@@ -415,11 +425,23 @@ impl SessionStore {
                     headers: r.headers,
                 });
             }
-            SessionEvent::WsMessage { key, msg } => {
-                self.see(msg.at);
-                let idx = self.idx_or_placeholder(key, msg.at);
-                let (out, size, at) = (msg.out, msg.size, msg.at);
-                Arc::make_mut(&mut self.touch(idx).ws).push(msg);
+            SessionEvent::WsMessage { key, at, out, op, size, data, truncated, code, reason } => {
+                self.see(at);
+                let idx = self.idx_or_placeholder(key, at);
+                // the payload goes into the body store after the socket's others, under its budget
+                let id = self.txns[idx as usize].ws.body.unwrap_or_else(|| self.bodies.alloc());
+                let offset = self.bodies.held(id);
+                let len = self.bodies.append(id, offset, data).added;
+                let ws = Arc::make_mut(&mut self.touch(idx).ws);
+                ws.body = Some(id);
+                if out {
+                    ws.sent += 1;
+                    ws.sent_bytes = ws.sent_bytes.saturating_add(size);
+                } else {
+                    ws.received += 1;
+                    ws.received_bytes = ws.received_bytes.saturating_add(size);
+                }
+                ws.messages.push(WsMessage { at, out, op, size, offset, len, truncated, code, reason });
                 // what a socket carries is captured traffic, as bodies are
                 self.account(if out { BodyDir::Request } else { BodyDir::Response }, at, size);
             }
@@ -611,6 +633,41 @@ mod tests {
             started,
             ended: None,
         }
+    }
+
+    /// A WebSocket's payloads are kept in the body store, under its budget: a busy socket spills
+    /// them to disk as bodies are, and each reads back. What went each way is counted as the
+    /// messages come (the Size column and the detail pane read the counts).
+    #[test]
+    fn websocket_payloads_spill_like_bodies_and_the_totals_are_kept() {
+        let mut s = SessionStore::new();
+        s.bodies = BodyStore::with_budget(64 << 10);
+        let key = TxnKey { source: 1, txn: 1 };
+        let message = |i: u64| SessionEvent::WsMessage {
+            key,
+            at: 1000 + i,
+            out: i.is_multiple_of(4),
+            op: if i == 999 { "close".into() } else { "text".into() },
+            size: if i == 999 { 0 } else { 100 + i % 3 },
+            data: if i == 999 { Bytes::new() } else { Bytes::from(format!("{i:0100}")) },
+            truncated: false,
+            code: (i == 999).then_some(1000),
+            reason: None,
+        };
+        s.apply_all((0..1000).map(message));
+        let t = s.txn(0);
+        assert_eq!((t.ws.len(), t.ws.sent, t.ws.received), (1000, 250, 750));
+        let received: u64 = (0..999).filter(|i: &u64| !i.is_multiple_of(4)).map(|i| 100 + i % 3).sum();
+        assert_eq!(t.ws.received_bytes, received);
+        assert_eq!(t.response_size(), received);
+        assert_eq!(t.ws.sent_bytes, (0..1000).filter(|i: &u64| i.is_multiple_of(4)).map(|i| 100 + i % 3).sum::<u64>());
+        // 100 KB of payloads, over the 64 KB budget
+        assert!(s.bodies().spilled_bytes() > 0 && s.bodies().mem_bytes() <= 64 << 10);
+        for (i, m) in t.ws.messages.iter().enumerate().take(999) {
+            assert_eq!(&s.ws_payload(t, m)[..], format!("{i:0100}").as_bytes());
+        }
+        assert!(s.ws_payload(t, &t.ws.messages[999]).is_empty(), "a close has no payload");
+        assert_eq!(&s.ws_payload_start(t, &t.ws.messages[7], 3)[..], b"000");
     }
 
     #[test]

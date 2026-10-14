@@ -138,7 +138,7 @@ pub fn json_line(store: &SessionStore, i: TxnIdx, now: Ts, bodies: bool) -> Valu
         line["original"] = o;
     }
     if t.is_websocket() {
-        line["websocket"] = websocket(t, bodies);
+        line["websocket"] = websocket(store, t, bodies);
     }
     if !t.trailers.is_empty() {
         line["trailers"] = pairs(&t.trailers);
@@ -150,39 +150,41 @@ pub fn json_line(store: &SessionStore, i: TxnIdx, now: Ts, bodies: bool) -> Valu
 }
 
 /// A WebSocket's messages: counts and bytes each way; with `--bodies`, every message.
-fn websocket(t: &Transaction, bodies: bool) -> Value {
-    let (sent, received): (Vec<_>, Vec<_>) = t.ws.iter().partition(|m| m.out);
+fn websocket(store: &SessionStore, t: &Transaction, bodies: bool) -> Value {
+    let ws = &t.ws;
     let mut v = json!({
-        "sent": sent.len(),
-        "sent_bytes": sent.iter().map(|m| m.size).sum::<u64>(),
-        "received": received.len(),
-        "received_bytes": received.iter().map(|m| m.size).sum::<u64>(),
+        "sent": ws.sent,
+        "sent_bytes": ws.sent_bytes,
+        "received": ws.received,
+        "received_bytes": ws.received_bytes,
     });
     if bodies {
-        let messages: Vec<Value> =
-            t.ws.iter()
-                .map(|m| {
-                    let mut x = json!({
-                        "dir": if m.out { "out" } else { "in" },
-                        "op": m.op,
-                        "at_ms": ms(m.at.saturating_sub(t.start)),
-                        "size": m.size,
-                    });
-                    if m.op == "close" {
-                        x["code"] = json!(m.code);
-                        x["reason"] = json!(m.reason);
-                    } else {
-                        match std::str::from_utf8(&m.data) {
-                            Ok(text) if m.op == "text" => x["text"] = json!(text),
-                            _ => x["base64"] = json!(base64::engine::general_purpose::STANDARD.encode(&m.data)),
-                        }
-                        if m.truncated {
-                            x["truncated"] = json!(true);
-                        }
+        let messages: Vec<Value> = ws
+            .messages
+            .iter()
+            .map(|m| {
+                let mut x = json!({
+                    "dir": if m.out { "out" } else { "in" },
+                    "op": m.op,
+                    "at_ms": ms(m.at.saturating_sub(t.start)),
+                    "size": m.size,
+                });
+                if m.op == "close" {
+                    x["code"] = json!(m.code);
+                    x["reason"] = json!(m.reason);
+                } else {
+                    let data = store.ws_payload(t, m);
+                    match std::str::from_utf8(&data) {
+                        Ok(text) if m.op == "text" => x["text"] = json!(text),
+                        _ => x["base64"] = json!(base64::engine::general_purpose::STANDARD.encode(&data)),
                     }
-                    x
-                })
-                .collect();
+                    if m.truncated {
+                        x["truncated"] = json!(true);
+                    }
+                }
+                x
+            })
+            .collect();
         v["messages"] = json!(messages);
     }
     v

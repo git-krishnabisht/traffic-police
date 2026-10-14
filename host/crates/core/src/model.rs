@@ -316,7 +316,7 @@ pub struct Transaction {
     /// Bookmarked by the user (`m`); saved in session files.
     pub pinned: bool,
     /// The messages of a WebSocket (this transaction is its handshake), in order.
-    pub ws: Arc<Vec<WsMessage>>,
+    pub ws: Arc<WsLog>,
     /// The response's trailers, in order (a gRPC call's).
     pub trailers: Headers,
     /// A gRPC call's status.
@@ -385,7 +385,8 @@ impl Grpc {
     }
 }
 
-/// One WebSocket message (PROTOCOL.md §7.1 `ws`).
+/// One WebSocket message (PROTOCOL.md §7.1 `ws`). Its payload is in the body store, after the
+/// socket's earlier ones ([`crate::store::SessionStore::ws_payload`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WsMessage {
     pub at: Ts,
@@ -395,12 +396,41 @@ pub struct WsMessage {
     pub op: String,
     /// The payload's whole size.
     pub size: u64,
-    /// The payload as captured (at most the capture cap).
-    pub data: bytes::Bytes,
+    /// Where the payload as captured (at most the capture cap) is among the socket's payloads,
+    /// and how long it is.
+    pub offset: u64,
+    pub len: u64,
     pub truncated: bool,
     /// A close's status code and reason.
     pub code: Option<u16>,
     pub reason: Option<String>,
+}
+
+/// A WebSocket's messages, in order, and what went each way. The payloads are in the body store
+/// as one body (spilled to disk past its budget, as bodies are; up to 0.5.1 they stayed in
+/// memory, outside the budget), and the totals are kept as messages come (they were added up
+/// for every Size cell of every frame).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WsLog {
+    pub messages: Vec<WsMessage>,
+    /// The payloads, back to back.
+    pub body: Option<BodyId>,
+    /// Messages sent, and their bytes (whole sizes).
+    pub sent: u64,
+    pub sent_bytes: u64,
+    /// Messages received, and their bytes.
+    pub received: u64,
+    pub received_bytes: u64,
+}
+
+impl WsLog {
+    pub fn len(&self) -> usize {
+        self.messages.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.messages.is_empty()
+    }
 }
 
 impl Transaction {
@@ -433,7 +463,7 @@ impl Transaction {
             failure: None,
             lossy: false,
             pinned: false,
-            ws: Arc::new(Vec::new()),
+            ws: Arc::new(WsLog::default()),
             trailers: Vec::new(),
             grpc: None,
             rev: 0,
@@ -499,7 +529,7 @@ impl Transaction {
     /// received).
     pub fn response_size(&self) -> u64 {
         if !self.ws.is_empty() {
-            return self.ws.iter().filter(|m| !m.out).map(|m| m.size).sum();
+            return self.ws.received_bytes;
         }
         self.resp_body.total
     }

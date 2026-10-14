@@ -25,10 +25,22 @@ pub enum SessionEvent {
     },
     Request(Box<RequestStarted>),
     Response(Box<ResponseStarted>),
-    /// A WebSocket message on a transaction's socket.
+    /// A WebSocket message on a transaction's socket (PROTOCOL.md §7.1 `ws`).
     WsMessage {
         key: TxnKey,
-        msg: crate::model::WsMessage,
+        at: Ts,
+        /// Sent by the app (else received).
+        out: bool,
+        /// `text`, `binary` or `close`.
+        op: String,
+        /// The payload's whole size.
+        size: u64,
+        /// The payload as captured (at most the capture cap).
+        data: Bytes,
+        truncated: bool,
+        /// A close's status code and reason.
+        code: Option<u16>,
+        reason: Option<String>,
     },
     Body {
         key: TxnKey,

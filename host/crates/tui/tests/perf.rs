@@ -556,6 +556,11 @@ fn zstd_rle(byte: u8, blocks: usize) -> Vec<u8> {
 
 /// A finished GET whose response is `body`, sent with `headers`; returns its index.
 fn add_response(app: &mut App, txn: u64, headers: Vec<(String, String)>, body: Bytes) -> TxnIdx {
+    add_exchange(app, txn, 200, headers, body)
+}
+
+/// A finished GET answered with `status`, `headers` and `body`; returns its index.
+fn add_exchange(app: &mut App, txn: u64, status: u16, headers: Vec<(String, String)>, body: Bytes) -> TxnIdx {
     let source = app.store.current_source().expect("demo source").id;
     let key = TxnKey { source, txn };
     let at = app.store.latest() + NS_PER_MS;
@@ -580,7 +585,7 @@ fn add_response(app: &mut App, txn: u64, headers: Vec<(String, String)>, body: B
         SessionEvent::Response(Box::new(ResponseStarted {
             key,
             at: at + NS_PER_MS,
-            status: 200,
+            status,
             message: "OK".into(),
             protocol: None,
             headers,
@@ -681,4 +686,63 @@ fn large_and_compressed_bodies() {
     for f in frames {
         f.check();
     }
+}
+
+/// A busy WebSocket: 200,000 messages, then a new one every frame, with the Response tab of its
+/// handshake open, where the messages are listed (and the list's Size column adds up what it
+/// received). Up to 0.5.1 every message's row was made for every frame, and the Size cell added
+/// up every message.
+#[test]
+#[ignore = "run in release: cargo test --release -p traffic-police-tui --test perf -- --ignored --nocapture"]
+fn a_busy_websocket() {
+    use traffic_police_core::normalize::Normalizer;
+    use traffic_police_proto::msg::{self, DeviceMsg};
+    let _alone = alone();
+    const MESSAGES: u64 = 200_000;
+    let mut app = common::app_at(2.0);
+    let upgrade = vec![("Upgrade".to_string(), "websocket".to_string())];
+    let txn = add_exchange(&mut app, 96_000, 101, upgrade, Bytes::new());
+    let source = app.store.current_source().expect("demo source").id;
+    let mut normalizer = Normalizer::new(source);
+    let start = app.store.latest();
+    // the messages as the runtime sends them (PROTOCOL.md §7.1 `ws`)
+    let mut message = |i: u64| {
+        let text = format!(r#"{{"type":"order","id":"o_{i}","state":"delivered","eta":{}}}"#, i % 600);
+        let ws = msg::Ws {
+            seq: 1 + i,
+            ts: start + i * NS_PER_MS,
+            txn: 96_000,
+            dir: (if i.is_multiple_of(8) { "out" } else { "in" }).into(),
+            op: "text".into(),
+            size: text.len() as u64,
+            text: Some(text),
+            base64: None,
+            truncated: false,
+            code: None,
+            reason: None,
+        };
+        let mut events = Vec::new();
+        normalizer.message(DeviceMsg::Ws(ws), &mut events);
+        events
+    };
+    let t = Instant::now();
+    for batch in 0..MESSAGES / 5000 {
+        app.ingest((batch * 5000..(batch + 1) * 5000).flat_map(&mut message).collect());
+    }
+    let took = t.elapsed();
+    println!("{:<44} {:>8.2?}", "WebSocket: 200,000 messages into the store", took);
+    app.now_override = Some(app.store.latest());
+    render_text(&mut app, 200, 50);
+    app.select_txn(txn);
+    app.detail_open = true;
+    app.focus = Focus::Detail;
+    app.detail.tab = Tab::Response;
+    let mut i = MESSAGES;
+    let frames = time_frames("  its messages open, a new one every frame", &mut app, 200, |app, _| {
+        app.ingest(message(i));
+        app.now_override = Some(app.store.latest());
+        i += 1;
+    });
+    assert_eq!(app.view_store().txn(txn).ws.len() as u64, i);
+    frames.check();
 }
