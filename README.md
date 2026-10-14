@@ -739,7 +739,7 @@ TP_E2E_SERIAL=emulator-5554 cargo test -p traffic-police-backends --test device_
 cd android
 ./gradlew :capture-core:check                 # JVM tests against eight OkHttp versions, 3.9 to 5.5 (and the OkHttp 3.9 API check)
 ./gradlew :capture:connectedDebugAndroidTest  # the library's tests on a device or emulator (all connected ones; ANDROID_SERIAL picks one)
-./gradlew :sample-app:assembleDebug           # the sample app (assembleNondebuggable: release-like, with capture; assemblePlain: no traffic-police code)
+./gradlew :sample-app:assembleDebug           # the sample app (assembleRelease: minified, with capture-noop; assembleNondebuggable: the same with capture; assemblePlain: no traffic-police code)
 ./gradlew :attach-agent:agentArtifacts        # the attach-mode agent (JVMTI .so per ABI, boot and runtime dex)
 ./gradlew :capture-core:benchmarkOverhead     # what capture costs per request on the JVM
 ./gradlew publishAllPublicationsToBuildRepository   # the artifacts in android/build/repo, not ~/.m2

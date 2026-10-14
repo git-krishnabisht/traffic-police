@@ -48,12 +48,28 @@ jobs:
           fi
           others=$(grep -o "<artifactId>[^<]*</artifactId>" $repo/capture/*/capture-*.pom | grep -v -e ">capture<" -e ">capture-core<" || true)
           if [ -n "$others" ]; then echo "capture depends on: $others"; exit 1; fi
+      # The release build is minified, as apps' are, and R8 renames what no rule keeps: so besides
+      # the names in its dex, R8's mapping (every class kept, under its own name) is read, and
+      # both must find capture in nondebuggable, a minified build that ships it on purpose.
       - name: Release builds carry no capture code, and the plain build none of ours at all
         run: |
-          apk=sample-app/build/outputs/apk/release/sample-app-release.apk
-          unzip -q -o "$apk" 'classes*.dex' -d release-dex
-          if grep -a -q "Lio/trafficpolice/capture/" release-dex/classes*.dex; then
+          in_dex() {
+            apk=sample-app/build/outputs/apk/$1/sample-app-$1.apk
+            if [ ! -s "$apk" ]; then echo "no $1 APK"; exit 1; fi
+            rm -rf "$1-dex"
+            unzip -q -o "$apk" 'classes*.dex' -d "$1-dex"
+            grep -a -q "Lio/trafficpolice/capture/" "$1"-dex/classes*.dex
+          }
+          in_mapping() {
+            mapping=sample-app/build/outputs/mapping/$1/mapping.txt
+            if [ ! -s "$mapping" ]; then echo "no R8 mapping for $1: not minified?"; exit 1; fi
+            grep -q "^io\.trafficpolice\.\(capture\|internal\)\." "$mapping"
+          }
+          if in_dex release || in_mapping release; then
             echo "the release APK contains capture classes"; exit 1
+          fi
+          if ! in_dex nondebuggable || ! in_mapping nondebuggable; then
+            echo "the test does not find the capture classes nondebuggable has"; exit 1
           fi
           apk=sample-app/build/outputs/apk/plain/sample-app-plain.apk
           unzip -q -o "$apk" 'classes*.dex' -d plain-dex

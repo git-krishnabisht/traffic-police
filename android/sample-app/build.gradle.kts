@@ -21,11 +21,16 @@ android {
 
     buildTypes {
         release {
-            // release builds use capture-noop; signed with the debug key so they install for testing
+            // release builds use capture-noop; signed with the debug key so they install for testing.
+            // Minified as an app's release build is, so that CI runs R8 over capture-noop (and,
+            // through nondebuggable, over capture and its consumer rules)
+            isMinifyEnabled = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"))
             signingConfig = signingConfigs.getByName("debug")
         }
         // A release-like build that wrongly ships the real capture library: capture must refuse
-        // to start because the app is not debuggable (ARCHITECTURE.md §7).
+        // to start because the app is not debuggable (ARCHITECTURE.md §7). Minified as release
+        // is, so R8 runs over capture and its consumer rules.
         create("nondebuggable") {
             initWith(getByName("release"))
             applicationIdSuffix = ".nondebuggable"
