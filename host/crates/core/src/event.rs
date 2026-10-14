@@ -122,6 +122,26 @@ pub enum SessionEvent {
     },
 }
 
+impl SessionEvent {
+    /// The request the event is about, if any.
+    pub fn txn_key(&self) -> Option<TxnKey> {
+        match self {
+            SessionEvent::Request(r) => Some(r.key),
+            SessionEvent::Response(r) => Some(r.key),
+            SessionEvent::Failed(f) => Some(f.key),
+            SessionEvent::RuleApplied(r) => Some(r.key),
+            SessionEvent::WsMessage { key, .. }
+            | SessionEvent::Body { key, .. }
+            | SessionEvent::BodyProgress { key, .. }
+            | SessionEvent::BodyEnd { key, .. }
+            | SessionEvent::Mark { key, .. }
+            | SessionEvent::Trailers { key, .. }
+            | SessionEvent::Completed { key, .. } => Some(*key),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MarkerKind {
     Attach,

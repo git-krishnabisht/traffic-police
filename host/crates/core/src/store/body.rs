@@ -62,6 +62,8 @@ pub struct Appended {
 #[derive(Debug, Clone)]
 pub struct BodyStore {
     bodies: Vec<BodyData>,
+    /// Ids of bodies let go ([`BodyStore::release`]), handed out again.
+    free: Vec<BodyId>,
     mem_bytes: u64,
     budget: u64,
     spill: Option<Arc<SpillFile>>,
@@ -76,12 +78,23 @@ impl Default for BodyStore {
 
 impl BodyStore {
     pub fn with_budget(budget: u64) -> Self {
-        BodyStore { bodies: Vec::new(), mem_bytes: 0, budget, spill: None, spilled_bytes: 0 }
+        BodyStore { bodies: Vec::new(), free: Vec::new(), mem_bytes: 0, budget, spill: None, spilled_bytes: 0 }
     }
 
     pub fn alloc(&mut self) -> BodyId {
+        if let Some(id) = self.free.pop() {
+            return id;
+        }
         self.bodies.push(BodyData::default());
         (self.bodies.len() - 1) as BodyId
+    }
+
+    /// Lets a body go: its bytes in memory are freed (what it had in the spill file stays there,
+    /// unread) and its id is handed out again. Only for a body nothing refers to any more.
+    pub fn release(&mut self, id: BodyId) {
+        let body = std::mem::take(&mut self.bodies[id as usize]);
+        self.mem_bytes -= body.in_mem;
+        self.free.push(id);
     }
 
     pub fn append(&mut self, id: BodyId, offset: u64, bytes: Bytes) -> Appended {
@@ -398,6 +411,21 @@ mod tests {
         // more after the spill: part on disk, part in memory
         s.append(id, 600, pattern(50, 7));
         assert_eq!(&s.slice(id, 580, 70)[..], &[&all[580..], &pattern(50, 7)[..]].concat()[..]);
+    }
+
+    #[test]
+    fn released_bodies_free_their_memory_and_their_ids_come_back() {
+        let mut s = BodyStore::default();
+        let a = s.alloc();
+        s.append(a, 0, pattern(300, 1));
+        let b = s.alloc();
+        s.append(b, 0, pattern(200, 2));
+        s.release(a);
+        assert_eq!(s.mem_bytes(), 200);
+        let c = s.alloc();
+        assert_eq!(c, a, "the id is used again");
+        assert_eq!((s.held(c), s.bytes(c).len()), (0, 0), "empty");
+        assert_eq!(&s.bytes(b)[..], &pattern(200, 2)[..]);
     }
 
     #[test]

@@ -90,6 +90,8 @@ pub struct SessionStore {
     /// The device's log (Logdawg): its own change count, so log lines do not make the request
     /// list look again.
     logs: crate::logdawg::LogStore,
+    /// What the slot of a request let go holds ([`SessionStore::forget`]), one for all of them.
+    gone: Option<Arc<Transaction>>,
 }
 
 /// Approximate size of a header block on the wire (for the captured-traffic series).
@@ -234,6 +236,32 @@ impl SessionStore {
         idx
     }
 
+    /// Lets a finished request go, for good: `tail` and `record` keep none they have printed or
+    /// written, so a day-long run does not grow with every request (up to 0.5.1 each kept
+    /// every one, a few KB each besides its bodies). Its bodies are released, its slot holds an
+    /// empty transaction shared by all such slots, and later events for it are dropped; what
+    /// stays is its key, for those events (about 40 bytes). Not for a store a view reads.
+    pub fn forget(&mut self, idx: TxnIdx) {
+        let gone = self
+            .gone
+            .get_or_insert_with(|| {
+                let mut t = Transaction::new_placeholder(TxnKey { source: SourceId::MAX, txn: u64::MAX }, 0);
+                t.state = TxnState::Complete;
+                Arc::new(t)
+            })
+            .clone();
+        let t = std::mem::replace(&mut self.txns[idx as usize], gone);
+        let bodies = [t.req_body.id, t.resp_body.id, t.delivered_body.as_ref().and_then(|b| b.id), t.ws.body];
+        for id in bodies.into_iter().flatten() {
+            self.bodies.release(id);
+        }
+    }
+
+    /// Whether a request was let go ([`SessionStore::forget`]).
+    pub fn is_forgotten(&self, idx: TxnIdx) -> bool {
+        self.gone.as_ref().is_some_and(|g| Arc::ptr_eq(g, &self.txns[idx as usize]))
+    }
+
     /// Pin or unpin a transaction (a user annotation, not an event from the device).
     pub fn set_pinned(&mut self, idx: TxnIdx, on: bool) {
         self.generation += 1;
@@ -309,6 +337,13 @@ impl SessionStore {
     }
 
     fn apply_network(&mut self, event: SessionEvent) {
+        // a request let go: what comes for it later (a socket's messages) is dropped
+        if self.gone.is_some()
+            && let Some(&i) = event.txn_key().and_then(|k| self.index.get(&k))
+            && self.is_forgotten(i)
+        {
+            return;
+        }
         self.generation += 1;
         match event {
             // `apply` gives these to the log
@@ -579,7 +614,9 @@ impl SessionStore {
                 self.see(at);
                 self.stats.dropped_events = self.stats.dropped_events.saturating_add(events);
                 for txn in txns {
-                    if let Some(&i) = self.index.get(&TxnKey { source, txn }) {
+                    if let Some(&i) = self.index.get(&TxnKey { source, txn })
+                        && !self.is_forgotten(i)
+                    {
                         self.touch(i).lossy = true;
                     }
                 }
@@ -668,6 +705,79 @@ mod tests {
         }
         assert!(s.ws_payload(t, &t.ws.messages[999]).is_empty(), "a close has no payload");
         assert_eq!(&s.ws_payload_start(t, &t.ws.messages[7], 3)[..], b"000");
+    }
+
+    /// `tail` and `record` let a request go once it is printed or written: its bodies' memory is
+    /// freed, its slot shares one empty transaction, and what comes for it later is dropped.
+    #[test]
+    fn a_request_let_go_frees_its_bodies_and_drops_what_comes_later() {
+        let mut s = SessionStore::new();
+        let key = |txn| TxnKey { source: 1, txn };
+        let request = |txn: u64, at: Ts| {
+            SessionEvent::Request(Box::new(crate::event::RequestStarted {
+                key: key(txn),
+                at,
+                call: None,
+                hop: 0,
+                method: "GET".into(),
+                url: format!("https://api.example.app/{txn}"),
+                headers: vec![("Accept".into(), "*/*".into())],
+                client: None,
+                thread: None,
+                stack: Vec::new(),
+                stack_truncated: false,
+                body: None,
+                marks: Vec::new(),
+                conn: None,
+            }))
+        };
+        let body = |txn: u64, n: usize| SessionEvent::Body {
+            key: key(txn),
+            dir: BodyDir::Response,
+            at: 20,
+            offset: 0,
+            bytes: Bytes::from(vec![b'x'; n]),
+        };
+        s.apply_all([request(1, 10), body(1, 1000), SessionEvent::Completed { key: key(1), at: 30 }]);
+        s.apply_all([request(2, 11), body(2, 500)]);
+        assert_eq!(s.bodies().mem_bytes(), 1500);
+        s.forget(0);
+        assert!(s.is_forgotten(0) && !s.is_forgotten(1));
+        assert_eq!(s.bodies().mem_bytes(), 500);
+        // later events for it are dropped, a socket's messages too, and nothing wakes it
+        let generation = s.generation();
+        s.apply(SessionEvent::Body {
+            key: key(1),
+            dir: BodyDir::Response,
+            at: 40,
+            offset: 1000,
+            bytes: Bytes::from("y"),
+        });
+        s.apply(SessionEvent::WsMessage {
+            key: key(1),
+            at: 41,
+            out: false,
+            op: "text".into(),
+            size: 1,
+            data: Bytes::from("z"),
+            truncated: false,
+            code: None,
+            reason: None,
+        });
+        s.apply(SessionEvent::Dropped { source: 1, at: 42, events: 1, bytes: 0, txns: vec![1] });
+        assert_eq!(s.bodies().mem_bytes(), 500);
+        assert!(s.is_forgotten(0));
+        assert_eq!(s.generation(), generation + 1, "only the drop note counts");
+        // the other request is as it was, and later let go as well
+        assert_eq!(&s.body_bytes(&s.txn(1).resp_body)[..], &[b'x'; 500][..]);
+        s.forget(1);
+        assert!(Arc::ptr_eq(&s.txns()[0], &s.txns()[1]), "one transaction for both slots");
+        assert_eq!((s.len(), s.bodies().mem_bytes()), (2, 0));
+        s.apply(SessionEvent::SourceDown { source: 1, at: 50, reason: "the app exited".into() });
+        assert!(s.is_forgotten(0) && s.is_forgotten(1));
+        // a new request after them is a request as any
+        s.apply_all([request(3, 60), body(3, 10)]);
+        assert_eq!((s.len(), s.txn(2).url.path.as_str(), s.bodies().mem_bytes()), (3, "/3", 10));
     }
 
     #[test]

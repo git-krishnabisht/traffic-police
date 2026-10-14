@@ -249,6 +249,25 @@ impl SessionLog {
         keep: Option<&HashSet<TxnKey>>,
         stop: &dyn Fn() -> bool,
     ) -> io::Result<usize> {
+        // the device's log: all of it, or with some requests the lines from the first's start to
+        // the last's end
+        let span = keep.map(|keep| {
+            let kept = store.txns().iter().filter(|t| keep.contains(&t.key));
+            kept.fold((Ts::MAX, 0), |(a, b), t| (a.min(t.start), b.max(t.end.unwrap_or(t.start))))
+        });
+        self.export_spanning(store, out, keep, span, stop)
+    }
+
+    /// [`SessionLog::export_until`], given the time the requests of `keep` span (`record
+    /// --filter` lets requests go as it writes them, so the store no longer has them all).
+    pub fn export_spanning(
+        &self,
+        store: &SessionStore,
+        out: &Path,
+        keep: Option<&HashSet<TxnKey>>,
+        span: Option<(Ts, Ts)>,
+        stop: &dyn Fn() -> bool,
+    ) -> io::Result<usize> {
         let stopped = || io::Error::new(io::ErrorKind::Interrupted, "stopped");
         let path = {
             let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
@@ -298,12 +317,6 @@ impl SessionLog {
                 gz.write_all(&buf)?;
             }
         }
-        // the device's log: all of it, or with some requests the lines from the first's start to
-        // the last's end
-        let span = keep.map(|keep| {
-            let kept = store.txns().iter().filter(|t| keep.contains(&t.key));
-            kept.fold((Ts::MAX, 0), |(a, b), t| (a.min(t.start), b.max(t.end.unwrap_or(t.start))))
-        });
         log_records(store, span, |record| {
             if stop() {
                 return Err(stopped());
