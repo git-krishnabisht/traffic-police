@@ -222,6 +222,34 @@ public final class RuntimeProtocolTest {
         assertEquals(null, q.takeDropped(100));
     }
 
+    /** An idle writer waits with no timeout (WAITING, not TIMED_WAITING): it does not wake up for nothing. */
+    @Test
+    public void anIdleWriterDoesNotWakeUp() throws Exception {
+        TestPlatform.awaitWriter(rt);
+        long deadline = System.nanoTime() + 2_000_000_000L;
+        while (rt.writerThread.getState() != Thread.State.WAITING && System.nanoTime() < deadline) {
+            Thread.sleep(5); // after a batch the writer rests 2 ms (TIMED_WAITING), then waits
+        }
+        for (int i = 0; i < 10; i++) {
+            assertEquals(Thread.State.WAITING, rt.writerThread.getState());
+            Thread.sleep(30);
+        }
+        // and events still wake it (no task posted here: awaitWriter would wake it by itself)
+        Txn t = exchange("https://example.com/idle", new byte[0]);
+        deadline = System.nanoTime() + 2_000_000_000L;
+        while (!rt.queue.isEmpty() && System.nanoTime() < deadline) {
+            Thread.sleep(1);
+        }
+        assertTrue("the writer took the events", rt.queue.isEmpty());
+        try (TestHost host = TestHost.connect(rt)) {
+            boolean seen = false;
+            for (TestHost.Msg m : host.replayed) {
+                seen |= "done".equals(m.t()) && m.txn == t.id;
+            }
+            assertTrue("replayed", seen);
+        }
+    }
+
     @Test
     public void ringKeepsWholeRecentTransactions() {
         ReplayRing ring = new ReplayRing(2, 1 << 20);

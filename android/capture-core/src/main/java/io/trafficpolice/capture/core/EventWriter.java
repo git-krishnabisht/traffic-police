@@ -38,7 +38,8 @@ final class EventWriter implements Runnable {
         while (running) {
             runTasks();
             try {
-                queue.drainTo(batch, 250);
+                // no timeout: every offer, and every task posted (attach, detach, control, stop), wakes it
+                queue.drainTo(batch);
             } catch (InterruptedException ie) {
                 break;
             }

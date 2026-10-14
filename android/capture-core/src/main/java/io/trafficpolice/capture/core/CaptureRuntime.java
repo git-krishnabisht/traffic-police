@@ -44,7 +44,8 @@ public final class CaptureRuntime {
     final Recorder recorder;
     final String instance;
     final long startedTs;
-    private final Thread writerThread;
+    /** The writer's thread (tests look at it). */
+    final Thread writerThread;
     private final TrafficSampler sampler;
     private final List<String> capabilities = new ArrayList<>();
     private final Set<String> reported = Collections.synchronizedSet(new HashSet<String>());

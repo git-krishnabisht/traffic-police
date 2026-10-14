@@ -52,14 +52,14 @@ final class EventQueue {
     }
 
     /**
-     * Moves every queued event to {@code out}, in order. With none queued, waits up to
-     * {@code timeoutMillis} for one, or for {@link #wake()}.
+     * Moves every queued event to {@code out}, in order. With none queued, waits for one, or for
+     * {@link #wake()}, as long as it takes: an idle app's writer does not wake up at all.
      */
-    synchronized void drainTo(List<Event> out, long timeoutMillis) throws InterruptedException {
+    synchronized void drainTo(List<Event> out) throws InterruptedException {
         if (queue.isEmpty() && !woken) {
             idle = true;
             try {
-                wait(timeoutMillis);
+                wait();
             } finally {
                 idle = false;
             }
@@ -76,7 +76,7 @@ final class EventQueue {
         return queue.isEmpty();
     }
 
-    /** Makes a waiting {@link #poll} return so the writer can run its tasks. */
+    /** Makes a waiting {@link #drainTo} return so the writer can run its tasks. */
     synchronized void wake() {
         woken = true;
         notifyAll();
