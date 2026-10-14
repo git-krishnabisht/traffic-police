@@ -11,7 +11,21 @@ import io.trafficpolice.capture.okhttp.OkHttpDetect;
 public final class AndroidRuntime {
     static final String TAG = "TrafficPolice";
 
+    /** What the app asked the replay ring to keep (TrafficPolice.buffer); -1 until it asks. */
+    private static int bufferTxns = -1;
+    private static long bufferBytes = -1;
+
     private AndroidRuntime() {}
+
+    /** Applies to the runtime running in this process, and to one started in it later. */
+    public static synchronized void buffer(int txns, long bytes) {
+        bufferTxns = Math.max(0, txns);
+        bufferBytes = Math.max(0, bytes);
+        CaptureRuntime rt = CaptureRuntime.current();
+        if (rt != null) {
+            rt.buffer(bufferTxns, bufferBytes);
+        }
+    }
 
     public static synchronized void start(Context context) {
         if (context == null || CaptureRuntime.current() != null) {
@@ -27,6 +41,10 @@ public final class AndroidRuntime {
         AndroidPlatform platform = new AndroidPlatform(app);
         CaptureRuntime.Options options = new CaptureRuntime.Options();
         options.mode = "library";
+        if (bufferTxns >= 0) {
+            options.ringTxns = bufferTxns;
+            options.ringBytes = bufferBytes;
+        }
         boolean okhttp = OkHttpDetect.present();
         boolean supported = okhttp && OkHttpDetect.supported();
         options.okhttp = supported;

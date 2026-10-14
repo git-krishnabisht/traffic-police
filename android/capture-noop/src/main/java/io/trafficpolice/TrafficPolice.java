@@ -56,6 +56,10 @@ public final class TrafficPolice {
         return false;
     }
 
+    public static void buffer(int requests, long bytes) {
+        // nothing is kept
+    }
+
     private static final class PassThrough implements Interceptor {
         static final PassThrough INSTANCE = new PassThrough();
 

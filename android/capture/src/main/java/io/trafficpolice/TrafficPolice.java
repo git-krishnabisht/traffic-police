@@ -100,4 +100,14 @@ public final class TrafficPolice {
     public static boolean isActive() {
         return CaptureRuntime.current() != null;
     }
+
+    /**
+     * How much the runtime keeps for a traffic-police that connects later: the last
+     * {@code requests} requests, in at most {@code bytes} of memory (by default 1,000 and 32 MB;
+     * {@code buffer(0, 0)} keeps none). Call it first in {@code Application.onCreate} (in other
+     * processes, before {@link #start}); what was kept before goes down to the new limits.
+     */
+    public static void buffer(int requests, long bytes) {
+        AndroidRuntime.buffer(requests, bytes);
+    }
 }

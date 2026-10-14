@@ -44,8 +44,8 @@ final class ReplayRing {
         long bodyBytes;
     }
 
-    private final int maxTxns;
-    private final long maxBytes;
+    private int maxTxns;
+    private long maxBytes;
     private final LinkedHashMap<Long, TxnFrames> txns = new LinkedHashMap<>();
     private final ArrayDeque<Entry> diag = new ArrayDeque<>();
     private final ArrayDeque<Entry> traffic = new ArrayDeque<>();
@@ -96,6 +96,13 @@ final class ReplayRing {
                     diag.pollFirst();
                 }
         }
+    }
+
+    /** New limits (the app's, TrafficPolice.buffer): what is over them goes now. */
+    synchronized void limit(int maxTxns, long maxBytes) {
+        this.maxTxns = maxTxns;
+        this.maxBytes = maxBytes;
+        evict();
     }
 
     private void evict() {

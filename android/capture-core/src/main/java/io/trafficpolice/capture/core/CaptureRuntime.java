@@ -128,6 +128,15 @@ public final class CaptureRuntime {
         return recorder;
     }
 
+    /**
+     * How much the replay ring keeps from now on (PROTOCOL.md §6; the app's TrafficPolice.buffer):
+     * at most {@code txns} transactions in {@code bytes} of memory, negative values as 0. What is
+     * over goes at once; hello reports the new limits.
+     */
+    public void buffer(int txns, long bytes) {
+        ring.limit(Math.max(0, txns), Math.max(0, bytes));
+    }
+
     public CaptureConfig config() {
         return config;
     }

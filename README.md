@@ -201,6 +201,18 @@ reported) and a debuggable build. The library builds for Android 5.0 (API 21) an
 tested on Android 8.0 (API 26) to 17 (API 37). It is plain Java with no dependencies of its own;
 in a release build `capture-noop` adds a few small pass-through classes and nothing starts.
 
+So that traffic-police can show what the app did before it connected, the runtime keeps the
+app's last 1,000 requests, in at most 32 MB of memory (with their headers, stacks and bodies),
+from the start, whether traffic-police connects or not. An app short of memory can keep less (or
+more), first thing in `Application.onCreate` (in other processes, before `TrafficPolice.start`):
+
+```kotlin
+TrafficPolice.buffer(200, 4L * 1024 * 1024)   // the last 200 requests, in at most 4 MB; buffer(0, 0) keeps none
+```
+
+That changes only what is there when traffic-police connects; while it is connected, everything
+is shown as always. In `capture-noop`, `buffer` does nothing.
+
 **3. Run traffic-police:**
 
 ```sh
@@ -215,9 +227,9 @@ The header shows the state: **LIVE**; **PAUSED** (`Space`: the app stops recordi
 requests); **WAITING** (for the device, for the app to start, or for Android to unfreeze a
 cached app); **DETACHED** (the app exited; everything captured stays on screen). With
 `--follow`, a restarted app continues as a new segment of the same timeline. Requests the app
-made before traffic-police connected are shown too (the runtime keeps the last 1,000). One
-traffic-police watches a process at a time: a second one takes over, and the first shows
-DETACHED.
+made before traffic-police connected are shown too (the runtime keeps the last 1,000, or what
+`TrafficPolice.buffer` says). One traffic-police watches a process at a time: a second one takes
+over, and the first shows DETACHED.
 
 **What you see:** every OkHttp request that reaches the network, with the headers as sent on
 the wire (including the ones OkHttp adds), bodies as transferred (gzip, brotli and zstd are

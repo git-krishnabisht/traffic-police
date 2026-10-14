@@ -310,6 +310,41 @@ public final class RuntimeProtocolTest {
         assertEquals(100_000 - queued.size(), q.takeDropped(0).events);
     }
 
+    /** The app's limits (TrafficPolice.buffer): what is over them goes at once, and hello shows them. */
+    @Test
+    public void theAppSetsWhatTheRingKeeps() throws Exception {
+        List<Long> ids = new ArrayList<>();
+        for (int i = 0; i < 10; i++) {
+            ids.add(exchange("https://example.com/" + i, "{\"ok\":true}".getBytes(Json.UTF_8)).id);
+        }
+        TestPlatform.awaitWriter(rt);
+        rt.buffer(3, 32L << 20);
+        try (TestHost host = TestHost.connect(rt)) {
+            Map<String, Object> buffer = host.hello.obj("buffer");
+            assertEquals(3, JsonParser.num(buffer, "max_txns", -1));
+            assertEquals(32L << 20, JsonParser.num(buffer, "max_body_bytes", -1));
+            assertEquals(3, JsonParser.num(buffer, "txns", -1));
+            java.util.Set<Long> replayed = new java.util.TreeSet<>();
+            for (TestHost.Msg m : host.replayed) {
+                if (m.txn != 0) {
+                    replayed.add(m.txn);
+                }
+            }
+            assertEquals(new java.util.TreeSet<>(ids.subList(7, 10)), replayed);
+        }
+        rt.buffer(-1, -1); // as 0: no transaction is kept, diagnostics still are
+        try (TestHost host = TestHost.connect(rt)) {
+            assertEquals(0, JsonParser.num(host.hello.obj("buffer"), "max_txns", -1));
+            assertEquals(0, JsonParser.num(host.hello.obj("buffer"), "txns", -1));
+            boolean started = false;
+            for (TestHost.Msg m : host.replayed) {
+                assertEquals("no transaction replayed", 0, m.txn);
+                started |= "started".equals(m.str("code"));
+            }
+            assertTrue(started);
+        }
+    }
+
     /** A queued event counts what it holds: trailers, a failure's messages, a diagnostic's text. */
     @Test
     public void queuedEventsCountWhatTheyHold() {
