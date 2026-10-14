@@ -436,7 +436,6 @@ fn ingest_through_the_ui_while_it_draws() {
 #[test]
 #[ignore = "run in release: cargo test --release -p traffic-police-tui --test perf -- --ignored --nocapture"]
 fn logdawg_with_500k_lines() {
-    let _alone = alone();
     use traffic_police_core::logdawg::{Level, LogLine};
     let _alone = alone();
     const LINES: u64 = 500_000;
