@@ -1,12 +1,16 @@
 name: install
 
 # The one-line installers (install.sh, install.ps1) against a published release: on changes to
-# them (the latest release), and from release.yml after each release (that release).
+# them (the latest release), and from release.yml after each release (that release). Each runs
+# without a terminal and in one, where it draws a progress bar for the download, which nothing
+# else runs (until 2026-10-14 CI ran them without one only, and a race in install.sh's bar that
+# stopped installs was not seen); tests/install_progress.sh runs the bar's count against parts
+# that come and go.
 on:
   push:
-    paths: ["install.sh", "install.ps1", ".github/workflows/install.yml"]
+    paths: ["install.sh", "install.ps1", "tests/install_progress.sh", ".github/workflows/install.yml"]
   pull_request:
-    paths: ["install.sh", "install.ps1", ".github/workflows/install.yml"]
+    paths: ["install.sh", "install.ps1", "tests/install_progress.sh", ".github/workflows/install.yml"]
   workflow_dispatch:
     inputs:
       version:
@@ -34,7 +38,14 @@ jobs:
       - uses: actions/checkout@v7
       - name: shellcheck
         if: runner.os == 'Linux'
-        run: shellcheck -s sh install.sh
+        run: shellcheck -s sh install.sh tests/install_progress.sh
+      # macOS's sh is bash; Ubuntu's is dash
+      - name: The progress bar's count, while the parts come and go
+        run: |
+          for shell in sh dash bash; do
+            echo "$shell:"
+            "$shell" tests/install_progress.sh
+          done
       - name: Install into a folder, then again over it (an update)
         run: |
           sh install.sh --dir "$RUNNER_TEMP/bin" --no-modify-path
@@ -44,6 +55,24 @@ jobs:
           if [ -n "$TRAFFIC_POLICE_VERSION" ] && [ "$out" != "traffic-police ${TRAFFIC_POLICE_VERSION#v}" ]; then
             echo "::error::installed $out, not $TRAFFIC_POLICE_VERSION"; exit 1
           fi
+      # script(1) gives the installer a terminal, so it draws its progress bar
+      - name: In a terminal (the progress bar), in parts
+        env:
+          TERM: xterm-256color
+        run: |
+          log="$RUNNER_TEMP/terminal.log"
+          status=0
+          if [ "$RUNNER_OS" = macOS ]; then
+            script -q "$log" sh install.sh --dir "$RUNNER_TEMP/terminal" --no-modify-path > /dev/null || status=$?
+          else
+            script -q -e -c "sh install.sh --dir '$RUNNER_TEMP/terminal' --no-modify-path" "$log" > /dev/null || status=$?
+          fi
+          # each line as the terminal showed it last
+          awk '{ sub(/\r$/, ""); sub(/.*\r/, ""); print }' "$log"
+          if [ "$status" != 0 ]; then echo "::error::the install in a terminal failed (exit status $status)"; exit 1; fi
+          "$RUNNER_TEMP/terminal/traffic-police" --version
+          grep -q "over 8 connections" "$log" || { echo "::error::the download did not come in parts"; exit 1; }
+          grep -q "[0-9]%  [0-9.]* / [0-9.]* MB" "$log" || { echo "::error::the progress bar was not drawn"; exit 1; }
       - name: Each shell's startup file gets the folder once, and it works
         run: |
           check() {
@@ -100,6 +129,32 @@ jobs:
           if ($n -ne 1) { throw "the folder is on PATH $n times: $path" }
           Write-Host "PATH is $($key.GetValueKind('Path'))"
           if ($key.GetValueKind('Path') -ne 'ExpandString') { throw "PATH is now $($key.GetValueKind('Path'))" }
+      # The installer draws its progress bar only in a console, and a step's output is not one:
+      # here it runs in a console of its own (Start-Process), and what it shows, Write-Host's
+      # information stream, goes to a log too.
+      - name: In a console (the progress bar), in parts
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $env:TRAFFIC_POLICE_INSTALL_DIR = Join-Path $env:RUNNER_TEMP "console-${{ matrix.shell }}"
+          $env:TRAFFIC_POLICE_NO_MODIFY_PATH = '1'
+          $env:TP_INSTALLER = Join-Path $env:GITHUB_WORKSPACE 'install.ps1'
+          $env:TP_LOG = Join-Path $env:RUNNER_TEMP "console-${{ matrix.shell }}.log"
+          $child = @'
+          try {
+              & { Get-Content -Raw $env:TP_INSTALLER | Invoke-Expression } 6> $env:TP_LOG
+              exit 0
+          } catch {
+              "failed: $_" | Out-File -FilePath $env:TP_LOG -Append
+              exit 1
+          }
+          '@
+          $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($child))
+          $p = Start-Process -FilePath (Get-Process -Id $PID).Path -ArgumentList '-NoProfile', '-EncodedCommand', $encoded -Wait -PassThru
+          if (Test-Path -LiteralPath $env:TP_LOG) { Get-Content -LiteralPath $env:TP_LOG | Where-Object { $_.Trim() } | Select-Object -Last 12 }
+          if ($p.ExitCode -ne 0) { throw "the install in a console failed (exit code $($p.ExitCode))" }
+          if (-not (Select-String -LiteralPath $env:TP_LOG -Pattern 'over 8 connections' -Quiet)) { throw 'the download did not come in parts' }
+          if (-not (Select-String -LiteralPath $env:TP_LOG -Pattern '\d+%  [\d.,]+ / [\d.,]+ MB' -Quiet)) { throw 'the progress bar was not drawn' }
+          & (Join-Path $env:TRAFFIC_POLICE_INSTALL_DIR 'traffic-police.exe') --version
       - name: The one-line command from the README
         if: inputs.version != ''
         run: |

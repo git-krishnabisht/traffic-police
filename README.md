@@ -731,6 +731,8 @@ cd android
 ./gradlew :attach-agent:agentArtifacts        # the attach-mode agent (JVMTI .so per ABI, boot and runtime dex)
 ./gradlew :capture-core:benchmarkOverhead     # what capture costs per request on the JVM
 ./gradlew publishAllPublicationsToBuildRepository   # the artifacts in android/build/repo, not ~/.m2
+
+sh tests/install_progress.sh                  # install.sh's progress count while the download's parts come and go
 ```
 
 Protocol golden files in `testdata/protocol/v1` are shared by both sides and rewritten only on
