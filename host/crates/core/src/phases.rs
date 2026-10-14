@@ -58,8 +58,13 @@ impl Transaction {
         first(self, "resp_headers_start").or(self.resp.as_ref().map(|r| r.at))
     }
 
+    /// Where its bar ends: when it ended, else when its response body did, else `now`.
+    pub fn bar_end(&self, now: Ts) -> Ts {
+        self.end.or(self.resp_body.ended).unwrap_or(now).max(self.start)
+    }
+
     pub fn segments(&self, now: Ts) -> Segments {
-        let end = self.end.or(self.resp_body.ended).unwrap_or(now).max(self.start);
+        let end = self.bar_end(now);
         let sent = self.sent_at().min(end);
         let first_byte = self.first_byte_at().map(|f| f.clamp(sent, end));
         Segments { start: self.start, sent, first_byte, end }

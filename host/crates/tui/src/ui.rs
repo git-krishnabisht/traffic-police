@@ -616,21 +616,53 @@ fn bar_cell(lo: u64, hi: u64, color: Color, background: Option<Color>) -> (&'sta
 /// sending, then waiting, then receiving, in their colors. Positions are eighths of a cell. The
 /// bar's width and its phases' are measured from its start, so they do not flicker by an eighth
 /// as the bar scrolls; only a bar cut by the window's left edge measures from the edge.
+/// A Timeline of `width` cells over a window of time, measured in eighths of a cell.
+#[derive(Debug, Clone, Copy)]
+struct Scale {
+    left: Ts,
+    right: Ts,
+    span: f64,
+    total: u64,
+}
+
+impl Scale {
+    fn new((left, right): (Ts, Ts), width: u16) -> Scale {
+        Scale { left, right, span: right.saturating_sub(left).max(1) as f64, total: u64::from(width) * 8 }
+    }
+
+    /// How many eighths `ns` nanoseconds take.
+    fn eighths(&self, ns: u64) -> u64 {
+        (ns as f64 / self.span * self.total as f64).round() as u64
+    }
+
+    /// The eighths a bar from `start` to `end` takes, as [`draw_bar`] draws it: from the first up
+    /// to the second; none when the bar is outside the window.
+    fn extent(&self, start: Ts, end: Ts) -> Option<(u64, u64)> {
+        if self.total == 0 || end < self.left || start >= self.right {
+            return None;
+        }
+        let (s, e) = if start >= self.left {
+            let s = self.eighths(start - self.left);
+            (s, s + self.eighths(end.min(self.right).saturating_sub(start)))
+        } else {
+            (0, self.eighths(end.min(self.right).saturating_sub(self.left)))
+        };
+        Some((s, e.clamp(s + 1, self.total.max(s + 1))))
+    }
+}
+
 pub fn draw_bar(buf: &mut Buffer, area: Rect, (left, right): (Ts, Ts), seg: Segments, theme: &Theme, highlight: bool) {
     let (x0, y, width) = (area.x, area.y, area.width);
-    if width == 0 || seg.end < left || seg.start >= right {
-        return;
-    }
-    let total = u64::from(width) * 8;
-    let span = right.saturating_sub(left).max(1) as f64;
-    let eighths = |ns: u64| -> u64 { (ns as f64 / span * total as f64).round() as u64 };
-    let (s, at) = if seg.start >= left {
-        let s = eighths(seg.start - left);
-        (s, Box::new(move |ts: Ts| s + eighths(ts.saturating_sub(seg.start))) as Box<dyn Fn(Ts) -> u64>)
-    } else {
-        (0, Box::new(move |ts: Ts| eighths(ts.saturating_sub(left))) as Box<dyn Fn(Ts) -> u64>)
+    let scale = Scale::new((left, right), width);
+    let Some((s, e)) = scale.extent(seg.start, seg.end) else { return };
+    // a time's eighth, counted from where the bar's start was
+    let at = |ts: Ts| {
+        if seg.start >= left {
+            s + scale.eighths(ts.saturating_sub(seg.start))
+        } else {
+            scale.eighths(ts.saturating_sub(left))
+        }
     };
-    let e = at(seg.end.min(right)).clamp(s + 1, total.max(s + 1));
     let a = at(seg.sent).clamp(s, e);
     let b = seg.first_byte.map_or(e, &at).clamp(a, e);
     let colors = [(s, a, theme.send()), (a, b, theme.wait()), (b, e, theme.recv())];
@@ -948,31 +980,66 @@ fn gap_between(prev: Column, next: Column) -> u16 {
     }
 }
 
-/// The members of a row whose bars its Timeline shows, in their order: those in the window, all of
-/// them while there are no more than the bar's cells have eighths. Past that each eighth keeps
-/// the last member that starts in it: bars are drawn each over the ones before, so a bar that
-/// starts in the same eighth as a later one is hidden by it, but where it runs longer. Up to 0.5.1
-/// a group drew every member's bar each frame: one of 50,000 polls took 22 ms a frame.
-fn bar_members(store: &SessionStore, members: &[TxnIdx], (left, right): (Ts, Ts), width: u16) -> Vec<TxnIdx> {
-    // as draw_bar decides, where that needs no more than the times at hand
-    let in_window = |m: &&TxnIdx| {
-        let t = store.txn(**m);
-        t.start < right && t.end.is_none_or(|e| e.max(t.start) >= left)
-    };
-    let shown: Vec<TxnIdx> = members.iter().filter(in_window).copied().collect();
+/// The members of a row whose bars its Timeline draws, in their order: those in the window, all of
+/// them while there are no more than the bar's cells have eighths. Past that, since each bar is
+/// drawn over the ones before, what an eighth shows is the last bar over it: those bars are kept,
+/// at most one an eighth, and the cells come out as with every bar drawn, a long or open request's
+/// bar where the later ones do not reach too. Up to 0.5.1 a group drew every member's bar each
+/// frame: one of 50,000 polls took 22 ms a frame.
+fn bar_members(store: &SessionStore, members: &[TxnIdx], window: (Ts, Ts), width: u16, now: Ts) -> Vec<TxnIdx> {
+    let scale = Scale::new(window, width);
     let eighths = usize::from(width) * 8;
+    let in_window = |m: TxnIdx| {
+        let t = store.txn(m);
+        scale.total > 0 && t.bar_end(now) >= window.0 && t.start < window.1
+    };
+    // the last ones first, until there are more than eighths
+    let mut shown: Vec<TxnIdx> = Vec::new();
+    for &m in members.iter().rev() {
+        if in_window(m) {
+            shown.push(m);
+            if shown.len() > eighths {
+                break;
+            }
+        }
+    }
     if shown.len() <= eighths {
+        shown.reverse();
         return shown;
     }
-    let span = right.saturating_sub(left).max(1) as f64;
-    let mut last = vec![None; eighths + 1];
-    for (i, &m) in shown.iter().enumerate() {
-        let at = (store.txn(m).start.saturating_sub(left) as f64 / span * eighths as f64) as usize;
-        last[at.min(eighths)] = Some(i);
+    // From the last bar back, each eighth goes to the first bar found over it, until every eighth
+    // has one; `next` leads past the eighths taken, so each is looked at once.
+    let mut top = vec![None; eighths];
+    let mut next: Vec<usize> = (0..=eighths).collect();
+    let mut open = eighths;
+    for (i, &m) in members.iter().enumerate().rev() {
+        if open == 0 {
+            break;
+        }
+        let t = store.txn(m);
+        let Some((s, e)) = scale.extent(t.start, t.bar_end(now)) else { continue };
+        let end = (e as usize).min(eighths);
+        let mut k = first_open(&mut next, (s as usize).min(eighths));
+        while k < end {
+            top[k] = Some(i);
+            next[k] = k + 1;
+            open -= 1;
+            k = first_open(&mut next, k + 1);
+        }
     }
-    let mut kept: Vec<usize> = last.into_iter().flatten().collect();
+    let mut kept: Vec<usize> = top.into_iter().flatten().collect();
     kept.sort_unstable();
-    kept.into_iter().map(|i| shown[i]).collect()
+    kept.dedup();
+    kept.into_iter().map(|i| members[i]).collect()
+}
+
+/// The first eighth from `k` on that no bar has taken ([`bar_members`]).
+fn first_open(next: &mut [usize], mut k: usize) -> usize {
+    while next[k] != k {
+        next[k] = next[next[k]];
+        k = next[k];
+    }
+    k
 }
 
 fn draw_connections(app: &mut App, r: Rect, buf: &mut Buffer) {
@@ -1064,7 +1131,7 @@ fn draw_connections(app: &mut App, r: Rect, buf: &mut Buffer) {
         let tx = store.txn(txn);
         for &(c, x, w) in &layout {
             if c == Column::Timeline {
-                for m in bar_members(store, &members, (left, right), w) {
+                for m in bar_members(store, &members, (left, right), w, now) {
                     let mt = store.txn(m);
                     draw_bar(buf, Rect::new(x, y, w, 1), (left, right), mt.segments(now), &t, selected);
                 }
@@ -2093,48 +2160,141 @@ mod tests {
     use traffic_police_core::model::TxnKey;
 
     use super::*;
+    use crate::theme::{Depth, Palette};
+
+    /// A request at `at`, `len` long (open when none).
+    fn add(s: &mut SessionStore, txn: u64, at: Ts, len: Option<Ts>) {
+        let key = TxnKey { source: 0, txn };
+        s.apply(SessionEvent::Request(Box::new(RequestStarted {
+            key,
+            at,
+            call: None,
+            hop: 0,
+            method: "GET".into(),
+            url: "https://api.example.app/poll".into(),
+            headers: Vec::new(),
+            client: None,
+            thread: None,
+            stack: Vec::new(),
+            stack_truncated: false,
+            body: None,
+            marks: Vec::new(),
+            conn: None,
+        })));
+        if let Some(len) = len {
+            s.apply(SessionEvent::Completed { key, at: at + len });
+        }
+    }
 
     /// `count` requests 10 ms long, one every 10 ms from 1 s on.
     fn polls(count: u64) -> SessionStore {
         let mut s = SessionStore::new();
         for txn in 0..count {
-            let (key, at) = (TxnKey { source: 0, txn }, NS_PER_SEC + txn * 10 * NS_PER_MS);
-            s.apply(SessionEvent::Request(Box::new(RequestStarted {
-                key,
-                at,
-                call: None,
-                hop: 0,
-                method: "GET".into(),
-                url: "https://api.example.app/poll".into(),
-                headers: Vec::new(),
-                client: None,
-                thread: None,
-                stack: Vec::new(),
-                stack_truncated: false,
-                body: None,
-                marks: Vec::new(),
-                conn: None,
-            })));
-            s.apply(SessionEvent::Completed { key, at: at + 10 * NS_PER_MS });
+            add(&mut s, txn, NS_PER_SEC + txn * 10 * NS_PER_MS, Some(10 * NS_PER_MS));
         }
         s
+    }
+
+    /// What a Timeline of `width` cells shows with these members' bars drawn in their order: each
+    /// cell's symbol and color. (A cell's background can still show a bar drawn over, from where
+    /// two of its phases met; that is not compared.)
+    fn drawn(s: &SessionStore, members: &[TxnIdx], window: (Ts, Ts), width: u16, now: Ts) -> Vec<(String, Color)> {
+        let area = Rect::new(0, 0, width, 1);
+        let mut buf = Buffer::empty(area);
+        let theme = Theme::new(Palette::Dark, Depth::TrueColor);
+        for &m in members {
+            draw_bar(&mut buf, area, window, s.txn(m).segments(now), &theme, false);
+        }
+        (0..width).map(|x| (buf[(x, 0)].symbol().to_string(), buf[(x, 0)].fg)).collect()
     }
 
     #[test]
     fn a_group_draws_every_bar_in_the_window_unless_there_are_more_than_eighths() {
         let s = polls(2000);
         let all: Vec<TxnIdx> = (0..2000).collect();
+        let now = 30 * NS_PER_SEC;
         // 20 s from 1 s: all 2,000 in it; 10 cells have 80 eighths
         let window = (NS_PER_SEC, 21 * NS_PER_SEC);
-        let few = bar_members(&s, &all, window, 10);
+        let few = bar_members(&s, &all, window, 10, now);
         assert!(few.len() <= 81 && few.len() >= 79, "{}", few.len());
         assert!(few.windows(2).all(|w| w[0] < w[1]), "in their order");
-        assert_eq!(few.last(), Some(&1999), "the last one to start in an eighth is kept");
+        assert_eq!(drawn(&s, &few, window, 10, now), drawn(&s, &all, window, 10, now));
         // room for every one of them: all, in order
-        assert_eq!(bar_members(&s, &all, window, 250), all);
+        assert_eq!(bar_members(&s, &all, window, 250, now), all);
         // the window holds 100 of them: those only
-        let part = bar_members(&s, &all, (5 * NS_PER_SEC, 6 * NS_PER_SEC), 250);
+        let part = bar_members(&s, &all, (5 * NS_PER_SEC, 6 * NS_PER_SEC), 250, now);
         assert_eq!(part.first(), Some(&399), "the one that ends where the window starts");
         assert_eq!(part.last(), Some(&499));
+    }
+
+    /// A long request among short ones that start after it in the same eighth runs on where they
+    /// do not reach, and so does an open request among ones that ended: both are kept. (The first
+    /// version of bar_members kept the last bar to start in each eighth, which left out both.)
+    #[test]
+    fn a_long_or_open_request_in_a_group_keeps_its_bar() {
+        // 0 to 10 s in 2 cells, 16 eighths of 0.625 s: 40 short requests in the first half second,
+        // among them one from 0.2 s to 9 s
+        let mut s = SessionStore::new();
+        for txn in 0..41 {
+            match txn {
+                20 => add(&mut s, txn, 200 * NS_PER_MS, Some(8800 * NS_PER_MS)),
+                _ => add(&mut s, txn, txn * 12 * NS_PER_MS, Some(5 * NS_PER_MS)),
+            }
+        }
+        let (window, now) = ((0, 10 * NS_PER_SEC), 10 * NS_PER_SEC);
+        let all: Vec<TxnIdx> = (0..41).collect();
+        let kept = bar_members(&s, &all, window, 2, now);
+        assert!(kept.contains(&20) && kept.len() < all.len(), "{kept:?}");
+        let cells = drawn(&s, &kept, window, 2, now);
+        assert_eq!(cells, drawn(&s, &all, window, 2, now));
+        assert_ne!(cells[1].0, " ", "the long one's bar in the second cell");
+        // the same with the long one still open: its bar runs to now
+        let mut open = SessionStore::new();
+        for txn in 0..41 {
+            add(&mut open, txn, txn * 12 * NS_PER_MS, (txn != 20).then_some(5 * NS_PER_MS));
+        }
+        let kept = bar_members(&open, &all, window, 2, now);
+        assert!(kept.contains(&20), "{kept:?}");
+        assert_eq!(drawn(&open, &kept, window, 2, now), drawn(&open, &all, window, 2, now));
+    }
+
+    /// Bursts of requests with quiet stretches between them, long and open ones among them, in
+    /// Timelines of 1 to 12 cells and windows that cut them: the bars kept draw what all of them
+    /// do, also where only a long or open request's bar reaches.
+    #[test]
+    fn the_bars_kept_draw_what_all_of_them_draw() {
+        let mut seed = 0x2545_F491_4F6C_DD1D_u64;
+        let mut next = |n: u64| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed % n
+        };
+        let mut s = SessionStore::new();
+        let mut at = 0;
+        for txn in 0..600 {
+            // 20 requests within 20 ms, then quiet for up to 1.5 s
+            at += if txn % 20 == 0 { 200 + next(1300) } else { next(2) } * NS_PER_MS;
+            let len = match next(20) {
+                0 => None,
+                1 | 2 => Some((500 + next(8000)) * NS_PER_MS),
+                _ => Some(next(20) * NS_PER_MS),
+            };
+            add(&mut s, txn, at, len);
+        }
+        let all: Vec<TxnIdx> = (0..600).collect();
+        // a second after the last one started
+        let now = at + NS_PER_SEC;
+        for width in 1..=12 {
+            for window in [(0, 21 * NS_PER_SEC), (3 * NS_PER_SEC, 9 * NS_PER_SEC), (15 * NS_PER_SEC, 40 * NS_PER_SEC)] {
+                let kept = bar_members(&s, &all, window, width, now);
+                assert!(kept.windows(2).all(|w| w[0] < w[1]), "in their order");
+                assert_eq!(
+                    drawn(&s, &kept, window, width, now),
+                    drawn(&s, &all, window, width, now),
+                    "{width} cells, {window:?}"
+                );
+            }
+        }
     }
 }
