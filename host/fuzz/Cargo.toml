@@ -1,5 +1,6 @@
 # Fuzz targets (cargo-fuzz, nightly): `cargo +nightly fuzz run <target>` in this directory. CI runs
-# each for a short while (host.yml). Not a member of the host workspace, which builds on stable.
+# each for a short while (host.yml). Not a member of the host workspace, which builds on stable;
+# `cargo check` here checks the targets on stable too.
 [package]
 name = "traffic-police-fuzz"
 version = "0.0.0"
@@ -15,6 +16,7 @@ libfuzzer-sys = "0.4"
 bytes = "1"
 traffic-police-proto = { path = "../crates/proto" }
 traffic-police-core = { path = "../crates/core" }
+traffic-police-adb = { path = "../crates/adb" }
 
 [workspace]
 members = ["."]
@@ -53,6 +55,20 @@ bench = false
 [[bin]]
 name = "bodies"
 path = "fuzz_targets/bodies.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "logcat"
+path = "fuzz_targets/logcat.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "filters"
+path = "fuzz_targets/filters.rs"
 test = false
 doc = false
 bench = false
