@@ -68,7 +68,6 @@ public final class TrafficPolice {
         return WebSockets.newWebSocket(client, request, listener);
     }
 
-    /** Records this connection's exchange; returns it unchanged when capture is not running. */
     /**
      * gRPC (grpc-java 1.21 and newer): add it to a channel first, so it runs last and sees the
      * headers the channel's other interceptors add. Each call is one row: its messages as the
@@ -78,6 +77,7 @@ public final class TrafficPolice {
         return io.trafficpolice.capture.grpc.CaptureClientInterceptor.INSTANCE;
     }
 
+    /** Records this connection's exchange; returns it unchanged when capture is not running. */
     public static HttpURLConnection wrap(HttpURLConnection connection) {
         return Huc.wrap(connection);
     }
