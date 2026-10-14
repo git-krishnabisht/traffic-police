@@ -105,6 +105,10 @@ pub enum FrameError {
     Empty,
     #[error("malformed body chunk: {0}")]
     BadBodyChunk(&'static str),
+    /// A frame to encode is longer than [`MAX_FRAME_LEN`] (its length field's value: type byte and
+    /// payload); nothing was written.
+    #[error("a frame of {0} bytes exceeds the {MAX_FRAME_LEN}-byte limit")]
+    Oversized(u64),
 }
 
 impl FrameError {
@@ -115,28 +119,35 @@ impl FrameError {
     }
 }
 
-fn put_header(out: &mut BytesMut, kind: u8, payload_len: usize) {
-    let len = u32::try_from(payload_len + 1).expect("frame payload larger than u32");
-    assert!(len <= MAX_FRAME_LEN, "frame of {len} bytes exceeds MAX_FRAME_LEN");
+/// The length field and type byte of a frame whose payload is `payload_len` bytes. A frame over
+/// the limit is refused, so the caller decides what to do: up to 0.5.1 this asserted, and a
+/// session file's log record of escaped lines over 16 MiB ended the program while it was saved.
+fn put_header(out: &mut BytesMut, kind: u8, payload_len: usize) -> Result<(), FrameError> {
+    let len = (payload_len as u64).saturating_add(1);
+    if len > u64::from(MAX_FRAME_LEN) {
+        return Err(FrameError::Oversized(len));
+    }
     out.reserve(4 + len as usize);
-    out.put_u32(len);
+    out.put_u32(len as u32);
     out.put_u8(kind);
+    Ok(())
 }
 
-/// Append a frame of any type.
-pub fn encode_raw(kind: u8, payload: &[u8], out: &mut BytesMut) {
-    put_header(out, kind, payload.len());
+/// Append a frame of any type. One over [`MAX_FRAME_LEN`] is an error, and `out` is unchanged.
+pub fn encode_raw(kind: u8, payload: &[u8], out: &mut BytesMut) -> Result<(), FrameError> {
+    put_header(out, kind, payload.len())?;
     out.put_slice(payload);
+    Ok(())
 }
 
 /// Append a JSON frame. `json` must be one UTF-8 JSON object.
-pub fn encode_json(json: &[u8], out: &mut BytesMut) {
-    encode_raw(kind::JSON, json, out);
+pub fn encode_json(json: &[u8], out: &mut BytesMut) -> Result<(), FrameError> {
+    encode_raw(kind::JSON, json, out)
 }
 
 /// Append a body-chunk frame.
-pub fn encode_body(chunk: &BodyChunk, out: &mut BytesMut) {
-    put_header(out, kind::BODY, BODY_HEADER_LEN + chunk.data.len());
+pub fn encode_body(chunk: &BodyChunk, out: &mut BytesMut) -> Result<(), FrameError> {
+    put_header(out, kind::BODY, BODY_HEADER_LEN + chunk.data.len())?;
     out.put_u64(chunk.seq);
     out.put_u64(chunk.txn);
     out.put_u8(chunk.dir.to_wire());
@@ -144,10 +155,11 @@ pub fn encode_body(chunk: &BodyChunk, out: &mut BytesMut) {
     out.put_u64(chunk.ts);
     out.put_u64(chunk.offset);
     out.put_slice(&chunk.data);
+    Ok(())
 }
 
 /// Append any [`Frame`].
-pub fn encode(frame: &Frame, out: &mut BytesMut) {
+pub fn encode(frame: &Frame, out: &mut BytesMut) -> Result<(), FrameError> {
     match frame {
         Frame::Json(json) => encode_json(json, out),
         Frame::Body(chunk) => encode_body(chunk, out),
@@ -254,7 +266,7 @@ mod tests {
         ];
         let mut wire = BytesMut::new();
         for f in &frames {
-            encode(f, &mut wire);
+            encode(f, &mut wire).unwrap();
         }
         let mut dec = Decoder::new();
         let mut out = Vec::new();
@@ -271,7 +283,7 @@ mod tests {
     #[test]
     fn body_chunk_layout_matches_protocol() {
         let mut wire = BytesMut::new();
-        encode_body(&sample_chunk(), &mut wire);
+        encode_body(&sample_chunk(), &mut wire).unwrap();
         // length = 1 (type) + 34 (header) + 11 (data)
         assert_eq!(&wire[0..4], &46u32.to_be_bytes());
         assert_eq!(wire[4], kind::BODY);
@@ -290,7 +302,7 @@ mod tests {
         let overhead = r#"{"t":"x","pad":""}"#.len();
         let json = format!(r#"{{"t":"x","pad":"{}"}}"#, "a".repeat(MAX_FRAME_LEN as usize - 1 - overhead));
         let mut wire = BytesMut::new();
-        encode_json(json.as_bytes(), &mut wire);
+        encode_json(json.as_bytes(), &mut wire).unwrap();
         assert_eq!(wire.len(), 4 + MAX_FRAME_LEN as usize);
         let mut dec = Decoder::new();
         for piece in wire.chunks(1 << 20) {
@@ -300,6 +312,22 @@ mod tests {
         let Some(Frame::Json(got)) = dec.next_frame().unwrap() else { panic!("expected a JSON frame") };
         assert_eq!(got.len(), MAX_FRAME_LEN as usize - 1);
         assert_eq!(dec.buffered(), 0);
+    }
+
+    /// One byte over the limit is not written: an error, and `out` as it was.
+    #[test]
+    fn a_frame_over_the_limit_is_an_error_not_a_panic() {
+        let mut out = BytesMut::from(&b"before"[..]);
+        let payload = vec![b'a'; MAX_FRAME_LEN as usize];
+        let err = encode_raw(kind::LOG, &payload, &mut out).unwrap_err();
+        assert_eq!(err, FrameError::Oversized(u64::from(MAX_FRAME_LEN) + 1));
+        assert!(!err.is_fatal());
+        let chunk = BodyChunk { data: Bytes::from(vec![0u8; MAX_FRAME_LEN as usize]), ..sample_chunk() };
+        assert!(matches!(encode_body(&chunk, &mut out), Err(FrameError::Oversized(_))));
+        assert_eq!(&out[..], b"before");
+        // the largest that fits is written
+        encode_raw(kind::LOG, &payload[1..], &mut out).unwrap();
+        assert_eq!(out.len(), 6 + 4 + MAX_FRAME_LEN as usize);
     }
 
     #[test]
@@ -322,12 +350,12 @@ mod tests {
     #[test]
     fn bad_body_chunk_skips_one_frame_only() {
         let mut wire = BytesMut::new();
-        encode_raw(kind::BODY, &[1, 2, 3], &mut wire); // too short
+        encode_raw(kind::BODY, &[1, 2, 3], &mut wire).unwrap(); // too short
         let mut bad_dir = BytesMut::new();
-        encode_body(&sample_chunk(), &mut bad_dir);
+        encode_body(&sample_chunk(), &mut bad_dir).unwrap();
         bad_dir[21] = 9; // unknown dir
         wire.extend_from_slice(&bad_dir);
-        encode_json(b"{}", &mut wire);
+        encode_json(b"{}", &mut wire).unwrap();
 
         let mut dec = Decoder::new();
         dec.push(&wire);
@@ -369,7 +397,7 @@ mod tests {
         fn encoded_chunks_always_decode(seq: u64, txn: u64, d in 0u8..3, ts: u64, offset: u64, data in proptest::collection::vec(any::<u8>(), 0..2048)) {
             let chunk = BodyChunk { seq, txn, dir: BodyDir::from_wire(d).unwrap(), ts, offset, data: Bytes::from(data) };
             let mut wire = BytesMut::new();
-            encode_body(&chunk, &mut wire);
+            encode_body(&chunk, &mut wire).unwrap();
             let mut dec = Decoder::new();
             dec.push(&wire);
             prop_assert_eq!(dec.next_frame().unwrap(), Some(Frame::Body(chunk)));

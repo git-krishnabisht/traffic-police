@@ -943,7 +943,7 @@ impl FakeRuntime {
 
 async fn send(s: &mut TcpStream, msg: &Value) -> std::io::Result<()> {
     let mut out = BytesMut::new();
-    traffic_police_proto::frame::encode_json(msg.to_string().as_bytes(), &mut out);
+    traffic_police_proto::frame::encode_json(msg.to_string().as_bytes(), &mut out).expect("a small message");
     s.write_all(&out).await
 }
 

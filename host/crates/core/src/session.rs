@@ -30,8 +30,12 @@ pub const MAGIC: &[u8; 7] = b"TPSESS\0";
 pub const VERSION: u8 = 1;
 /// A recording's gzip stream is flushed at least this often.
 const FLUSH_EVERY: Duration = Duration::from_secs(5);
-/// Lines of the device's log in one frame of a session file (type 20).
+/// Lines of the device's log in one frame of a session file (type 20)...
 const LOG_BATCH: usize = 2000;
+/// ...and at most this many bytes of them, well under the 16 MiB frame limit: a message can be
+/// long, and quotes and control characters take up to six times the room once escaped (up to
+/// 0.5.1 only the count was kept, and a batch of such lines stopped the program while it saved).
+const LOG_BATCH_BYTES: usize = 4 << 20;
 
 /// The device a source ran on, as the file remembers it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -147,19 +151,30 @@ impl SessionLog {
             }),
             Sink::Closed => Ok(()),
         };
-        if let Err(e) = result
-            && inner.error.is_none()
-        {
+        if let Err(e) = result {
+            Self::failed(inner, e.to_string());
+        }
+    }
+
+    /// Something could not be recorded: logged, the first such problem kept.
+    fn failed(inner: &mut Inner, e: String) {
+        if inner.error.is_none() {
             tracing::warn!("session log: {e}");
-            inner.error = Some(e.to_string());
+            inner.error = Some(e);
         }
     }
 
     fn record(&self, kind: u8, v: &Value) {
+        self.record_raw(kind, &serde_json::to_vec(v).expect("serializable"));
+    }
+
+    /// A host record whose JSON is `payload`; one over the frame limit is left out.
+    fn record_raw(&self, kind: u8, payload: &[u8]) {
         let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-        let json = serde_json::to_vec(v).expect("serializable");
-        frame::encode_raw(kind, &json, &mut inner.buf);
-        Self::write(&mut inner);
+        match frame::encode_raw(kind, payload, &mut inner.buf) {
+            Ok(()) => Self::write(&mut inner),
+            Err(e) => Self::failed(&mut inner, format!("a record left out: {e}")),
+        }
     }
 
     /// A source starts (or, `resumed`, reconnects): its device and the `hello` as received.
@@ -182,10 +197,14 @@ impl SessionLog {
         if inner.current != Some(source) {
             // a short source record switches without repeating the hello
             let json = serde_json::to_vec(&json!({ "t": "source", "source": source })).expect("serializable");
-            frame::encode_raw(kind::SOURCE, &json, &mut inner.buf);
-            inner.current = Some(source);
+            if frame::encode_raw(kind::SOURCE, &json, &mut inner.buf).is_ok() {
+                inner.current = Some(source);
+            }
         }
-        frame::encode(f, &mut inner.buf);
+        // a device frame was decoded within the limit; a backend's own (Flutter) might not be
+        if let Err(e) = frame::encode(f, &mut inner.buf) {
+            Self::failed(&mut inner, format!("a frame left out: {e}"));
+        }
         Self::write(&mut inner);
     }
 
@@ -196,9 +215,10 @@ impl SessionLog {
     /// Ends a recording: the device's log (when it was read), the annotations, then the end of
     /// the gzip stream.
     pub fn finish(&self, store: &SessionStore) -> io::Result<()> {
-        for frame in log_records(store, None) {
-            self.record(kind::LOG, &frame);
-        }
+        log_records(store, None, |record| {
+            self.record_raw(kind::LOG, record);
+            Ok(())
+        })?;
         self.record(kind::ANNOTATIONS, &annotations(store));
         let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         match std::mem::replace(&mut inner.sink, Sink::Closed) {
@@ -227,7 +247,8 @@ impl SessionLog {
         w.write_all(&[VERSION])?;
         let mut gz = GzEncoder::new(w, Compression::default());
         let mut buf = BytesMut::new();
-        frame::encode_raw(kind::SESSION, &serde_json::to_vec(&session_record(now_wall_ms()))?, &mut buf);
+        frame::encode_raw(kind::SESSION, &serde_json::to_vec(&session_record(now_wall_ms()))?, &mut buf)
+            .map_err(io::Error::other)?;
         gz.write_all(&buf)?;
         let mut reader = BufReader::new(File::open(&path)?);
         let mut decoder = Decoder::new();
@@ -252,7 +273,7 @@ impl SessionLog {
                     continue;
                 }
                 buf.clear();
-                frame::encode(&f, &mut buf);
+                frame::encode(&f, &mut buf).map_err(io::Error::other)?;
                 gz.write_all(&buf)?;
             }
         }
@@ -262,48 +283,73 @@ impl SessionLog {
             let kept = store.txns().iter().filter(|t| keep.contains(&t.key));
             kept.fold((Ts::MAX, 0), |(a, b), t| (a.min(t.start), b.max(t.end.unwrap_or(t.start))))
         });
-        for record in log_records(store, span) {
+        log_records(store, span, |record| {
             buf.clear();
-            frame::encode_raw(kind::LOG, &serde_json::to_vec(&record)?, &mut buf);
-            gz.write_all(&buf)?;
-        }
+            frame::encode_raw(kind::LOG, record, &mut buf).map_err(io::Error::other)?;
+            gz.write_all(&buf)
+        })?;
         buf.clear();
-        frame::encode_raw(kind::ANNOTATIONS, &serde_json::to_vec(&annotations(store))?, &mut buf);
+        frame::encode_raw(kind::ANNOTATIONS, &serde_json::to_vec(&annotations(store))?, &mut buf)
+            .map_err(io::Error::other)?;
         gz.write_all(&buf)?;
         gz.finish()?.flush()?;
         Ok(keep.map_or(store.len(), HashSet::len))
     }
 }
 
-/// The device's log as session file records (type 20): what the reader knew in the first, then
-/// the lines (in `span` when given) in batches. None when the log was not read.
-fn log_records(store: &SessionStore, span: Option<(Ts, Ts)>) -> Vec<Value> {
+/// The device's log as session file records (type 20), each handed to `emit` as its JSON: what
+/// the reader knew in the first, then the lines (in `span` when given) in batches of at most
+/// [`LOG_BATCH`] lines and [`LOG_BATCH_BYTES`]. Nothing when the log was not read. A line that
+/// alone is over the byte limit (only a file made elsewhere could have one) is left out.
+fn log_records(
+    store: &SessionStore,
+    span: Option<(Ts, Ts)>,
+    mut emit: impl FnMut(&[u8]) -> io::Result<()>,
+) -> io::Result<()> {
+    const HEAD: &[u8] = br#"{"t":"log","lines":["#;
+    const TAIL: &[u8] = b"]}";
     let logs = store.logs();
     let info = logs.info();
     if logs.is_empty() && info.package.is_none() {
-        return Vec::new();
+        return Ok(());
     }
     let mut processes: Vec<(u32, &str)> = logs.processes().collect();
     processes.sort_unstable();
-    let mut out = vec![json!({
+    let first = json!({
         "t": "log",
         "info": { "device": info.device, "package": info.package, "uid": info.uid, "processes": processes },
         "lines": [],
-    })];
-    let mut lines = Vec::new();
+    });
+    emit(&serde_json::to_vec(&first)?)?;
+    let mut record = HEAD.to_vec();
+    let mut lines = 0;
     for l in logs.iter_from(logs.first_id()) {
         if span.is_some_and(|(a, b)| l.ts < a || l.ts > b) {
             continue;
         }
-        lines.push(json!([l.ts, l.wall_ms, l.pid, l.tid, l.uid, l.level.letter(), l.buffer, l.tag, l.message]));
-        if lines.len() == LOG_BATCH {
-            out.push(json!({ "t": "log", "lines": std::mem::take(&mut lines) }));
+        let line = json!([l.ts, l.wall_ms, l.pid, l.tid, l.uid, l.level.letter(), l.buffer, l.tag, l.message]);
+        let line = serde_json::to_vec(&line)?;
+        if HEAD.len() + line.len() + TAIL.len() > LOG_BATCH_BYTES {
+            tracing::warn!("a log line of {} bytes left out of the session file", line.len());
+            continue;
         }
+        if lines == LOG_BATCH || record.len() + 1 + line.len() + TAIL.len() > LOG_BATCH_BYTES {
+            record.extend_from_slice(TAIL);
+            emit(&record)?;
+            record.truncate(HEAD.len());
+            lines = 0;
+        }
+        if lines > 0 {
+            record.push(b',');
+        }
+        record.extend_from_slice(&line);
+        lines += 1;
     }
-    if !lines.is_empty() {
-        out.push(json!({ "t": "log", "lines": lines }));
+    if lines > 0 {
+        record.extend_from_slice(TAIL);
+        emit(&record)?;
     }
-    out
+    Ok(())
 }
 
 /// A line of a log record, `[ts, wall_ms, pid, tid, uid, level, buffer, tag, message]`; `None`
@@ -773,6 +819,47 @@ mod tests {
         assert!(log_line(&json!([1, 2, 3])).is_none());
         assert!(log_line(&json!([1, 2, 3, 4, null, "loud", 0, "t", "m"])).is_none());
         assert!(log_line(&json!([1, 2, 3, 4, null, "W", 0, "t", "m"])).is_some());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// 2,000 lines whose escaped JSON is over the 16 MiB frame limit (up to 0.5.1 saving them
+    /// stopped the program): the records stay under the byte limit, and every line comes back.
+    #[test]
+    fn long_escaped_log_lines_are_batched_by_bytes_too() {
+        let dir = scratch("escaped");
+        let device = DeviceRecord { label: "demo".into(), serial: None };
+        let log = SessionLog::temporary().unwrap();
+        let mut store = SessionStore::new();
+        let src = store.source_ids().next();
+        log.source(src, &device, &hello(7, 5), false);
+        // a control character is escaped as \u0001: 9 KB a line, 18 MB for the 2,000
+        let message = "\u{1}".repeat(1500);
+        let lines: Vec<LogLine> = (0..2000)
+            .map(|i| LogLine {
+                ts: 10 + i,
+                wall_ms: 1_790_000_000_000,
+                pid: 7,
+                tid: 7,
+                uid: None,
+                level: Level::Info,
+                buffer: 0,
+                tag: "Escaped".into(),
+                message: message.clone(),
+            })
+            .collect();
+        store.apply(SessionEvent::Logs(lines));
+        let mut sizes = Vec::new();
+        log_records(&store, None, |r| {
+            sizes.push(r.len());
+            Ok(())
+        })
+        .unwrap();
+        assert!(sizes.len() >= 6 && sizes.iter().all(|&n| n <= LOG_BATCH_BYTES), "{sizes:?}");
+        let path = dir.join("escaped.trafficpolice");
+        log.export(&store, &path, None).unwrap();
+        let back = store_of(&open(&path, &SourceIds::default()).unwrap());
+        assert_eq!(back.logs().len(), 2000);
+        assert!(back.logs().iter_from(0).all(|l| l.message == message));
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

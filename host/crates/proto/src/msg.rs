@@ -817,11 +817,11 @@ pub fn parse_host(json: &[u8]) -> serde_json::Result<HostMsg> {
     serde_json::from_slice(json)
 }
 
-/// Serialize a message and append it as a JSON frame.
+/// Serialize a message and append it as a JSON frame. A message over the frame limit (a rule set
+/// that inlines large bodies) is an error, and nothing is appended.
 pub fn encode_msg<T: Serialize>(msg: &T, out: &mut BytesMut) -> serde_json::Result<()> {
     let json = serde_json::to_vec(msg)?;
-    frame::encode_json(&json, out);
-    Ok(())
+    frame::encode_json(&json, out).map_err(<serde_json::Error as serde::ser::Error>::custom)
 }
 
 #[cfg(test)]
