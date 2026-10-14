@@ -27,14 +27,25 @@ const T0: Ts = 1_000_000_000;
 /// A saved session or a HAR file, read for replay. Entries a HAR file could not supply are
 /// listed in `Opened::skipped`.
 pub fn open(path: &Path, ids: &SourceIds) -> Result<Opened, String> {
+    let mut events = Vec::new();
+    let mut opened = open_into(path, ids, &mut |batch| events.extend(batch))?;
+    opened.events = events;
+    Ok(opened)
+}
+
+/// [`open`], handing the events to `sink` as they are read (a session file a batch at a time,
+/// see [`session::read_into`]; a HAR file all at once); the returned [`Opened`] has none.
+pub fn open_into(path: &Path, ids: &SourceIds, sink: &mut dyn FnMut(Vec<SessionEvent>)) -> Result<Opened, String> {
     if session::is_session_file(path) {
-        return session::open(path, ids).map_err(|e| e.to_string());
+        return session::open_into(path, ids, sink).map_err(|e| e.to_string());
     }
     let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
     if !looks_like_json(&bytes) {
         return Err("not a traffic-police session file (.trafficpolice) or a HAR file".into());
     }
-    har(&bytes, ids)
+    let mut opened = har(&bytes, ids)?;
+    sink(std::mem::take(&mut opened.events));
+    Ok(opened)
 }
 
 fn looks_like_json(bytes: &[u8]) -> bool {

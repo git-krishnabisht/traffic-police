@@ -674,6 +674,7 @@ Frame types inside the gzip stream:
 - The log (type 20) comes from the UI's `e` menu: all of it, or with some requests the lines from the first one's start to the last one's end.
 - A file saved from the UI's `e` menu, or by `traffic-police record --filter`, may hold only some requests: it keeps every source record and every frame that belongs to no request (clock, traffic, diagnostics), and only the chosen requests' frames.
 - A reader keeps everything before a truncated gzip stream or frame, and says the recording was cut short (a crash, or a full disk).
+- traffic-police reads the stream a piece at a time and stops after 4 GiB of it inflated (gzip can inflate a thousand times, so a small file could hold far more), keeping what came before and saying the file holds more.
 - Nothing is redacted: session files hold exactly what was captured (ARCHITECTURE.md 9.2).
 - Writers flush the gzip stream at least every 5 s during `traffic-police record`, so a crash loses little.
 - HAR files are imported by a separate reader that synthesizes the same events for a `har` source; threads, stacks and failures come back only from the `_trafficPolice` fields traffic-police writes (ARCHITECTURE.md 5.10).

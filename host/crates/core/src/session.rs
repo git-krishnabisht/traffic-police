@@ -28,6 +28,10 @@ use crate::store::{SessionStore, SourceIds};
 
 pub const MAGIC: &[u8; 7] = b"TPSESS\0";
 pub const VERSION: u8 = 1;
+/// The most of a session file that is read, inflated. The frames are gzip, and gzip inflates a
+/// thousand times: a file of a few MB could hold gigabytes. What comes after this is not read,
+/// and [`Opened::too_large`] says so.
+pub const MAX_INFLATED: u64 = 4 << 30;
 /// A recording's gzip stream is flushed at least this often.
 const FLUSH_EVERY: Duration = Duration::from_secs(5);
 /// Lines of the device's log in one frame of a session file (type 20)...
@@ -433,6 +437,9 @@ pub struct Opened {
     pub created_wall_ms: Option<i64>,
     /// The file ended mid-stream (a recording that did not finish); everything before is kept.
     pub truncated: bool,
+    /// The file holds more than [`MAX_INFLATED`] once inflated: what comes before is kept, the
+    /// rest was not read.
+    pub too_large: bool,
     /// What could not be read (HAR entries without a date or URL), for a note.
     pub skipped: Vec<String>,
 }
@@ -496,9 +503,36 @@ pub fn open(path: &Path, ids: &SourceIds) -> io::Result<Opened> {
     read(BufReader::new(File::open(path)?), ids)
 }
 
+/// Reads a session file, handing its events to `sink` a batch at a time as they are read (see
+/// [`read_into`]).
+pub fn open_into(path: &Path, ids: &SourceIds, sink: &mut dyn FnMut(Vec<SessionEvent>)) -> io::Result<Opened> {
+    read_into(BufReader::new(File::open(path)?), ids, sink)
+}
+
 /// Reads a session file's bytes into events (see [`open`]). Nothing in them is trusted: a file
 /// from someone else may be damaged or made up (the fuzz target `session_file` feeds it noise).
-pub fn read(mut file: impl Read, ids: &SourceIds) -> io::Result<Opened> {
+pub fn read(file: impl Read, ids: &SourceIds) -> io::Result<Opened> {
+    let mut events = Vec::new();
+    let mut opened = read_into(file, ids, &mut |batch| events.extend(batch))?;
+    opened.events = events;
+    Ok(opened)
+}
+
+/// Reads a session file's bytes as [`read`] does, handing the events to `sink` a batch at a time
+/// as the file is inflated, so that a store can take them (and spill their bodies) as they come:
+/// the file is never in memory whole, inflated or as events (up to 0.5.1 it was inflated into
+/// one buffer, with no limit). The returned [`Opened`] has no events.
+pub fn read_into(file: impl Read, ids: &SourceIds, sink: &mut dyn FnMut(Vec<SessionEvent>)) -> io::Result<Opened> {
+    read_within(file, ids, sink, MAX_INFLATED)
+}
+
+/// [`read_into`], reading at most `max` bytes of the inflated stream.
+fn read_within(
+    mut file: impl Read,
+    ids: &SourceIds,
+    sink: &mut dyn FnMut(Vec<SessionEvent>),
+    max: u64,
+) -> io::Result<Opened> {
     let mut head = [0u8; 8];
     file.read_exact(&mut head).map_err(|_| io::Error::other("not a traffic-police session file"))?;
     if &head[..7] != MAGIC {
@@ -510,59 +544,103 @@ pub fn read(mut file: impl Read, ids: &SourceIds) -> io::Result<Opened> {
             head[7]
         )));
     }
-    // a recording cut short ends without the gzip trailer: keep what decodes
     let mut gz = GzDecoder::new(file);
-    let mut bytes = Vec::new();
-    let mut chunk = vec![0u8; 256 * 1024];
-    let mut truncated = false;
+    let mut decoder = Decoder::new();
+    let mut piece = vec![0u8; 256 * 1024];
+    let mut reader = Reader {
+        ids,
+        out: Opened::default(),
+        events: Vec::new(),
+        markers: Vec::new(),
+        map: HashMap::new(),
+        normalizers: HashMap::new(),
+        current: None,
+    };
+    let mut inflated = 0u64;
     loop {
-        match gz.read(&mut chunk) {
+        let n = match gz.read(&mut piece) {
             Ok(0) => break,
-            Ok(n) => bytes.extend_from_slice(&chunk[..n]),
+            Ok(n) => n,
+            // a recording cut short ends without the gzip trailer: keep what decodes
             Err(e) if e.kind() == io::ErrorKind::UnexpectedEof || e.kind() == io::ErrorKind::InvalidInput => {
-                truncated = true;
+                reader.out.truncated = true;
                 break;
             }
             Err(e) => {
-                if bytes.is_empty() {
+                if inflated == 0 {
                     return Err(e);
                 }
-                truncated = true;
+                reader.out.truncated = true;
                 break;
+            }
+        };
+        let room = usize::try_from(max - inflated).unwrap_or(usize::MAX);
+        decoder.push(&piece[..n.min(room)]);
+        inflated += n.min(room) as u64;
+        if !reader.frames(&mut decoder) {
+            break;
+        }
+        if !reader.events.is_empty() {
+            sink(std::mem::take(&mut reader.events));
+        }
+        if n > room {
+            reader.out.too_large = true;
+            break;
+        }
+    }
+    // the annotations come last in a file (the last ones win): their markers, then
+    reader.events.append(&mut reader.markers);
+    if !reader.events.is_empty() {
+        sink(std::mem::take(&mut reader.events));
+    }
+    Ok(reader.out)
+}
+
+/// What reading a session file has found so far.
+struct Reader<'a> {
+    ids: &'a SourceIds,
+    out: Opened,
+    /// Events not handed on yet.
+    events: Vec<SessionEvent>,
+    /// The markers of the last annotations record.
+    markers: Vec<SessionEvent>,
+    map: HashMap<SourceId, SourceId>,
+    normalizers: HashMap<SourceId, Normalizer>,
+    current: Option<SourceId>,
+}
+
+impl Reader<'_> {
+    /// The frames `decoder` holds; false when the stream can no longer be read.
+    fn frames(&mut self, decoder: &mut Decoder) -> bool {
+        loop {
+            match decoder.next_frame() {
+                Ok(Some(f)) => self.frame(f),
+                Ok(None) => return true,
+                Err(e) if e.is_fatal() => {
+                    self.out.truncated = true;
+                    return false;
+                }
+                Err(_) => continue,
             }
         }
     }
-    let mut decoder = Decoder::new();
-    decoder.push(&bytes);
-    let mut out = Opened { truncated, ..Default::default() };
-    let mut map: HashMap<SourceId, SourceId> = HashMap::new();
-    let mut normalizers: HashMap<SourceId, Normalizer> = HashMap::new();
-    let mut current: Option<SourceId> = None;
-    loop {
-        let f = match decoder.next_frame() {
-            Ok(Some(f)) => f,
-            Ok(None) => break,
-            Err(e) if e.is_fatal() => {
-                out.truncated = true;
-                break;
-            }
-            Err(_) => continue,
-        };
+
+    fn frame(&mut self, f: Frame) {
         match f {
             Frame::Other { kind: kind::SESSION, payload } => {
-                out.created_wall_ms =
+                self.out.created_wall_ms =
                     serde_json::from_slice::<Value>(&payload).ok().and_then(|v| v["created_wall_ms"].as_i64());
             }
             Frame::Other { kind: kind::SOURCE, payload } => {
-                let Ok(r) = serde_json::from_slice::<SourceRecord>(&payload) else { continue };
-                current = Some(r.source);
+                let Ok(r) = serde_json::from_slice::<SourceRecord>(&payload) else { return };
+                self.current = Some(r.source);
                 if let Some(hello) = r.hello {
-                    let id = match (r.resumed, map.get(&r.source)) {
+                    let id = match (r.resumed, self.map.get(&r.source)) {
                         (true, Some(&id)) => id,
                         _ => {
-                            let id = ids.next();
-                            map.insert(r.source, id);
-                            normalizers.insert(r.source, Normalizer::new(id));
+                            let id = self.ids.next();
+                            self.map.insert(r.source, id);
+                            self.normalizers.insert(r.source, Normalizer::new(id));
                             id
                         }
                     };
@@ -572,36 +650,41 @@ pub fn read(mut file: impl Read, ids: &SourceIds) -> io::Result<Opened> {
                     if r.resumed {
                         info.started = info.clock.map_or(info.started, |(ts, _)| ts);
                     }
-                    out.events.push(SessionEvent::SourceUp(Box::new(info)));
+                    self.events.push(SessionEvent::SourceUp(Box::new(info)));
                 }
             }
             Frame::Other { kind: kind::SOURCE_END, payload } => {
                 if let Ok(r) = serde_json::from_slice::<EndRecord>(&payload)
-                    && let Some(&id) = map.get(&r.source)
+                    && let Some(&id) = self.map.get(&r.source)
                 {
-                    out.events.push(SessionEvent::SourceDown { source: id, at: r.ts, reason: r.reason });
+                    self.events.push(SessionEvent::SourceDown { source: id, at: r.ts, reason: r.reason });
                 }
             }
             Frame::Other { kind: kind::ANNOTATIONS, payload } => {
-                // the last one wins
+                // the last one wins: its pins, and its markers (a file made up of the same
+                // record many times would otherwise add them each time)
                 if let Ok(a) = serde_json::from_slice::<Annotations>(&payload) {
-                    out.pins = a
+                    self.out.pins = a
                         .pins
                         .iter()
-                        .filter_map(|p| map.get(&p.source).map(|&source| TxnKey { source, txn: p.txn }))
+                        .filter_map(|p| self.map.get(&p.source).map(|&source| TxnKey { source, txn: p.txn }))
                         .collect();
-                    for m in a.markers {
-                        let kind = match m.kind.as_str() {
-                            "pause" => MarkerKind::Pause,
-                            "resume" => MarkerKind::Resume,
-                            _ => MarkerKind::Note,
-                        };
-                        out.events.push(SessionEvent::Marker { source: None, at: m.at, kind, label: m.label });
-                    }
+                    self.markers = a
+                        .markers
+                        .into_iter()
+                        .map(|m| {
+                            let kind = match m.kind.as_str() {
+                                "pause" => MarkerKind::Pause,
+                                "resume" => MarkerKind::Resume,
+                                _ => MarkerKind::Note,
+                            };
+                            SessionEvent::Marker { source: None, at: m.at, kind, label: m.label }
+                        })
+                        .collect();
                 }
             }
             Frame::Other { kind: kind::LOG, payload } => {
-                let Ok(v) = serde_json::from_slice::<Value>(&payload) else { continue };
+                let Ok(v) = serde_json::from_slice::<Value>(&payload) else { return };
                 if let Some(info) = v.get("info").filter(|i| i.is_object()) {
                     let text = |k: &str| info[k].as_str().map(str::to_string);
                     let processes = info["processes"]
@@ -612,7 +695,7 @@ pub fn read(mut file: impl Read, ids: &SourceIds) -> io::Result<Opened> {
                                 .collect()
                         })
                         .unwrap_or_default();
-                    out.events.push(SessionEvent::LogInfo(Box::new(LogInfo {
+                    self.events.push(SessionEvent::LogInfo(Box::new(LogInfo {
                         device: text("device"),
                         package: text("package"),
                         uid: info["uid"].as_u64().and_then(|u| u32::try_from(u).ok()),
@@ -623,20 +706,19 @@ pub fn read(mut file: impl Read, ids: &SourceIds) -> io::Result<Opened> {
                 let lines: Vec<LogLine> =
                     v["lines"].as_array().map(|ls| ls.iter().filter_map(log_line).collect()).unwrap_or_default();
                 if !lines.is_empty() {
-                    out.events.push(SessionEvent::Logs(lines));
+                    self.events.push(SessionEvent::Logs(lines));
                 }
             }
             Frame::Other { .. } => {}
             device => {
-                let Some(n) = current.and_then(|c| normalizers.get_mut(&c)) else { continue };
-                match n.frame(device, &mut out.events) {
+                let Some(n) = self.current.and_then(|c| self.normalizers.get_mut(&c)) else { return };
+                match n.frame(device, &mut self.events) {
                     Ok(Some(Control::Hello(_))) | Ok(_) => {}
                     Err(e) => tracing::debug!("session file: {e}"),
                 }
             }
         }
     }
-    Ok(out)
 }
 
 #[cfg(test)]
@@ -768,6 +850,80 @@ mod tests {
         assert!(!is_session_file(&dir.join("missing")));
         assert!(is_session_file(&cut));
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A long recording is read a piece at a time: its events come in batches as the file is
+    /// inflated, so the store takes them as they come; cut short or past the limit, what came
+    /// before is kept.
+    #[test]
+    fn a_file_is_read_in_pieces_up_to_the_limit() {
+        let dir = scratch("pieces");
+        let path = dir.join("long.trafficpolice");
+        let device = DeviceRecord { label: "demo".into(), serial: None };
+        let log = SessionLog::file(&path).unwrap();
+        log.source(1, &device, &hello(7, 5), false);
+        for txn in 1..=2000 {
+            request(&log, 1, txn, txn * 5);
+            let chunk = BodyChunk {
+                seq: txn * 5 + 4,
+                txn,
+                dir: BodyDir::Request,
+                ts: 10 + txn * 5,
+                offset: 0,
+                data: Bytes::from(format!("{txn:01000}")),
+            };
+            log.frame(1, &Frame::Body(chunk));
+        }
+        log.finish(&SessionStore::new()).unwrap();
+        let bytes = std::fs::read(&path).unwrap();
+        let (mut batches, mut events) = (0, 0);
+        let opened = read_into(&bytes[..], &SourceIds::default(), &mut |b| {
+            batches += 1;
+            events += b.len();
+        })
+        .unwrap();
+        assert!(batches > 5 && events > 10_000, "{batches} batches, {events} events");
+        assert!(!opened.truncated && !opened.too_large && opened.events.is_empty());
+        // read up to 1 MB inflated: the requests in it, and the file is said to hold more
+        let mut store = SessionStore::new();
+        let ids = store.source_ids();
+        let part = read_within(&bytes[..], &ids, &mut |b| store.apply_all(b), 1 << 20).unwrap();
+        assert!(part.too_large && !part.truncated);
+        assert!((100..2000).contains(&store.len()), "{}", store.len());
+        let t = store.txn(5);
+        assert_eq!(store.body_bytes(&t.req_body).len(), 1000);
+        // cut in the middle: what decodes before the cut is kept
+        let mut store = SessionStore::new();
+        let ids = store.source_ids();
+        let cut = read_into(&bytes[..bytes.len() / 2], &ids, &mut |b| store.apply_all(b)).unwrap();
+        assert!(cut.truncated && !cut.too_large);
+        assert!((100..2000).contains(&store.len()), "{}", store.len());
+        assert_eq!(MAX_INFLATED, 4 << 30, "as the UI and the headless commands say");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A file of a few KB that inflates to megabytes (the same record over and over): reading
+    /// stops at the limit, and the annotations' markers are the last record's only.
+    #[test]
+    fn a_gzip_bomb_stops_at_the_limit() {
+        let record = json!({ "t": "annotations", "pins": [], "markers": [{ "at": 5, "kind": "note", "label": "x" }] });
+        let record = serde_json::to_vec(&record).unwrap();
+        let mut frames = BytesMut::new();
+        for _ in 0..200_000 {
+            frame::encode_raw(kind::ANNOTATIONS, &record, &mut frames).unwrap();
+        }
+        let mut gz = GzEncoder::new(Vec::new(), Compression::default());
+        gz.write_all(&frames).unwrap();
+        let file = [MAGIC.as_slice(), &[VERSION], &gz.finish().unwrap()].concat();
+        assert!(file.len() * 100 < frames.len(), "{} of {}", file.len(), frames.len());
+        let mut events = Vec::new();
+        let opened = read_within(&file[..], &SourceIds::default(), &mut |b| events.extend(b), 1 << 20).unwrap();
+        assert!(opened.too_large);
+        assert_eq!(events.len(), 1, "one marker, the last record's: {events:?}");
+        // read whole, the same one marker
+        let opened = read(&file[..], &SourceIds::default()).unwrap();
+        assert!(!opened.too_large);
+        assert_eq!(opened.events.len(), 1);
     }
 
     #[test]

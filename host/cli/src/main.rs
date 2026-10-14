@@ -851,21 +851,23 @@ async fn run_open(
     load_project(&mut app, project);
     app.jq_runner = jq_in_child;
     let name = file.file_name().map_or_else(|| file.display().to_string(), |n| n.to_string_lossy().into_owned());
-    let opened = traffic_police_core::import::open(file, &app.store.source_ids())
+    // the events go into the store as the file is read, so its bodies can spill to disk
+    let ids = app.store.source_ids();
+    let opened = traffic_police_core::import::open_into(file, &ids, &mut |batch| app.ingest(batch))
         .map_err(|e| anyhow::anyhow!("cannot open {}: {e}", file.display()))?;
     for s in &opened.skipped {
         tracing::warn!("{}: {s}", file.display());
     }
-    app.ingest(opened.events);
     for key in opened.pins {
         if let Some(i) = app.store.find(key) {
             app.store.set_pinned(i, true);
         }
     }
-    app.replay = Some(match (opened.truncated, opened.skipped.len()) {
-        (true, _) => format!("{name} (the recording was cut short)"),
-        (false, 0) => name,
-        (false, n) => format!("{name} ({n} entr{} left out; see the log)", if n == 1 { "y" } else { "ies" }),
+    app.replay = Some(match (opened.truncated, opened.too_large, opened.skipped.len()) {
+        (_, true, _) => format!("{name} (only its first 4 GB were read)"),
+        (true, _, _) => format!("{name} (the recording was cut short)"),
+        (false, false, 0) => name,
+        (false, false, n) => format!("{name} ({n} entr{} left out; see the log)", if n == 1 { "y" } else { "ies" }),
     });
     // time stands still at the end of the recording
     app.now_override = Some(app.store.latest());

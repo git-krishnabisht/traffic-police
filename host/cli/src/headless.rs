@@ -544,18 +544,21 @@ pub async fn export_har(out: &Path, input: ExportInput<'_>, filter: Option<Filte
 /// A saved session or HAR file, read into a store.
 fn open_file(path: &Path) -> anyhow::Result<SessionStore> {
     let mut store = SessionStore::new();
-    let opened = traffic_police_core::import::open(path, &store.source_ids())
+    // the events go into the store as the file is read, so its bodies can spill to disk
+    let ids = store.source_ids();
+    let opened = traffic_police_core::import::open_into(path, &ids, &mut |batch| store.apply_all(batch))
         .map_err(|e| anyhow::anyhow!("cannot open {}: {e}", path.display()))?;
     for s in &opened.skipped {
         note(format_args!("{}: left out {s}", path.display()));
     }
-    store.apply_all(opened.events);
     for key in opened.pins {
         if let Some(i) = store.find(key) {
             store.set_pinned(i, true);
         }
     }
-    if opened.truncated {
+    if opened.too_large {
+        note(format_args!("{} holds more than 4 GB once inflated; exporting its first 4 GB", path.display()));
+    } else if opened.truncated {
         note(format_args!("{} was cut short; exporting what it holds", path.display()));
     }
     Ok(store)
