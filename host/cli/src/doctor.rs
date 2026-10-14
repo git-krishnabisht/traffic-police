@@ -89,6 +89,32 @@ fn client_version(out: &str) -> Option<u32> {
     line.rsplit('.').next()?.trim().parse().ok()
 }
 
+/// The config file: read, missing (defaults apply), or with problems, each on a line of its own.
+fn config_check(r: &mut Report, settings: &config::Loaded) {
+    match (&settings.path, settings.problems.is_empty()) {
+        (Some(p), true) => r.check(Mark::Ok, format!("config {}", p.display()), None),
+        (None, true) => {
+            let where_ = config::path().map_or("(no config location)".into(), |p| p.display().to_string());
+            r.check(Mark::Note, format!("no config file ({where_}); defaults apply"), None);
+        }
+        (path, false) => {
+            let name = path.as_ref().map_or("config".into(), |p| p.display().to_string());
+            r.check(
+                Mark::Fail,
+                format!(
+                    "{name}: {} problem{}; defaults apply to them",
+                    settings.problems.len(),
+                    plural(settings.problems.len())
+                ),
+                Some("fix the lines below (README: Config has every setting and what it takes)"),
+            );
+            for p in &settings.problems {
+                let _ = writeln!(r.text, "      {p}");
+            }
+        }
+    }
+}
+
 /// Runs the checks and returns the report.
 pub async fn run(t: &Target, settings: &config::Loaded, adb: &Adb) -> Report {
     let mut r = Report::default();
@@ -131,28 +157,7 @@ pub async fn run(t: &Target, settings: &config::Loaded, adb: &Adb) -> Report {
             Some("install the Android SDK platform-tools, or set [adb] path"),
         ),
     }
-    match (&settings.path, settings.problems.is_empty()) {
-        (Some(p), true) => r.check(Mark::Ok, format!("config {}", p.display()), None),
-        (None, true) => {
-            let where_ = config::path().map_or("(no config location)".into(), |p| p.display().to_string());
-            r.check(Mark::Note, format!("no config file ({where_}); defaults apply"), None);
-        }
-        (path, false) => {
-            let name = path.as_ref().map_or("config".into(), |p| p.display().to_string());
-            r.check(
-                Mark::Fail,
-                format!(
-                    "{name}: {} problem{}; defaults apply to them",
-                    settings.problems.len(),
-                    plural(settings.problems.len())
-                ),
-                None,
-            );
-            for p in &settings.problems {
-                let _ = writeln!(r.text, "      {p}");
-            }
-        }
-    }
+    config_check(&mut r, settings);
     let start = t.project.clone().map_or_else(std::env::current_dir, Ok);
     match start.as_ref().map(|d| traffic_police_core::project::find(d)) {
         Ok(Ok(Some(p))) if p.warnings.is_empty() => {
@@ -659,6 +664,22 @@ mod tests {
         let out = "Android Debug Bridge version 1.0.41\nVersion 35.0.2-12147458\nInstalled as /opt/adb\n";
         assert_eq!(client_version(out), Some(41));
         assert_eq!(client_version("nothing"), None);
+    }
+
+    /// Until 2026-10-14 a config file with problems listed them without a fix, unlike every other
+    /// failure.
+    #[test]
+    fn a_config_with_problems_says_what_to_do() {
+        let mut settings = config::parse("[ui]\ntheme = \"loud\"\n");
+        settings.path = Some("/home/me/.config/traffic-police/config.toml".into());
+        let mut r = Report::default();
+        config_check(&mut r, &settings);
+        assert_eq!((r.failures, settings.problems.len()), (1, 1));
+        let lines: Vec<&str> = r.text.lines().collect();
+        assert_eq!(lines[0], "  ✗ /home/me/.config/traffic-police/config.toml: 1 problem; defaults apply to them");
+        assert_eq!(lines[1], "      fix: fix the lines below (README: Config has every setting and what it takes)");
+        assert_eq!(lines[2], format!("      {}", settings.problems[0]));
+        assert_eq!(lines.len(), 3);
     }
 
     #[test]
