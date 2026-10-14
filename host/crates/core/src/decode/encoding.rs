@@ -2,10 +2,17 @@
 
 use std::io::Read;
 
+use ruzstd::decoding::errors::FrameDecoderError;
+
 use crate::model::{Headers, header_all};
 
 /// Default cap on decoded output (decompression-bomb guard).
 pub const DEFAULT_DECODE_LIMIT: usize = 256 * 1024 * 1024;
+
+/// The largest window a zstd body may need. HTTP's `zstd` content coding is limited to 8 MB
+/// (RFC 9659), and a frame that asks for more is refused before anything is allocated (ruzstd's
+/// own limit is 128 MB, allocated as the frame asks).
+pub const ZSTD_MAX_WINDOW: u64 = 8 << 20;
 
 /// Encodings from all `Content-Encoding` headers, in the order they were applied.
 pub fn encodings(headers: &Headers) -> Vec<String> {
@@ -46,8 +53,18 @@ fn decode_one(data: &[u8], encoding: &str, limit: usize) -> Result<Vec<u8>, Deco
             .or_else(|_| read_capped(flate2::read::DeflateDecoder::new(data), limit, encoding)),
         "br" => read_capped(brotli_decompressor::Decompressor::new(data, 4096), limit, encoding),
         "zstd" => {
-            let dec = ruzstd::decoding::StreamingDecoder::new(data)
-                .map_err(|e| DecodeError::Corrupt { encoding: encoding.into(), message: e.to_string() })?;
+            let dec =
+                ruzstd::decoding::StreamingDecoder::new_with_max_window_size(data, ZSTD_MAX_WINDOW).map_err(|e| {
+                    let message = match e {
+                        FrameDecoderError::WindowSizeTooBig { requested, .. } => format!(
+                            "the frame needs a {} window, more than the {} HTTP allows (RFC 9659)",
+                            crate::fmt::bytes(requested),
+                            crate::fmt::bytes(ZSTD_MAX_WINDOW)
+                        ),
+                        e => e.to_string(),
+                    };
+                    DecodeError::Corrupt { encoding: encoding.into(), message }
+                })?;
             read_capped(dec, limit, encoding)
         }
         other => Err(DecodeError::Unsupported(other.into())),
@@ -103,6 +120,33 @@ mod tests {
         let compressed = enc.into_inner();
         assert!(compressed.len() < body.len());
         assert_eq!(decode(&compressed, &["br".into()], 1 << 20).unwrap(), body);
+    }
+
+    /// A zstd frame of `hello` in one raw block that declares a window of 2^`log` bytes.
+    fn zstd_frame(log: u8) -> Vec<u8> {
+        // the magic number, a header without a content size, the window, the last (raw) block
+        let mut frame = vec![0x28, 0xb5, 0x2f, 0xfd, 0x00, (log - 10) << 3, (5 << 3) | 1, 0, 0];
+        frame.extend_from_slice(b"hello");
+        frame
+    }
+
+    /// RFC 9659 holds HTTP's zstd to an 8 MB window; a frame that asks for more is refused
+    /// before its window is allocated (ruzstd would take up to 128 MB for it).
+    #[test]
+    fn zstd_windows_over_8_mb_are_refused() {
+        let zstd = ["zstd".to_string()];
+        assert_eq!(decode(&zstd_frame(10), &zstd, 100).unwrap(), b"hello");
+        assert_eq!(decode(&zstd_frame(23), &zstd, 100).unwrap(), b"hello", "8 MB is allowed");
+        let e = decode(&zstd_frame(24), &zstd, 100).unwrap_err();
+        assert_eq!(
+            e.to_string(),
+            "zstd decoding failed: the frame needs a 16 MB window, more than the 8.0 MB HTTP allows (RFC 9659)"
+        );
+        // as a body: undecodable, shown as captured with the reason
+        let hs: Headers = vec![("Content-Encoding".into(), "zstd".into())];
+        let d = super::super::decode_body(bytes::Bytes::from(zstd_frame(30)), Some(&hs), 1 << 20);
+        assert_eq!(d.bytes.len(), zstd_frame(30).len());
+        assert!(d.error.is_some_and(|e| e.contains("1.0 GB window")));
     }
 
     #[test]
