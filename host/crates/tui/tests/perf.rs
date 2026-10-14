@@ -9,6 +9,8 @@ mod common;
 use std::time::{Duration, Instant};
 
 use bytes::Bytes;
+use ratatui::Terminal;
+use ratatui::backend::TestBackend;
 use traffic_police_backends::demo::DemoSession;
 use traffic_police_core::SessionEvent;
 use traffic_police_core::event::{RequestStarted, ResponseStarted};
@@ -16,9 +18,15 @@ use traffic_police_core::fmt::{NS_PER_MS, NS_PER_SEC};
 use traffic_police_core::model::TxnKey;
 use traffic_police_proto::BodyDir;
 use traffic_police_proto::msg::{ClientInfo, StackFrame, ThreadInfo};
-use traffic_police_tui::{App, parse_keys, render_keys, render_text};
+use traffic_police_tui::terminal::{INGEST_PER_TURN, ingest_waiting};
+use traffic_police_tui::{App, parse_keys, render_keys, render_text, ui};
 
 const N: u64 = 50_000;
+
+/// The worst frame allowed in any case: three times the average budget, room for the scheduling
+/// of a busy CI machine, and well under the stalls these cases are here to catch (hundreds of
+/// milliseconds and more).
+const WORST_FRAME: Duration = Duration::from_millis(100);
 
 /// `count` completed requests for the demo's source, `gap` apart, ending at `end`.
 fn synth(source: u32, first_txn: u64, count: u64, end: u64, gap: u64) -> Vec<SessionEvent> {
@@ -171,6 +179,81 @@ fn frame_time_with_50k_transactions() {
     for avg in results {
         assert!(avg < budget, "a frame took {avg:?} on average, over the {budget:?} budget");
     }
+}
+
+/// Ingest through the UI's channel (ARCHITECTURE.md §6: 20,000 events a second sustained, a
+/// 50,000-event replay in under a second), into a store of 50,000 requests, while the UI takes
+/// them in for at most [`INGEST_PER_TURN`] a turn and draws at 60 frames a second: first a burst
+/// of 50,000 events in batches of 200 as fast as the channel takes them, then 40,000 events a
+/// second for a second, 400 every 10 ms, as a busy app's socket brings them, which the UI takes
+/// as they come.
+#[test]
+#[ignore = "run in release: cargo test --release -p traffic-police-tui --test perf -- --ignored --nocapture"]
+fn ingest_through_the_ui_while_it_draws() {
+    let (mut app, _session, end) = big_app();
+    let source = app.store.current_source().expect("demo source").id;
+    let mut term = Terminal::new(TestBackend::new(common::LARGE.0, common::LARGE.1)).unwrap();
+    let mut next_txn = 40_000_000;
+    let mut now = end;
+    let mut run = |label: &str, requests: u64, pace: Option<Duration>| {
+        now += requests * 2 * NS_PER_MS;
+        let events = synth(source, next_txn, requests, now, 2 * NS_PER_MS);
+        next_txn += requests;
+        let total = events.len();
+        let size = if pace.is_some() { 400 } else { 200 };
+        let batches: Vec<Vec<SessionEvent>> = events.chunks(size).map(<[SessionEvent]>::to_vec).collect();
+        let (tx, mut rx) = tokio::sync::mpsc::channel(256);
+        let backend = std::thread::spawn(move || {
+            let mut last = Instant::now();
+            for b in batches {
+                if tx.blocking_send(b).is_err() {
+                    break;
+                }
+                last = Instant::now();
+                if let Some(p) = pace {
+                    std::thread::sleep(p);
+                }
+            }
+            last
+        });
+        let frame = Duration::from_secs(1) / 60;
+        let start = Instant::now();
+        let (mut taken, mut frames, mut next_frame) = (0, 0, start);
+        let (mut worst_turn, mut worst_frame) = (Duration::ZERO, Duration::ZERO);
+        while taken < total {
+            let t = Instant::now();
+            let turn = ingest_waiting(&mut rx, &mut app, INGEST_PER_TURN);
+            worst_turn = worst_turn.max(t.elapsed());
+            taken += turn.events;
+            assert!(!turn.closed || taken == total, "the backend ended early");
+            if Instant::now() >= next_frame {
+                app.now_override = Some(now);
+                let t = Instant::now();
+                term.draw(|f| ui::draw(f, &mut app)).unwrap();
+                worst_frame = worst_frame.max(t.elapsed());
+                frames += 1;
+                next_frame = Instant::now() + frame;
+            }
+            if turn.batches == 0 {
+                std::thread::yield_now();
+            }
+        }
+        let done = Instant::now();
+        let took = done - start;
+        // how long after the backend sent its last batch the UI had it all
+        let behind = done.saturating_duration_since(backend.join().unwrap());
+        let rate = total as f64 / took.as_secs_f64();
+        println!(
+            "{label:<44} {took:>8.2?}  ({rate:.0} events/s, {frames} frames, worst turn {worst_turn:.2?}, worst frame {worst_frame:.2?}, {behind:.2?} behind)"
+        );
+        assert!(worst_frame < WORST_FRAME, "a frame took {worst_frame:?}");
+        (took, rate, behind)
+    };
+    let (took, _, _) = run("ingest: a burst of 50,000 events", 10_000, None);
+    assert!(took < Duration::from_secs(1), "50,000 events took {took:?}");
+    let (_, rate, behind) = run("ingest: 40,000 events a second for a second", 8_000, Some(Duration::from_millis(10)));
+    assert!(rate > 20_000.0, "{rate:.0} events a second");
+    assert!(behind < WORST_FRAME, "the UI was {behind:?} behind the backend");
 }
 
 /// Logdawg (ARCHITECTURE.md §5.17): half a million lines, what a busy device writes in about

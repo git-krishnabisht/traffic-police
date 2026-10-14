@@ -136,6 +136,43 @@ impl Pacer {
 /// lets frames through.
 const WAITING_INPUT: usize = 256;
 
+/// The longest a turn of the loop takes in data before it reads input and draws again
+/// (ARCHITECTURE.md §5.2). What is left waits in the channel for the next turn, which comes at
+/// once, so the data keeps its pace; up to 0.5.1 a turn took every batch waiting, and while a
+/// backend kept the channel full (a replay, a busy app after a reconnect) keys and frames waited.
+pub const INGEST_PER_TURN: Duration = Duration::from_millis(8);
+
+/// What [`ingest_waiting`] took in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Ingested {
+    pub batches: usize,
+    pub events: usize,
+    /// The backend is gone: its channel closed.
+    pub closed: bool,
+}
+
+/// Applies the batches of data already waiting, without waiting for more, until `budget` is
+/// spent; always at least one, so the data moves on whatever the budget.
+pub fn ingest_waiting(events: &mut mpsc::Receiver<Vec<SessionEvent>>, app: &mut App, budget: Duration) -> Ingested {
+    let started = Instant::now();
+    let mut taken = Ingested::default();
+    while taken.batches == 0 || started.elapsed() < budget {
+        match events.try_recv() {
+            Ok(batch) => {
+                taken.batches += 1;
+                taken.events += batch.len();
+                app.ingest(batch);
+            }
+            Err(mpsc::error::TryRecvError::Empty) => break,
+            Err(mpsc::error::TryRecvError::Disconnected) => {
+                taken.closed = true;
+                break;
+            }
+        }
+    }
+    taken
+}
+
 /// Ctrl+C typed in an editor reaches this process as well, possibly just after the editor has
 /// exited because of it; an interrupt this soon after the editor is the editor's.
 const EDITOR_INTERRUPT: Duration = Duration::from_secs(1);
@@ -424,18 +461,20 @@ async fn event_loop(
             }
             _ = async { tokio::time::sleep_until(wake.expect("guarded")).await }, if wake.is_some() => {}
         }
-        // Whatever this turn woke for, the input and data waiting now go in before the next frame.
-        // When frames take longer than the frame time (a slow terminal, SSH), the frame timer is
-        // ready at every turn and wins most of them, and each turn draws a frame: keys taken only
-        // when their branch won would wait many frames each.
+        // Whatever this turn woke for, the input and data waiting now go in before the next frame
+        // (the data for at most INGEST_PER_TURN). When frames take longer than the frame time (a
+        // slow terminal, SSH), the frame timer is ready at every turn and wins most of them, and
+        // each turn draws a frame: keys taken only when their branch won would wait many frames
+        // each.
         if let Some(stream) = input.as_mut()
             && let Some(end) = take_waiting_input(stream, app, &mut dirty).await
         {
             return end;
         }
-        while backend_open && let Ok(b) = events.try_recv() {
-            app.ingest(b);
-            dirty = true;
+        if backend_open {
+            let taken = ingest_waiting(events, app, INGEST_PER_TURN);
+            dirty |= taken.batches > 0;
+            backend_open = !taken.closed;
         }
         if let Some(what) = take_worker_panic() {
             let what = what.split_once(": ").map_or(what.as_str(), |(_, m)| m).to_string();
@@ -792,6 +831,32 @@ mod tests {
         assert_eq!(contained(|| 7), Some(7));
         let view = failed_view();
         assert!(view.note.as_deref().is_some_and(|n| n.contains("internal error")), "{:?}", view.note);
+    }
+
+    #[test]
+    fn a_turn_takes_in_data_for_its_budget_and_leaves_the_rest_waiting() {
+        let mut app = App::new(SessionStore::new(), Theme::default());
+        let (tx, mut rx) = mpsc::channel(256);
+        let note = |i: u64| traffic_police_core::SessionEvent::Marker {
+            source: None,
+            at: i,
+            kind: traffic_police_core::event::MarkerKind::Note,
+            label: String::new(),
+        };
+        for i in 0..100 {
+            tx.try_send(vec![note(i), note(i)]).unwrap();
+        }
+        // no time at all: one batch, so the data still moves on
+        assert_eq!(
+            ingest_waiting(&mut rx, &mut app, Duration::ZERO),
+            Ingested { batches: 1, events: 2, closed: false }
+        );
+        // time enough: all that waits, and not a moment's wait for more
+        let rest = ingest_waiting(&mut rx, &mut app, Duration::from_secs(60));
+        assert_eq!(rest, Ingested { batches: 99, events: 198, closed: false });
+        assert_eq!(app.store.markers().len(), 200);
+        drop(tx);
+        assert!(ingest_waiting(&mut rx, &mut app, Duration::from_secs(60)).closed);
     }
 
     #[test]
