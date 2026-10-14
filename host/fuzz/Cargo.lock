@@ -813,7 +813,7 @@ dependencies = [
 
 [[package]]
 name = "traffic-police-adb"
-version = "0.5.1"
+version = "0.5.2"
 dependencies = [
  "bytes",
  "thiserror",
@@ -823,7 +823,7 @@ dependencies = [
 
 [[package]]
 name = "traffic-police-core"
-version = "0.5.1"
+version = "0.5.2"
 dependencies = [
  "base64",
  "brotli-decompressor",
@@ -860,7 +860,7 @@ dependencies = [
 
 [[package]]
 name = "traffic-police-proto"
-version = "0.5.1"
+version = "0.5.2"
 dependencies = [
  "bytes",
  "serde",
