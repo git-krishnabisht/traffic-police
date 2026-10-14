@@ -158,11 +158,11 @@ host                                   device
 ```
 
 - The device sends `hello` immediately after accepting. The host MUST answer with `hello_ack` within 10 s or the device closes the connection.
-- **Replay.** The device keeps a ring buffer of recent events (default: the last 1,000 transactions or 32 MiB of body bytes, whichever limit is reached first; whole transactions are evicted, oldest first). After `hello_ack`, it sends `replay { phase: "begin" }`, every buffered event with `seq > resume_after_seq` in original order, then `replay { phase: "end" }`, then live events. Replayed frames keep their original `seq` and `ts`.
+- **Replay.** The device keeps a ring buffer of recent events (default: the last 1,000 transactions or 32 MiB of memory, whichever limit is reached first; whole transactions are evicted, oldest first). The memory counted is every kept frame's bytes, headers and stack frames included, plus a fixed overhead per frame and per transaction (until 0.5.1 only body bytes counted, so a body read one byte at a time took about 100 times the limit). After `hello_ack`, it sends `replay { phase: "begin" }`, every buffered event with `seq > resume_after_seq` in original order, then `replay { phase: "end" }`, then live events. Replayed frames keep their original `seq` and `ts`.
 - **Resume.** A host reconnecting to the same `instance` sets `resume_after_seq` to the last `seq` it stored, so only newer events are replayed. The host still discards any event whose `seq` it has already applied.
 - **Partial transactions.** Because eviction happens per transaction, a host can still receive events for a transaction whose `req` it never saw (evicted before it connected, or dropped). The host MUST create a placeholder ("start not captured") rather than discard them.
 - **Keep-alive.** The host sends `ping` every 5 s. If no frame at all arrives for 15 s after a ping, the host treats the connection as dead (a stuck forward) and reconnects. The device needs no keep-alive.
-- **Backpressure and loss.** App threads never block on the socket. Events go into a bounded queue (default 8 MiB) drained by one writer thread; on overflow the oldest queued events are dropped and counted, and a `dropped` event is sent when the writer catches up. Events that reached the ring buffer are never reported as dropped; eviction from the ring is normal ageing.
+- **Backpressure and loss.** App threads never block on the socket. Events go into a bounded queue (default 8 MiB, by each event's estimated memory: what it holds, headers, stack frames and bytes included) drained by one writer thread; on overflow the oldest queued events are dropped and counted, and a `dropped` event is sent when the writer catches up. Events that reached the ring buffer are never reported as dropped; eviction from the ring is normal ageing.
 - **Recording paused** (`set_config { recording: false }`): the runtime stops creating transactions. Transactions already in flight finish normally. Rules keep applying.
 - **Closing.** Either side MAY send `bye` before closing. The device keeps capturing into the ring buffer after a client disconnects. The rules that connection sent stop applying, so the app behaves normally again once traffic-police quits; when another host has taken over, its rules stay.
 
@@ -408,6 +408,8 @@ Codes defined in v1: `started`, `hook_installed`, `hook_failed`, `hook_other_loa
               "capture_response_bodies": true, "stack_depth": 64 }
 }
 ```
+
+`buffer` is the replay ring (§6): its limits (`max_txns`; `max_body_bytes`, the memory limit, which counts frames and their overhead), how many transactions it keeps, and their body bytes (`body_bytes`, never more than `max_body_bytes`).
 
 Hook `status` values (attach mode): `installed` (class instrumented), `pending` (class not loaded yet; the load hook will instrument it), `class_not_found`, `method_not_found` (typically R8-renamed OkHttp), `failed` (retransform error; `detail` has the JVMTI error name), `other_loader` (a copy in a second class loader was left alone). `hits` counts calls through the hook, which tells "installed but never used" apart from "not installed". Updates after `hello` arrive as `diag` events with codes `hook_installed` / `hook_failed`.
 

@@ -23,8 +23,10 @@ public final class CaptureRuntime {
         /** Client name to detected version (null when absent), e.g. okhttp → 4.12.0. */
         public final Map<String, String> clients = new LinkedHashMap<>();
         public boolean okhttp;
+        /** The replay ring (PROTOCOL.md §6): this many transactions at most, in this much memory. */
         public int ringTxns = 1000;
-        public long ringBodyBytes = 32L * 1024 * 1024;
+        public long ringBytes = 32L * 1024 * 1024;
+        /** Memory the events waiting for the writer may take (their estimated size). */
         public long queueBytes = 8L * 1024 * 1024;
         public CaptureConfig config = CaptureConfig.defaults();
         /** Fixed instance id (tests); random when null. */
@@ -61,7 +63,7 @@ public final class CaptureRuntime {
         this.instance = options.instance != null ? options.instance : UUID.randomUUID().toString().replace("-", "");
         this.startedTs = platform.nanoTime();
         this.queue = new EventQueue(options.queueBytes);
-        this.ring = new ReplayRing(options.ringTxns, options.ringBodyBytes);
+        this.ring = new ReplayRing(options.ringTxns, options.ringBytes);
         this.writer = new EventWriter(this, queue, ring);
         this.recorder = new Recorder(this);
         capabilities.add("huc");

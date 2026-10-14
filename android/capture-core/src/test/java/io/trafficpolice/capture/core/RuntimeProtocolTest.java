@@ -5,6 +5,7 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -267,6 +268,67 @@ public final class RuntimeProtocolTest {
         assertEquals(7, kept.size()); // txns 2 and 3 (3 frames each) and the diagnostic
         assertEquals(4, kept.get(0).seq);
         assertEquals(10, kept.get(6).seq);
+    }
+
+    /**
+     * The ring's budget counts what its frames cost, not only their body bytes: a body read one
+     * byte at a time is one 40-byte frame per byte. Until 0.5.1 a 64 KiB budget let 65,536 such
+     * frames in, about 6.8 MB.
+     */
+    @Test
+    public void theRingBoundsTheMemoryOfOneByteChunks() {
+        long budget = 64 * 1024;
+        ReplayRing ring = new ReplayRing(1000, budget);
+        long seq = 1;
+        for (int i = 0; i < 100_000; i++, seq++) {
+            Event chunk = new Event.Chunk(i, 1, Frames.DIR_RESPONSE, i, new byte[] {(byte) i});
+            ring.add(seq, chunk, chunk.encode(seq));
+            assertTrue(ring.bytes() <= budget);
+        }
+        long kept = ReplayRing.TXN_OVERHEAD;
+        List<ReplayRing.Entry> entries = ring.after(0);
+        for (ReplayRing.Entry e : entries) {
+            kept += e.frame.length + ReplayRing.FRAME_OVERHEAD;
+        }
+        assertEquals(kept, ring.bytes());
+        assertTrue(entries.size() + " frames kept", entries.size() > 0 && entries.size() <= budget / 104);
+        assertEquals("the newest frame is kept", seq - 1, entries.get(entries.size() - 1).seq);
+    }
+
+    /** The same body through the queue, with no writer taking from it: bounded too, and the drops counted. */
+    @Test
+    public void theQueueBoundsTheMemoryOfOneByteChunks() throws Exception {
+        EventQueue q = new EventQueue(64 * 1024);
+        for (int i = 0; i < 100_000; i++) {
+            q.offer(new Event.Chunk(i, 1, Frames.DIR_RESPONSE, i, new byte[] {(byte) i}));
+            assertTrue(q.bytes() <= 64 * 1024);
+        }
+        List<Event> queued = new ArrayList<>();
+        q.drainTo(queued);
+        assertEquals(0, q.bytes());
+        assertTrue(queued.size() + " queued", queued.size() <= 64 * 1024 / 65);
+        assertEquals(100_000 - queued.size(), q.takeDropped(0).events);
+    }
+
+    /** A queued event counts what it holds: trailers, a failure's messages, a diagnostic's text. */
+    @Test
+    public void queuedEventsCountWhatTheyHold() {
+        String text = new String(new char[10_000]).replace('\0', 'x');
+        String[] trailers = {"grpc-status", "0", "x-debug", text};
+        assertTrue(new Event.Done(0, 1, trailers, new Txn.GrpcStatus(0, "OK", text)).size() > 40_000);
+        IOException failure = new IOException(text, new IOException(text));
+        assertTrue(new Event.Fail(0, 1, "connect", false, false, failure, null, null, null).size() > 40_000);
+        Map<String, String> data = new java.util.LinkedHashMap<>();
+        data.put("detail", text);
+        assertTrue(new Event.Diag(0, "warn", "x", text, data).size() > 40_000);
+        // an exception whose message cannot be read still counts, and does not throw
+        IOException odd = new IOException() {
+            @Override
+            public String getMessage() {
+                throw new IllegalStateException("no message");
+            }
+        };
+        assertTrue(new Event.Fail(0, 1, "connect", false, false, odd, null, null, null).size() > 0);
     }
 
     @Test

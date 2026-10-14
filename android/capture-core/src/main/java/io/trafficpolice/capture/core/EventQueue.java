@@ -29,14 +29,19 @@ final class EventQueue {
         this.maxBytes = maxBytes;
     }
 
-    synchronized void offer(Event e) {
+    void offer(Event e) {
+        e.queued = e.size(); // sized before taking the lock, which every app thread that records takes
+        add(e);
+    }
+
+    private synchronized void add(Event e) {
         queue.addLast(e);
-        bytes += e.size();
+        bytes += e.queued;
         while (bytes > maxBytes && queue.size() > 1) {
             Event old = queue.pollFirst();
-            bytes -= old.size();
+            bytes -= old.queued;
             droppedEvents++;
-            droppedBytes += old.size();
+            droppedBytes += old.queued;
             if (old.txn != 0 && !droppedTxns.contains(old.txn)) {
                 if (droppedTxns.size() < MAX_DROPPED_TXNS) {
                     droppedTxns.add(old.txn);
@@ -67,13 +72,18 @@ final class EventQueue {
         woken = false;
         Event e;
         while ((e = queue.pollFirst()) != null) {
-            bytes -= e.size();
+            bytes -= e.queued;
             out.add(e);
         }
     }
 
     synchronized boolean isEmpty() {
         return queue.isEmpty();
+    }
+
+    /** What the queued events take, by their estimates (tests). */
+    synchronized long bytes() {
+        return bytes;
     }
 
     /** Makes a waiting {@link #drainTo} return so the writer can run its tasks. */

@@ -16,6 +16,8 @@ abstract class Event {
     final long ts;
     /** Transaction id, or 0 for events that belong to no transaction. */
     final long txn;
+    /** {@link #size()} when it was queued, so the queue takes away what it added (EventQueue). */
+    int queued;
 
     Event(long ts, long txn) {
         this.ts = ts;
@@ -24,7 +26,11 @@ abstract class Event {
 
     abstract byte[] encode(long seq);
 
-    /** Approximate memory while queued, for the queue's byte budget. */
+    /**
+     * Memory the event takes while queued, for the queue's budget: the object and its slot in the
+     * queue, and everything it holds (strings, headers, stack frames, bytes). Estimated, without
+     * the work of encoding it.
+     */
     int size() {
         return 96;
     }
@@ -51,7 +57,31 @@ abstract class Event {
         int n = 0;
         if (a != null) {
             for (String s : a) {
-                n += s == null ? 4 : s.length() * 2 + 24;
+                n += stringSize(s);
+            }
+        }
+        return n;
+    }
+
+    static int stringSize(String s) {
+        return s == null ? 4 : s.length() * 2 + 24;
+    }
+
+    /**
+     * A failure and its causes (the five that are sent at most), each with its message and its
+     * trace, which is not resolved here (that is the costly part) and so counts a fixed share.
+     */
+    static int errorSize(Throwable error) {
+        int n = 0;
+        Throwable t = error;
+        for (int i = 0; t != null && i < 5; i++) {
+            n += 256;
+            try {
+                n += stringSize(t.getMessage());
+                t = t.getCause();
+            } catch (Throwable ignored) {
+                // the app's own exception class; the message is read again when it is encoded
+                t = null;
             }
         }
         return n;
@@ -105,7 +135,8 @@ abstract class Event {
 
         @Override
         int size() {
-            return 256 + url.length() * 2 + stringsSize(headers) + (stack == null ? 0 : stack.sizeEstimate() * 96);
+            return 256 + stringSize(url) + stringsSize(headers) + (stack == null ? 0 : stack.sizeEstimate() * 96)
+                    + (markNames == null ? 0 : markNames.length * 24);
         }
 
         @Override
@@ -293,7 +324,7 @@ abstract class Event {
 
         @Override
         int size() {
-            return 256 + (delivered == null ? 0 : stringsSize(delivered.headers));
+            return 256 + changes.size() * 96 + (delivered == null ? 0 : stringsSize(delivered.headers));
         }
 
         @Override
@@ -331,6 +362,11 @@ abstract class Event {
             super(ts, txn);
             this.trailers = trailers;
             this.grpc = grpc;
+        }
+
+        @Override
+        int size() {
+            return 96 + stringsSize(trailers) + (grpc == null ? 0 : 64 + stringSize(grpc.message));
         }
 
         @Override
@@ -375,6 +411,11 @@ abstract class Event {
             this.conn = conn;
             this.trailers = trailers;
             this.grpc = grpc;
+        }
+
+        @Override
+        int size() {
+            return 128 + errorSize(error) + stringsSize(trailers) + (grpc == null ? 0 : 64 + stringSize(grpc.message));
         }
 
         @Override
@@ -521,6 +562,17 @@ abstract class Event {
         }
 
         @Override
+        int size() {
+            int n = 96 + stringSize(message);
+            if (data != null) {
+                for (Map.Entry<String, String> e : data.entrySet()) {
+                    n += 48 + stringSize(e.getKey()) + stringSize(e.getValue());
+                }
+            }
+            return n;
+        }
+
+        @Override
         byte[] encode(long seq) {
             Json j = start("diag", seq).kv("level", level).kv("code", code).kv("message", message);
             if (data != null && !data.isEmpty()) {
@@ -547,6 +599,11 @@ abstract class Event {
             this.bytes = bytes;
             this.txns = txns;
             this.txnsTruncated = txnsTruncated;
+        }
+
+        @Override
+        int size() {
+            return 96 + txns.length * 8;
         }
 
         @Override
