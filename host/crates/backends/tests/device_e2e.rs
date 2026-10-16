@@ -21,11 +21,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::sync::{mpsc, watch};
+use tokio::task::JoinHandle;
 use tokio::time::Instant;
 use traffic_police_adb::{Adb, TransportId};
 use traffic_police_backends::{AgentKit, DeviceTarget, Launch, run_device};
 use traffic_police_core::SessionEvent;
-use traffic_police_core::backend::ConnectionStatus;
+use traffic_police_core::backend::{BackendCommand, ConnectionStatus};
 use traffic_police_core::decode::decode_body;
 use traffic_police_core::model::{BodyMeta, BodyState, SourceId, Transaction, TxnState, header};
 use traffic_police_core::store::SessionStore;
@@ -51,9 +52,62 @@ impl Report {
 struct Session {
     store: SessionStore,
     events: mpsc::Receiver<Vec<SessionEvent>>,
+    /// The device backends running: a failure says each one's status, which says what it waits
+    /// for, or why it stopped (a backend sets it before it returns).
+    backends: Vec<Backend>,
+}
+
+/// A device backend the test started, under the name a failure gives it.
+struct Backend {
+    name: String,
+    /// Dropping it stops the backend.
+    quit: mpsc::UnboundedSender<BackendCommand>,
+    status: watch::Receiver<ConnectionStatus>,
+    task: JoinHandle<()>,
 }
 
 impl Session {
+    fn new(events: mpsc::Receiver<Vec<SessionEvent>>) -> Session {
+        Session { store: SessionStore::new(), events, backends: Vec::new() }
+    }
+
+    /// Starts a device backend for `target`, sending to `events`.
+    fn start(&mut self, adb: &Adb, name: &str, target: DeviceTarget, events: &mpsc::Sender<Vec<SessionEvent>>) {
+        let (quit, commands) = mpsc::unbounded_channel();
+        let (status_tx, status) = watch::channel(ConnectionStatus::Waiting(String::new()));
+        let task = tokio::spawn(run_device(
+            adb.clone(),
+            target,
+            self.store.source_ids(),
+            events.clone(),
+            commands,
+            status_tx,
+            None,
+        ));
+        self.backends.push(Backend { name: name.to_string(), quit, status, task });
+    }
+
+    /// Stops the backends: each says goodbye and removes its forward.
+    async fn stop(&mut self) {
+        let mut tasks = Vec::new();
+        for Backend { name, quit, task, .. } in std::mem::take(&mut self.backends) {
+            drop(quit);
+            tasks.push((name, task));
+        }
+        for (name, task) in tasks {
+            tokio::time::timeout(Duration::from_secs(5), task)
+                .await
+                .unwrap_or_else(|_| panic!("{name}: the backend did not stop"))
+                .unwrap();
+        }
+    }
+
+    /// What each backend said last, for a failure.
+    fn statuses(&self) -> String {
+        let said: String = self.backends.iter().map(|b| format!("\n  {}: {:?}", b.name, *b.status.borrow())).collect();
+        if said.is_empty() { said } else { format!("; what the backends said last:{said}") }
+    }
+
     /// Applies events until `done` holds, or fails after `limit`.
     async fn until(&mut self, what: &str, limit: Duration, done: impl Fn(&SessionStore) -> bool) {
         let deadline = Instant::now() + limit;
@@ -66,11 +120,11 @@ impl Session {
                 }
                 Ok(None) => {
                     summary(&self.store);
-                    panic!("the backends stopped while waiting for {what}");
+                    panic!("the backends stopped while waiting for {what}{}", self.statuses());
                 }
                 Err(_) => {
                     summary(&self.store);
-                    panic!("timed out after {limit:?} waiting for {what}");
+                    panic!("timed out after {limit:?} waiting for {what}{}", self.statuses());
                 }
             }
         }
@@ -517,13 +571,9 @@ async fn sample_app_end_to_end() {
     adb.shell(id, &format!("am force-stop {PACKAGE}")).await.unwrap();
 
     // two backends, main process and worker, both following restarts
-    let store = SessionStore::new();
     let (event_tx, events) = mpsc::channel(1024);
-    let mut quit = Vec::new();
-    let mut tasks = Vec::new();
+    let mut session = Session::new(events);
     for process in [PACKAGE, WORKER] {
-        let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
-        let (status_tx, _status_rx) = watch::channel(ConnectionStatus::Waiting(String::new()));
         let target = DeviceTarget {
             serial: Some(serial.clone()),
             package: PACKAGE.into(),
@@ -536,19 +586,9 @@ async fn sample_app_end_to_end() {
             launch: None,
             flutter: false,
         };
-        tasks.push(tokio::spawn(run_device(
-            adb.clone(),
-            target,
-            store.source_ids(),
-            event_tx.clone(),
-            cmd_rx,
-            status_tx,
-            None,
-        )));
-        quit.push(cmd_tx);
+        session.start(&adb, process, target, &event_tx);
     }
     drop(event_tx);
-    let mut session = Session { store, events };
     let mut report = Report::default();
 
     // run 1
@@ -616,10 +656,7 @@ async fn sample_app_end_to_end() {
     report.check(verdict.contains("closed without a byte"), || format!("same-uid connection: {verdict:?}"));
 
     // quit: each backend says goodbye and removes its forward
-    drop(quit);
-    for t in tasks {
-        tokio::time::timeout(Duration::from_secs(5), t).await.expect("backend did not stop").unwrap();
-    }
+    session.stop().await;
     let ours: Vec<String> = session.store.sources().map(|s| format!("_{}", s.pid)).collect();
     let left: Vec<_> = adb
         .list_forwards()
@@ -734,9 +771,8 @@ async fn plain_app_attach_end_to_end() {
     // (first tried on a device, API 28, 2026-10-07), a startup agent from 30
     let launch_from_start = api >= 27;
 
-    let store = SessionStore::new();
     let (event_tx, events) = mpsc::channel(1024);
-    let mut session = Session { store, events };
+    let mut session = Session::new(events);
     let mut report = Report::default();
 
     // run 0: the agent arrives as soon as the app's process exists, so the app loads its OkHttp
@@ -744,17 +780,7 @@ async fn plain_app_attach_end_to_end() {
     // stayed unhooked for a moment, and a slow device lost the first requests (the nightly API 36
     // failures of 2026-10-02 to 10-06: init, challenge, attest, enroll and a status poll).
     start_plain(&adb, id, None).await;
-    let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
-    let (status_tx, _status_rx) = watch::channel(ConnectionStatus::Waiting(String::new()));
-    let task = tokio::spawn(run_device(
-        adb.clone(),
-        attach_target(&serial, PLAIN, &kit, false, None),
-        session.store.source_ids(),
-        event_tx.clone(),
-        cmd_rx,
-        status_tx,
-        None,
-    ));
+    session.start(&adb, "attach run 0", attach_target(&serial, PLAIN, &kit, false, None), &event_tx);
     session.until("the agent in the starting app", Duration::from_secs(30), |s| source_of(s, PLAIN, 0).is_some()).await;
     let early = source_of(&session.store, PLAIN, 0).unwrap();
     let hooks: Vec<String> =
@@ -764,28 +790,14 @@ async fn plain_app_attach_end_to_end() {
     assert_eq!(run.exit, 0);
     session.until("attach run 0 to finish", Duration::from_secs(120), |s| has_done(s, Some(early))).await;
     check_main_run(&mut report, &session.store, early, "attach run 0 (attached while the app started)");
-    drop(cmd_tx);
-    tokio::time::timeout(Duration::from_secs(5), task).await.expect("backend did not stop").unwrap();
+    session.stop().await;
 
     // run 1: the app runs before anything is attached, so its OkHttp client exists before the
     // agent (the app logs once its activity is created, which builds the client)
     start_plain(&adb, id, Some("backend on")).await;
-    let mut quit = Vec::new();
-    let mut tasks = Vec::new();
     for process in [PLAIN, PLAIN_WORKER] {
-        let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
-        let (status_tx, _status_rx) = watch::channel(ConnectionStatus::Waiting(String::new()));
         let target = attach_target(&serial, process, &kit, true, None);
-        tasks.push(tokio::spawn(run_device(
-            adb.clone(),
-            target,
-            session.store.source_ids(),
-            event_tx.clone(),
-            cmd_rx,
-            status_tx,
-            None,
-        )));
-        quit.push(cmd_tx);
+        session.start(&adb, &format!("attach runs 1 and 2, {process}"), target, &event_tx);
     }
     session.until("the agent in the running app", Duration::from_secs(30), |s| source_of(s, PLAIN, 1).is_some()).await;
     let main1 = source_of(&session.store, PLAIN, 1).unwrap();
@@ -832,28 +844,15 @@ async fn plain_app_attach_end_to_end() {
     }
     check_main_run(&mut report, &session.store, main1, "attach run 1 after the restart");
 
-    drop(quit);
-    for t in tasks {
-        tokio::time::timeout(Duration::from_secs(5), t).await.expect("backend did not stop").unwrap();
-    }
+    session.stop().await;
     report.check(!startup_agent(&adb, id).await, || "the startup agent stayed after the session".into());
     let left = our_forwards(&adb, &serial).await;
     report.check(left.is_empty(), || format!("forwards left behind: {left:?}"));
 
     // run 3: --launch restarts the app with the agent loading at its start (API 27+)
-    let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
-    let (status_tx, _status_rx) = watch::channel(ConnectionStatus::Waiting(String::new()));
     let launch = Launch { extras: vec!["--es".into(), "run".into(), "all".into()] };
     let target = attach_target(&serial, PLAIN, &kit, false, Some(launch));
-    let task = tokio::spawn(run_device(
-        adb.clone(),
-        target,
-        session.store.source_ids(),
-        event_tx.clone(),
-        cmd_rx,
-        status_tx,
-        None,
-    ));
+    session.start(&adb, "attach run 3 (--launch)", target, &event_tx);
     drop(event_tx);
     session
         .until("the launched run to finish", Duration::from_secs(120), |s| has_done(s, source_of(s, PLAIN, 3)))
@@ -864,8 +863,7 @@ async fn plain_app_attach_end_to_end() {
     }
     // without --follow the startup agent went once the launched process connected
     report.check(!startup_agent(&adb, id).await, || "--launch: the startup agent stayed after the connection".into());
-    drop(cmd_tx);
-    tokio::time::timeout(Duration::from_secs(5), task).await.expect("backend did not stop").unwrap();
+    session.stop().await;
     let left = our_forwards(&adb, &serial).await;
     report.check(left.is_empty(), || format!("forwards left behind: {left:?}"));
 
@@ -905,7 +903,7 @@ async fn logdawg_reads_the_devices_log() {
         ..LogdawgTarget::default()
     };
     let task = tokio::spawn(run_logdawg(adb.clone(), target, LogdawgControl::default(), event_tx));
-    let mut session = Session { store: SessionStore::new(), events };
+    let mut session = Session::new(events);
     session.until("the app's uid", Duration::from_secs(30), |s| s.logs().uid().is_some()).await;
 
     // a line written now, from the shell
