@@ -1,10 +1,11 @@
 name: android
 
 on:
+  # the device job runs the host's end-to-end tests: a change to them runs it too (since 2026-10-16)
   push:
-    paths: ["android/**", "testdata/**", ".github/workflows/android.yml"]
+    paths: ["android/**", "testdata/**", ".github/workflows/android.yml", "host/crates/backends/tests/device_e2e.rs"]
   pull_request:
-    paths: ["android/**", "testdata/**", ".github/workflows/android.yml"]
+    paths: ["android/**", "testdata/**", ".github/workflows/android.yml", "host/crates/backends/tests/device_e2e.rs"]
   workflow_dispatch:
   # release.yml runs the build job before it builds a release (not the device job)
   workflow_call:
@@ -80,7 +81,8 @@ jobs:
   # The sample app on emulators, driven by the host's end-to-end tests: every scenario, both
   # processes, kill and relaunch, the same-uid refusal; and in attach mode the plain build
   # (attach while it runs, --follow, --launch). Slow, so nightly, on demand, and on pushes that
-  # change the Android side (since 2026-10-09: a broken device test went unseen for two nights).
+  # change the Android side (since 2026-10-09: a broken device test went unseen for two nights)
+  # or the end-to-end tests.
   device:
     if: github.event_name != 'pull_request' && github.workflow == 'android'
     strategy:
