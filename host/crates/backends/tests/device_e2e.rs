@@ -7,10 +7,10 @@
 //! traffic-police code: the agent is attached to it while it starts and again while it runs (its
 //! OkHttp client was built before), follows a restart, and is loaded at start with `--launch`.
 //!
-//! Ignored by default. They force-stop and start `io.trafficpolice.sample` (and `.plain`) on the
-//! device named by `TP_E2E_SERIAL` (install the sample's debug and plain builds first; the attach
-//! test also needs the agent, built by `./gradlew :attach-agent:agentArtifacts`, or in
-//! `TP_E2E_AGENT_DIR`):
+//! The tests that need a device are ignored by default. They force-stop and start
+//! `io.trafficpolice.sample` (and `.plain`) on the device named by `TP_E2E_SERIAL` (install the
+//! sample's debug and plain builds first; the attach test also needs the agent, built by
+//! `./gradlew :attach-agent:agentArtifacts`, or in `TP_E2E_AGENT_DIR`):
 //!
 //! ```text
 //! TP_E2E_SERIAL=emulator-5554 cargo test -p traffic-police-backends --test device_e2e -- --ignored --nocapture
@@ -39,6 +39,10 @@ const LAUNCH: &str = "am start -n io.trafficpolice.sample/.MainActivity --es run
 #[derive(Default)]
 struct Report {
     problems: Vec<String>,
+    /// The runs whose WebSocket the agent wrapped only after its handshake (attach mode's known
+    /// gap, see [`started_late`]), and how many sockets were captured whole.
+    late_sockets: Vec<String>,
+    whole_sockets: usize,
 }
 
 impl Report {
@@ -167,6 +171,44 @@ fn resp_header<'a>(t: &'a Transaction, name: &str) -> Option<&'a str> {
 
 fn app_frame(t: &Transaction, class_prefix: &str) -> bool {
     t.stack.iter().any(|f| f.c.starts_with(class_prefix) && f.l.is_some_and(|l| l > 0) && f.f.is_some())
+}
+
+/// The sample's WebSocket: the app subscribes, the server answers three times, the app closes,
+/// and the server closes too.
+const LIVE: [&str; 6] = [
+    r#"out text {"type":"subscribe","channel":"verification"}"#,
+    "in binary 010203",
+    r#"in text {"type":"status","state":"running"}"#,
+    r#"in text {"type":"status","state":"complete","verdict":"pass"}"#,
+    "out close 1000",
+    "in close 1000",
+];
+
+/// Whether the capture of the sample's WebSocket started late, the way attach mode's known gap
+/// has it (README, Known limits; ARCHITECTURE.md §4.2): a handshake that ends before
+/// `newWebSocket` returns reaches the app's own listener before the agent wraps the socket. Then
+/// neither the 101 nor what came before the wrap is captured (the app's subscribe, sent from
+/// `onOpen`), and all that came after is, in order.
+fn started_late(responded: bool, got: &[String]) -> bool {
+    !responded && !got.is_empty() && got.len() < LIVE.len() && got[..] == LIVE[LIVE.len() - got.len()..]
+}
+
+/// The gap's mark, and what the API 29 job captured on 2026-10-14 (attach run 3, `--launch`).
+#[test]
+fn a_websocket_wrapped_after_its_handshake() {
+    let from = |i: usize| -> Vec<String> { LIVE[i..].iter().map(|m| m.to_string()).collect() };
+    // API 29's: no 101, and the app's subscribe missed
+    assert!(started_late(false, &from(1)));
+    // later still: only the closes
+    assert!(started_late(false, &from(4)));
+    // the whole socket, one with its 101, and nothing at all are not that
+    assert!(!started_late(false, &from(0)));
+    assert!(!started_late(true, &from(1)));
+    assert!(!started_late(false, &[]));
+    // a message missing after the wrap is a fault, not the gap
+    let mut holed = from(1);
+    holed.remove(1);
+    assert!(!started_late(false, &holed));
 }
 
 /// Checks one run of `Scenarios.runAll()` in the main process.
@@ -418,7 +460,6 @@ fn check_main_run(r: &mut Report, store: &SessionStore, source: SourceId, run: &
 
     // a WebSocket: the handshake, then every message both ways, in order
     if let Some(t) = one(r, "/live") {
-        r.check(status(t) == 101 && t.is_websocket(), || format!("{run}: /live {}", status(t)));
         let got: Vec<String> =
             t.ws.messages
                 .iter()
@@ -432,15 +473,21 @@ fn check_main_run(r: &mut Report, store: &SessionStore, source: SourceId, run: &
                     format!("{} {} {what}", if m.out { "out" } else { "in" }, m.op)
                 })
                 .collect();
-        let want = [
-            r#"out text {"type":"subscribe","channel":"verification"}"#,
-            "in binary 010203",
-            r#"in text {"type":"status","state":"running"}"#,
-            r#"in text {"type":"status","state":"complete","verdict":"pass"}"#,
-            "out close 1000",
-            "in close 1000",
-        ];
-        r.check(got == want, || format!("{run}: /live messages {got:#?}"));
+        let opened = status(t) == 101 && t.is_websocket();
+        let attach = store.source(source).is_some_and(|s| s.mode == "attach");
+        if opened && got == LIVE {
+            r.whole_sockets += 1;
+        } else if attach && started_late(t.resp.is_some(), &got) {
+            println!(
+                "{run}: /live was wrapped after its handshake (attach mode's known gap): no 101, and its first {} of {} messages missed",
+                LIVE.len() - got.len(),
+                LIVE.len()
+            );
+            r.late_sockets.push(run.to_string());
+        } else {
+            r.check(opened, || format!("{run}: /live {}", status(t)));
+            r.check(got == LIVE, || format!("{run}: /live messages {got:#?}"));
+        }
         r.check(app_frame(t, "io.trafficpolice.sample.Scenarios"), || format!("{run}: /live stack {:?}", t.stack));
     }
 
@@ -866,6 +913,13 @@ async fn plain_app_attach_end_to_end() {
     session.stop().await;
     let left = our_forwards(&adb, &serial).await;
     report.check(left.is_empty(), || format!("forwards left behind: {left:?}"));
+
+    // the gap takes a handshake faster than the hook, which is rare: if every run's socket was
+    // wrapped late, the hook is what to look at
+    let late = report.late_sockets.join(", ");
+    report.check(report.whole_sockets > 0 || late.is_empty(), || {
+        format!("no attach run captured its WebSocket whole (wrapped after the handshake in {late})")
+    });
 
     summary(&session.store);
     assert!(report.problems.is_empty(), "{} problems:\n  {}", report.problems.len(), report.problems.join("\n  "));
